@@ -1,0 +1,6 @@
+/* Import Tailwind core */
+@import "tailwindcss";
+
+/* Optional: include animate.css for Tailwind animations */
+@import "tw-animate-css";
+
