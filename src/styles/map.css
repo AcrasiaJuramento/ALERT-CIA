@@ -1,0 +1,57 @@
+.leaflet-container {
+  background: #0f172a;
+  font-family: Inter, sans-serif;
+}
+
+.leaflet-control-attribution {
+  font-size: 10px;
+}
+
+.leaflet-popup-content-wrapper {
+  border-radius: 8px;
+}
+
+.leaflet-popup-content {
+  margin: 12px;
+}
+
+.leaflet-incident-marker-shell {
+  background: transparent;
+  border: 0;
+}
+
+.leaflet-incident-marker {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: var(--marker-color, #2563eb);
+  border: 2px solid white;
+  border-radius: 999px 999px 999px 4px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32), 0 0 0 5px color-mix(in srgb, var(--marker-color, #2563eb) 20%, transparent);
+  transform: rotate(-45deg);
+}
+
+.leaflet-incident-marker svg {
+  transform: rotate(45deg);
+}
+
+.leaflet-cluster-marker-shell {
+  background: transparent;
+  border: 0;
+}
+
+.leaflet-cluster-marker {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  background: #2563eb;
+  color: white;
+  font-size: 13px;
+  font-weight: 800;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32), 0 0 0 6px rgba(37, 99, 235, 0.2);
+}

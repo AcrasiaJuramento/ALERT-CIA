@@ -4,7 +4,7 @@ import {
   AlertTriangle, Activity, Users, CheckCircle2, Clock, TrendingUp,
   Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw
 } from 'lucide-react';
-import { MapSimulation } from '../components/MapSimulation';
+import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { incidents, recentActivity } from '../data/mockData';
 
 const statCards = [
@@ -165,9 +165,10 @@ export default function Dashboard() {
               Full Map <ChevronRight className="w-3 h-3" />
             </button>
           </div>
-          <MapSimulation
+          <LeafletIncidentMap
             height="calc(100% - 45px)"
             showControls={true}
+            compact={true}
             onMarkerClick={(id) => setSelectedIncident(id)}
             selectedIncidentId={selectedIncident || undefined}
           />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import {
   AlertTriangle, MapPin, Flame, Droplets, Car, Heart, Navigation,
@@ -9,6 +9,8 @@ import {
 } from 'lucide-react';
 import { incidents, heatmapZones, dangerZones } from '../../data/mockData';
 import { useTheme } from '../../contexts/ThemeContext';
+import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
+import { latLngToSvgPoint, svgPointToLatLng } from '../../utils/mapData';
 
 // ─── Echague, Isabela Locations ──────────────────────────────────────────────
 const ECHAGUE_LOCATIONS = [
@@ -127,8 +129,6 @@ function generateRoute(from, to) {
 
   // Snap to nearest Maharlika Highway x (~420) and navigate through intersections
   const mhX = 418;
-  const midY = from.y;
-  const midY2 = to.y;
 
   // Generate a realistic L-shaped/Z-shaped route that follows roads
   if (Math.abs(from.x - mhX) > 50 || Math.abs(to.x - mhX) > 50) {
@@ -269,7 +269,6 @@ function EchagueMapSVG({
   isDarkMode,
   selectedIncident,
   onIncidentClick,
-  pulse,
   fromPin,
   toPin,
   route,
@@ -279,13 +278,13 @@ function EchagueMapSVG({
   onPinDragStart,
 }) {
   const svgRef = useRef(null);
+  const pulse = 0;
 
   // Colors based on theme
   const bg = isDarkMode ? '#0f172a' : '#e8f0f7';
   const blockFill = isDarkMode ? '#1e293b' : '#f0f6ff';
   const blockStroke = isDarkMode ? '#334155' : '#c8d8ea';
   const roadMain = isDarkMode ? '#334155' : '#b0c4d8';
-  const roadPrimary = isDarkMode ? '#475569' : '#90a8bf';
   const roadHighway = isDarkMode ? '#64748b' : '#78909c';
   const roadSecondary = isDarkMode ? '#1e293b' : '#d0dcec';
   const roadLabel = isDarkMode ? '#94a3b8' : '#546e7a';
@@ -296,7 +295,6 @@ function EchagueMapSVG({
   const riceFieldFill = isDarkMode ? '#1a3a1a' : '#dcfce7';
   const riceFieldStroke = isDarkMode ? '#166534' : '#86efac';
   const labelColor = isDarkMode ? '#94a3b8' : '#4b6584';
-  const locationPin = isDarkMode ? '#60a5fa' : '#2563eb';
   const youAreHere = isDarkMode ? '#3b82f6' : '#2563eb';
 
   const handleSvgClick = (e) => {
@@ -648,7 +646,6 @@ function LocationSearchInput({
   value,
   onChange,
   placeholder,
-  icon,
   pinColor,
   isDarkMode,
 }) {
@@ -729,14 +726,6 @@ function LocationSearchInput({
 export default function PublicMap() {
   const navigate = useNavigate();
   const { isDarkMode } = useTheme();
-  const mapContainerRef = useRef(null);
-
-  // Map state
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-  const [pulse, setPulse] = useState(0);
 
   // Navigation state
   const [fromLocation, setFromLocation] = useState(null);
@@ -748,9 +737,10 @@ export default function PublicMap() {
   const [isCalculating, setIsCalculating] = useState(false);
   const [navMode, setNavMode] = useState('idle');
   const [pendingPin, setPendingPin] = useState(null);
-  const [draggingPin, setDraggingPin] = useState(null);
   const [showDirections, setShowDirections] = useState(false);
   const [navPanelOpen, setNavPanelOpen] = useState(true);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [guidanceIndex, setGuidanceIndex] = useState(0);
 
   // Incident state
   const [selectedIncident, setSelectedIncident] = useState(null);
@@ -758,12 +748,6 @@ export default function PublicMap() {
   const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [showSafetyInfo, setShowSafetyInfo] = useState(false);
   const [showIncidentPanel, setShowIncidentPanel] = useState(true);
-
-  // Pulse animation
-  useEffect(() => {
-    const interval = setInterval(() => setPulse(p => (p + 1) % 3), 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   // AI alert cycling
   useEffect(() => {
@@ -776,33 +760,8 @@ export default function PublicMap() {
     return () => clearInterval(timer);
   }, [dismissedAlerts]);
 
-  // Map wheel zoom
-  const handleWheel = useCallback((e) => {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? -0.12 : 0.12;
-    setZoom(z => Math.max(0.6, Math.min(2.5, z + delta)));
-  }, []);
-
-  // Map pan (mouse down/move/up)
-  const handleMapMouseDown = (e) => {
-    if (draggingPin || e.button !== 0) return;
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  };
-
-  const handleMapMouseMove = (e) => {
-    if (!isPanning) return;
-    setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-  };
-
-  const handleMapMouseUp = () => {
-    setIsPanning(false);
-    setDraggingPin(null);
-  };
-
   // Click on map to place pin
   const handleMapClick = (svgX, svgY) => {
-    if (isPanning) return;
     if (pendingPin) {
       // Find nearest named location
       const nearest = ECHAGUE_LOCATIONS.reduce((closest, loc) => {
@@ -832,6 +791,12 @@ export default function PublicMap() {
     }
   };
 
+  const handleLeafletMapClick = (latlng) => {
+    if (!pendingPin) return;
+    const point = latLngToSvgPoint(latlng);
+    handleMapClick(point.x, point.y);
+  };
+
   // Calculate route
   const handleGetRoute = async () => {
     if (!fromLocation || !toLocation) return;
@@ -841,6 +806,7 @@ export default function PublicMap() {
     const r = generateRoute(fromLocation, toLocation);
     setRoute(r);
     setShowRoute(true);
+    setGuidanceIndex(0);
     setIsCalculating(false);
     setNavMode('routing');
     setShowDirections(true);
@@ -854,6 +820,7 @@ export default function PublicMap() {
     setToText('');
     setRoute(null);
     setShowRoute(false);
+    setGuidanceIndex(0);
     setNavMode('idle');
     setPendingPin(null);
     setShowDirections(false);
@@ -873,14 +840,33 @@ export default function PublicMap() {
   const selectedInc = incidents.find(i => i.id === selectedIncident);
   const currentAlert = activeAlert !== null ? aiAlerts[activeAlert] : null;
   const activeIncidents = incidents.filter(i => i.status !== 'resolved');
+  const currentGuidance = route?.steps?.[guidanceIndex] || route?.steps?.[0] || null;
+  const nextGuidance = route?.steps?.[guidanceIndex + 1] || null;
+  useEffect(() => {
+    if (!voiceEnabled || navMode !== 'navigating' || !currentGuidance?.instruction) return;
 
-  const zoomIn = () => setZoom(z => Math.min(2.5, z + 0.2));
-  const zoomOut = () => setZoom(z => Math.max(0.6, z - 0.2));
-  const resetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
 
-  const stepIcons = {
-    ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Flag,
-  };
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(currentGuidance.instruction);
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 0.95;
+    window.speechSynthesis.speak(utterance);
+  }, [voiceEnabled, navMode, currentGuidance]);
+
+  const leafletRoutes = useMemo(() => {
+    if (!route || !showRoute) return [];
+
+    return [{
+      id: 'public-navigation-route',
+      label: `${route.distance} • ${route.duration}`,
+      positions: route.waypoints.map((point) => svgPointToLatLng(point)),
+      color: route.hasIncidentWarning ? '#f97316' : '#2563eb',
+      weight: 6,
+      opacity: 0.9,
+    }];
+  }, [route, showRoute]);
 
   return (
     <div className="bg-background min-h-screen transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -959,7 +945,7 @@ export default function PublicMap() {
         <div className="flex gap-3 h-[calc(100vh-200px)] min-h-130">
 
           {/* ── Navigation Panel (Left) ── */}
-          <div className={`shrink-0 flex flex-col gap-3 transition-all duration-300 ${navPanelOpen ? 'w-72' : 'w-10'}`}>
+          <div className={`relative z-[1200] shrink-0 flex flex-col gap-3 transition-all duration-300 ${navPanelOpen ? 'w-72' : 'w-10'}`}>
             <button
               onClick={() => setNavPanelOpen(!navPanelOpen)}
               className="flex items-center justify-center w-full h-9 bg-card border border-border rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
@@ -996,14 +982,13 @@ export default function PublicMap() {
                   {/* From / To Inputs */}
                   <div className="space-y-3 relative">
                     {/* Connector line */}
-                    <div className="absolute left-2.25 top-10 bottom-16 w-px bg-border" style={{ marginLeft: '0px' }} />
+                    <div className="absolute left-2.25 top-10 bottom-16 w-px bg-border" />
 
                     <LocationSearchInput
                       label="From"
                       value={fromText}
                       onChange={(loc, text) => { setFromLocation(loc); setFromText(text); }}
                       placeholder="Search start location..."
-                      icon={<Locate className="w-4 h-4" />}
                       pinColor="#22c55e"
                       isDarkMode={isDarkMode}
                     />
@@ -1028,7 +1013,6 @@ export default function PublicMap() {
                       value={toText}
                       onChange={(loc, text) => { setToLocation(loc); setToText(text); }}
                       placeholder="Search destination..."
-                      icon={<Flag className="w-4 h-4" />}
                       pinColor="#ef4444"
                       isDarkMode={isDarkMode}
                     />
@@ -1153,10 +1137,29 @@ export default function PublicMap() {
                       </div>
                     )}
 
+                    {/* Live guidance summary */}
+                    <div className="border-t border-border p-3 bg-blue-500/5">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-blue-400 mb-1">Live guidance</p>
+                      <p className="text-sm font-semibold text-foreground">{currentGuidance?.instruction || 'Route ready'}</p>
+                      <p className="text-[11px] text-muted-foreground mt-1">{nextGuidance ? `Next: ${nextGuidance.instruction}` : 'You have reached your destination.'}</p>
+                      <button
+                        onClick={() => setVoiceEnabled((value) => !value)}
+                        className="mt-3 inline-flex items-center gap-1 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-[11px] font-semibold text-blue-400 hover:bg-blue-500/20"
+                      >
+                        {voiceEnabled ? '🔊 Voice guidance on' : '🔇 Voice guidance off'}
+                      </button>
+                    </div>
+
                     {/* Start Navigation Button */}
                     <div className="p-3 border-t border-border">
                       <button
-                        onClick={() => setNavMode(navMode === 'navigating' ? 'routing' : 'navigating')}
+                        onClick={() => {
+                          setNavMode(navMode === 'navigating' ? 'routing' : 'navigating');
+                          if (navMode !== 'navigating') {
+                            setGuidanceIndex(0);
+                            setVoiceEnabled(true);
+                          }
+                        }}
                         className={`w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold transition-all ${
                           navMode === 'navigating'
                             ? 'bg-red-500/20 border border-red-500/30 text-red-400 hover:bg-red-500/30'
@@ -1229,14 +1232,18 @@ export default function PublicMap() {
 
             {/* Navigation Mode Banner */}
             {navMode === 'navigating' && (
-              <div className="absolute top-3 left-3 right-3 z-20 flex items-center gap-3 bg-blue-600 rounded-xl px-4 py-2.5 shadow-xl">
+              <div className="absolute top-3 left-3 right-3 z-20 flex flex-wrap items-center gap-3 bg-blue-600 rounded-xl px-4 py-2.5 shadow-xl">
                 <Navigation className="w-5 h-5 text-white animate-bounce" />
-                <div className="flex-1">
+                <div className="flex-1 min-w-[220px]">
                   <p className="text-white text-xs font-semibold">Navigation Active</p>
-                  <p className="text-blue-100 text-[10px]">
-                    {route?.steps[0]?.instruction} — {route?.steps[0]?.distance}
-                  </p>
+                  <p className="text-blue-100 text-[10px]">{currentGuidance?.instruction || 'Preparing guidance…'} — {currentGuidance?.distance || 'Live route'}</p>
                 </div>
+                <button
+                  onClick={() => setVoiceEnabled((value) => !value)}
+                  className="flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-2 py-1 text-[10px] font-semibold text-white hover:bg-white/20"
+                >
+                  {voiceEnabled ? '🔊 Voice on' : '🔇 Voice off'}
+                </button>
                 <div className="flex items-center gap-1.5 bg-blue-500/50 rounded-lg px-2 py-1">
                   <Timer className="w-3 h-3 text-blue-100" />
                   <span className="text-blue-100 text-xs font-bold">{route?.duration}</span>
@@ -1245,80 +1252,35 @@ export default function PublicMap() {
             )}
 
             {/* Map container with zoom/pan */}
-            <div
-              ref={mapContainerRef}
-              className="w-full h-full overflow-hidden"
-              style={{ cursor: isPanning ? 'grabbing' : pendingPin ? 'crosshair' : 'grab' }}
-              onWheel={handleWheel}
-              onMouseDown={handleMapMouseDown}
-              onMouseMove={handleMapMouseMove}
-              onMouseUp={handleMapMouseUp}
-              onMouseLeave={handleMapMouseUp}
-            >
-              <div
-                style={{
-                  transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                  transformOrigin: '50% 50%',
-                  width: '100%',
-                  height: '100%',
-                  transition: isPanning ? 'none' : 'transform 0.15s ease',
+            <div className="w-full h-full overflow-hidden">
+              <LeafletIncidentMap
+                height="100%"
+                incidents={incidents}
+                selectedIncidentId={selectedIncident || undefined}
+                onMarkerClick={(id) => {
+                  setSelectedIncident(current => current === id ? null : id);
+                  setShowIncidentPanel(true);
                 }}
-              >
-                <EchagueMapSVG
-                  isDarkMode={isDarkMode}
-                  selectedIncident={selectedIncident}
-                  onIncidentClick={(id) => setSelectedIncident(id === selectedIncident ? null : id)}
-                  pulse={pulse}
-                  fromPin={fromLocation}
-                  toPin={toLocation}
-                  route={route}
-                  showRoute={showRoute}
-                  onMapClick={handleMapClick}
-                  draggingPin={draggingPin}
-                  onPinDragStart={setDraggingPin}
-                />
-              </div>
+                showControls={true}
+                showHeatmap={true}
+                showDangerZones={true}
+                routes={leafletRoutes}
+                compact={true}
+                onMapClick={handleLeafletMapClick}
+              />
             </div>
 
-            {/* ── Map Controls (bottom right) ── */}
-            <div className="absolute bottom-4 right-4 flex flex-col gap-1.5 z-10">
-              <button
-                onClick={zoomIn}
-                className="w-9 h-9 bg-card border border-border text-foreground rounded-lg flex items-center justify-center shadow hover:bg-secondary transition-all"
-                title="Zoom In"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-              <button
-                onClick={zoomOut}
-                className="w-9 h-9 bg-card border border-border text-foreground rounded-lg flex items-center justify-center shadow hover:bg-secondary transition-all"
-                title="Zoom Out"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-              <button
-                onClick={resetView}
-                className="w-9 h-9 bg-card border border-border text-muted-foreground rounded-lg flex items-center justify-center shadow hover:bg-secondary transition-all"
-                title="Reset view"
-              >
-                <Locate className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* ── Zoom level indicator ── */}
             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
               <div className="flex items-center gap-2 bg-card/90 border border-border rounded-full px-3 py-1.5 shadow backdrop-blur-sm">
                 <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
                 <span className="text-xs text-foreground font-medium">Echague, Isabela</span>
-                <span className="text-[10px] text-muted-foreground">|</span>
-                <span className="text-[10px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
               </div>
             </div>
 
             {/* ── Selected Incident Popup ── */}
             {selectedInc && (
-              <div className="absolute bottom-16 left-4 right-4 sm:left-auto sm:right-16 sm:w-80 z-10">
-                <div className={`bg-card border rounded-2xl p-4 shadow-2xl transition-colors duration-300 ${
+              <div className="absolute bottom-4 left-1/2 z-[1000] w-[min(24rem,calc(100vw-1.5rem))] -translate-x-1/2 pointer-events-auto">
+                <div className={`relative z-[1001] bg-card/98 border rounded-2xl p-4 shadow-2xl transition-colors duration-300 ${
                   selectedInc.severity === 'critical' ? 'border-red-500/40' :
                   selectedInc.severity === 'warning' ? 'border-orange-500/40' : 'border-border'
                 }`}>

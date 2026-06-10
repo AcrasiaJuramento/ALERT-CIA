@@ -5,7 +5,7 @@ import {
   Flame, Droplets, Car, Heart,Share2, Activity
 } from 'lucide-react';
 import { incidents } from '../data/mockData';
-import { MapSimulation } from '../components/MapSimulation';
+import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 
 const typeIcons = {
   vehicular: Car,
@@ -144,12 +144,13 @@ export default function IncidentDetails() {
                 Full Map <ChevronRight className="w-3 h-3" />
               </button>
             </div>
-            <MapSimulation
+            <LeafletIncidentMap
               height="280px"
               showControls={false}
               showHeatmap={true}
               showDangerZones={true}
               selectedIncidentId={incident.id}
+              compact={true}
             />
           </div>
 

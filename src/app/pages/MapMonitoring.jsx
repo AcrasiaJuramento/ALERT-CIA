@@ -4,7 +4,7 @@ import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
   RefreshCw, ChevronRight, MapPin, Zap
 } from 'lucide-react';
-import { MapSimulation } from '../components/MapSimulation';
+import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { incidents } from '../data/mockData';
 
 const severityBadge = {
@@ -44,7 +44,7 @@ export default function MapMonitoring() {
     <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
       {/* Full-screen Map */}
       <div className="flex-1 relative overflow-hidden">
-        <MapSimulation
+        <LeafletIncidentMap
           height="100%"
           showControls={true}
           showHeatmap={true}
