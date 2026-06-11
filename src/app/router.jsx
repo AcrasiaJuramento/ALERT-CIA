@@ -6,6 +6,7 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
 import PCRModule from './pages/PCRModule'
+import PCRReports from './pages/PCRReports'
 import PCRVerification from './pages/PCRVerification';
 import IncidentList from './pages/IncidentList'
 import IncidentDetails from './pages/IncidentDetails'
@@ -29,7 +30,8 @@ export const router = createBrowserRouter([
       { path: 'incidents', element: <IncidentList /> },
       { path: 'incidents/:id', element: <IncidentDetails /> },
       { path: 'map', element: <MapMonitoring /> },
-      { path: 'pcr', element: <PCRModule /> },
+      { path: 'pcr', element: <PCRReports /> },
+      { path: 'pcr/new', element: <PCRModule /> },
       { path: 'pcr-verification', element: <PCRVerification /> },
       { path: 'analytics', element: <Analytics /> },
       { path: 'users', element: <UserManagement /> },

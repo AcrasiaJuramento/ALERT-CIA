@@ -3,7 +3,7 @@ import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, AlertTriangle, Map, FileText, BarChart2,
   Users, Settings, LogOut, Bell, ChevronDown, Menu, X,
-  ExternalLink, Siren, Radio, Moon, Sun, ClipboardCheck
+  ExternalLink, Siren, Radio, Moon, Sun, ClipboardCheck, FilePlus2
 } from 'lucide-react';
 
 import { useTheme } from '../contexts/ThemeContext';
@@ -14,6 +14,7 @@ const navItems = [
   { icon: AlertTriangle, label: 'Incidents', path: '/admin/incidents' },
   { icon: Map, label: 'Map Monitor', path: '/admin/map' },
   { icon: FileText, label: 'PCR Reports', path: '/admin/pcr' },
+  { icon: FilePlus2, label: 'New PCR', path: '/admin/pcr/new' },
   { icon: ClipboardCheck, label: 'PCR Verification', path: '/admin/pcr-verification', badge: true },
   { icon: BarChart2, label: 'Analytics', path: '/admin/analytics' },
   { icon: Users, label: 'User Management', path: '/admin/users' },
