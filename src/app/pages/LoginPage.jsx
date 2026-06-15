@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Siren, Eye, EyeOff, AlertTriangle, Lock, Mail, ChevronRight, ArrowLeft } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -8,6 +9,7 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { login } = useAuth();
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -19,6 +21,7 @@ export default function LoginPage() {
     setLoading(true);
     await new Promise(r => setTimeout(r, 1200));
     setLoading(false);
+    login(form.email);
     navigate('/admin');
   };
 

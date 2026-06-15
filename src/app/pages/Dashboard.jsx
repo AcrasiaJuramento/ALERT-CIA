@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { incidents, recentActivity } from '../data/mockData';
+import { PERMISSIONS } from '../access/rbac';
+import { useAuth } from '../contexts/AuthContext';
 
 const statCards = [
   {
@@ -103,6 +105,7 @@ const activityColor = {
 };
 
 export default function Dashboard() {
+  const { can } = useAuth();
   const navigate = useNavigate();
   const [selectedIncident, setSelectedIncident] = useState(null);
   const activeIncidents = incidents.filter(i => i.status !== 'resolved').slice(0, 6);
@@ -122,13 +125,13 @@ export default function Dashboard() {
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh
           </button>
-          <button
-            onClick={() => navigate('/admin/pcr')}
+          {can(PERMISSIONS.CREATE_PCR) && <button
+            onClick={() => navigate('/admin/pcr/new')}
             className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition-all"
           >
             <Radio className="w-3.5 h-3.5" />
-            New PCR Report
-          </button>
+            Create PCR Report
+          </button>}
         </div>
       </div>
 

@@ -17,6 +17,11 @@ import SystemSettings from './pages/SystemSettings'
 import PublicDashboard from './pages/public/PublicDashboard'
 import PublicIncidentList from './pages/public/PublicIncidentList'
 import PublicMap from './pages/public/PublicMap'
+import AccessDenied from './pages/AccessDenied'
+import ProtectedRoute from './components/ProtectedRoute'
+import { PERMISSIONS } from './access/rbac'
+
+const protect = (permission, element) => <ProtectedRoute permission={permission}>{element}</ProtectedRoute>
 
 export const router = createBrowserRouter([
   { path: '/', element: <LandingPage /> },
@@ -24,18 +29,19 @@ export const router = createBrowserRouter([
   { path: '/register', element: <RegisterPage /> },
   {
     path: '/admin',
-    element: <Layout />,
+    element: protect(null, <Layout />),
     children: [
-      { index: true, element: <Dashboard /> },
-      { path: 'incidents', element: <IncidentList /> },
-      { path: 'incidents/:id', element: <IncidentDetails /> },
-      { path: 'map', element: <MapMonitoring /> },
-      { path: 'pcr', element: <PCRReports /> },
-      { path: 'pcr/new', element: <PCRModule /> },
-      { path: 'pcr-verification', element: <PCRVerification /> },
-      { path: 'analytics', element: <Analytics /> },
-      { path: 'users', element: <UserManagement /> },
-      { path: 'settings', element: <SystemSettings /> },
+      { index: true, element: protect(PERMISSIONS.VIEW_DASHBOARD, <Dashboard />) },
+      { path: 'incidents', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentList />) },
+      { path: 'incidents/:id', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentDetails />) },
+      { path: 'map', element: protect(PERMISSIONS.VIEW_MAP, <MapMonitoring />) },
+      { path: 'pcr', element: protect(PERMISSIONS.VIEW_PCR_RECORDS, <PCRReports />) },
+      { path: 'pcr/new', element: protect(PERMISSIONS.CREATE_PCR, <PCRModule />) },
+      { path: 'pcr-verification', element: protect(PERMISSIONS.REVIEW_PCR, <PCRVerification />) },
+      { path: 'analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <Analytics />) },
+      { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
+      { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
+      { path: 'access-denied', element: <AccessDenied /> },
     ],
   },
   {

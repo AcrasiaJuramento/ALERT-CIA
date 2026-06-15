@@ -952,7 +952,7 @@ returns boolean language sql stable security definer set search_path = public as
       select 1 from public.pcr_reports p
       where p.id = target_pcr_id and p.deleted_at is null and (
         p.created_by = auth.uid()
-        or p.station_id = public.current_station_id() and public.has_role('supervisor')
+        or p.station_id = public.current_station_id() and (public.has_role('dispatcher') or public.has_role('supervisor'))
         or exists (select 1 from public.pcr_crew_members c where c.pcr_report_id = p.id and c.profile_id = auth.uid())
       )
     );
@@ -961,14 +961,13 @@ $$;
 create function public.can_edit_pcr(target_pcr_id uuid)
 returns boolean language sql stable security definer set search_path = public as $$
   select public.has_role('administrator')
-    or exists (
+    or public.has_role('field_responder') and exists (
       select 1 from public.pcr_reports p
       where p.id = target_pcr_id and p.deleted_at is null and (
-        (public.has_role('supervisor') and p.station_id = public.current_station_id())
-        or (p.status in ('draft', 'rejected') and (
+        p.status in ('draft', 'rejected') and (
           p.created_by = auth.uid()
           or exists (select 1 from public.pcr_crew_members c where c.pcr_report_id = p.id and c.profile_id = auth.uid())
-        ))
+        )
       )
     );
 $$;
@@ -1141,7 +1140,7 @@ $$;
 create function public.review_pcr(target_pcr_id uuid, decision public.pcr_status, comments text default null)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  if not (public.has_role('administrator') or public.has_role('supervisor')) then raise exception 'Not authorized to review PCR reports'; end if;
+  if not (public.has_role('administrator') or public.has_role('dispatcher')) then raise exception 'Not authorized to review PCR reports'; end if;
   if decision not in ('verified', 'rejected') then raise exception 'Decision must be verified or rejected'; end if;
   if decision = 'rejected' and nullif(trim(comments), '') is null then raise exception 'Rejection comments are required'; end if;
   perform set_config('app.pcr_transition', 'true', true);
@@ -1315,7 +1314,7 @@ create policy patients_read_via_pcr on public.patients for select to authenticat
 create policy patients_insert_staff on public.patients for insert to authenticated with check (public.is_staff() and created_by = auth.uid());
 create policy patients_update_owner_admin on public.patients for update to authenticated using (created_by = auth.uid() or public.has_role('administrator')) with check (created_by = auth.uid() or public.has_role('administrator'));
 create policy pcr_read_scope on public.pcr_reports for select to authenticated using (public.can_access_pcr(id));
-create policy pcr_insert_own on public.pcr_reports for insert to authenticated with check (created_by = auth.uid() and station_id = public.current_station_id() and (public.has_role('field_responder') or public.has_role('operations_officer') or public.has_role('administrator') or public.has_role('supervisor')));
+create policy pcr_insert_own on public.pcr_reports for insert to authenticated with check (created_by = auth.uid() and station_id = public.current_station_id() and public.has_role('field_responder'));
 create policy pcr_update_scope on public.pcr_reports for update to authenticated using (public.can_edit_pcr(id)) with check (public.can_edit_pcr(id));
 
 do $$
@@ -1353,8 +1352,8 @@ create policy scraped_articles_review on public.scraped_incident_articles for up
   using (deleted_at is null and (public.has_role('administrator') or public.has_role('supervisor') or public.has_role('operations_officer')))
   with check (public.has_role('administrator') or public.has_role('supervisor') or public.has_role('operations_officer'));
 create policy analytics_station_read on public.analytics_daily_metrics for select to authenticated
-  using (public.has_role('administrator') or public.is_staff() and station_id = public.current_station_id());
-create policy audit_admin_supervisor_read on public.audit_logs for select to authenticated using (public.has_role('administrator') or public.has_role('supervisor'));
+  using (public.has_role('administrator') or public.has_role('dispatcher') and station_id = public.current_station_id());
+create policy audit_admin_dispatcher_read on public.audit_logs for select to authenticated using (public.has_role('administrator') or public.has_role('dispatcher'));
 
 -- Storage buckets and object policies
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) values

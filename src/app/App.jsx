@@ -4,6 +4,7 @@ import { router } from './router';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
+import { AuthProvider } from './contexts/AuthContext';
 
 import { Toaster } from 'sonner';
 
@@ -24,10 +25,12 @@ export default function App() {
   return (
     <ThemeProvider>
       <AccessibilityProvider>
-        <NotificationProvider>
-          <RouterProvider router={router} />
-          <ToasterWrapper />
-        </NotificationProvider>
+        <AuthProvider>
+          <NotificationProvider>
+            <RouterProvider router={router} />
+            <ToasterWrapper />
+          </NotificationProvider>
+        </AuthProvider>
       </AccessibilityProvider>
     </ThemeProvider>
   );

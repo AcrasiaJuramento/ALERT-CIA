@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState } from 'react';
 
 const NotificationContext = createContext();
 
@@ -7,7 +7,7 @@ export function NotificationProvider({ children }) {
     {
       id: 'notif-1',
       type: 'pcr_submitted',
-      title: 'New PCR Report Submitted',
+      title: 'Patient Care Report Submitted',
       message: 'Cpl. Roberto Aquino submitted PCR-2026-001 for verification',
       timestamp: new Date().toISOString(),
       read: false,
@@ -15,9 +15,9 @@ export function NotificationProvider({ children }) {
     {
       id: 'notif-2',
       type: 'pcr_verified',
-      title: 'PCR Report Verified',
+      title: 'Patient Care Report Verified',
       message: 'Your PCR-2026-003 has been verified by Dispatcher Juan dela Cruz',
-      timestamp: new Date(Date.now() - 3600000).toISOString(),
+      timestamp: '2026-06-15T00:00:00.000Z',
       read: false,
     },
   ]);

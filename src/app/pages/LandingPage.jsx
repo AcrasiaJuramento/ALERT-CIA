@@ -14,7 +14,7 @@ const modules = [
   { icon: LayoutDashboardIcon, label: 'Command Dashboard', desc: 'Real-time situational awareness with live incident maps, KPIs, and dispatch updates.', color: 'blue' },
   { icon: AlertTriangle, label: 'Incident Management', desc: 'Track, manage, and resolve all incidents with detailed reporting and assignment tools.', color: 'red' },
   { icon: Map, label: 'Map Monitoring', desc: 'Full-screen map with heatmaps, danger zones, accident hotspots, and real-time markers.', color: 'teal' },
-  { icon: FileText, label: 'PCR Reports', desc: 'Digital Patient Care Reports with multi-step workflows from response to hospital transport.', color: 'purple' },
+  { icon: FileText, label: 'Patient Care Records', desc: 'Digital Patient Care Reports with multi-step workflows from response to hospital transport.', color: 'purple' },
   { icon: BarChart2, label: 'Analytics', desc: 'Performance dashboards, trend analysis, and spatial-temporal AI predictions.', color: 'amber' },
   { icon: Globe, label: 'Public Interface', desc: 'Waze-style public map with accident-prone area alerts and real-time safety notifications.', color: 'green' },
 ];

@@ -3,9 +3,9 @@ import { Search, Plus, Edit2, Trash2, Shield, X, Check, UserCog } from 'lucide-r
 import { users } from '../data/mockData';
 
 const roleBadge = {
-  admin: 'bg-red-500/20 text-red-400 border border-red-500/30',
+  administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
   dispatcher: 'bg-blue-500/20 text-blue-400 border border-blue-500/30',
-  field_officer: 'bg-green-500/20 text-green-400 border border-green-500/30',
+  field_responder: 'bg-green-500/20 text-green-400 border border-green-500/30',
 };
 
 const statusBadge = {
@@ -30,7 +30,7 @@ export default function UserManagement() {
   const [showModal, setShowModal] = useState(false);
   const [newUser, setNewUser] = useState({
     name: '', position: '', agency: '', contact: '', email: '',
-    role: 'field_officer', status: 'active',
+    role: 'field_responder', status: 'active',
   });
 
   const filtered = userList.filter(u => {
@@ -48,7 +48,7 @@ export default function UserManagement() {
     };
     setUserList([user, ...userList]);
     setShowModal(false);
-    setNewUser({ name: '', position: '', agency: '', contact: '', email: '', role: 'field_officer', status: 'active' });
+    setNewUser({ name: '', position: '', agency: '', contact: '', email: '', role: 'field_responder', status: 'active' });
   };
 
   const handleDelete = id => {
@@ -57,9 +57,9 @@ export default function UserManagement() {
 
   const roleCounts = {
     all: userList.length,
-    admin: userList.filter(u => u.role === 'admin').length,
+    administrator: userList.filter(u => u.role === 'administrator').length,
     dispatcher: userList.filter(u => u.role === 'dispatcher').length,
-    field_officer: userList.filter(u => u.role === 'field_officer').length,
+    field_responder: userList.filter(u => u.role === 'field_responder').length,
   };
 
   return (
@@ -85,9 +85,9 @@ export default function UserManagement() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           { key: 'all', label: 'All Users', color: 'text-foreground' },
-          { key: 'admin', label: 'Administrators', color: 'text-red-400' },
+          { key: 'administrator', label: 'Administrators', color: 'text-red-400' },
           { key: 'dispatcher', label: 'Dispatchers', color: 'text-blue-400' },
-          { key: 'field_officer', label: 'Field Officers', color: 'text-green-400' },
+          { key: 'field_responder', label: 'Field Officers', color: 'text-green-400' },
         ].map(({ key, label, color }) => (
           <button
             key={key}
@@ -157,7 +157,7 @@ export default function UserManagement() {
                   </td>
                   <td className="px-3 py-3.5">
                     <span className={`px-2 py-1 rounded-lg text-[10px] font-semibold capitalize ${roleBadge[user.role]}`}>
-                      {user.role === 'field_officer' ? 'Field Officer' : user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                      {user.role === 'field_responder' ? 'Field Officer' : user.role === 'administrator' ? 'Administrator' : 'Dispatcher Officer'}
                     </span>
                   </td>
                   <td className="px-3 py-3.5">
@@ -219,9 +219,9 @@ export default function UserManagement() {
                 <label className={labelClass}>User Role</label>
                 <div className="grid grid-cols-3 gap-2">
                   {[
-                    { value: 'admin', label: 'Admin' },
+                    { value: 'administrator', label: 'Administrator' },
                     { value: 'dispatcher', label: 'Dispatcher' },
-                    { value: 'field_officer', label: 'Field Officer' },
+                    { value: 'field_responder', label: 'Field Officer' },
                   ].map(({ value, label }) => (
                     <label
                       key={value}

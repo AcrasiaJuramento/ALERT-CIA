@@ -12,7 +12,7 @@ const cityMapBg = "https://images.unsplash.com/photo-1723002093542-807b783ccf07?
 const moduleList = [
   { icon: Activity, label: "Command Dashboard", desc: "Real-time statistics, live incident feed, and response team tracking in one command center view.", color: "bg-blue-600" },
   { icon: Map, label: "Map Monitoring", desc: "Full-screen live map with incident markers, accident heatmaps, flood zones, and traffic hazards.", color: "bg-indigo-600" },
-  { icon: FileText, label: "PCR Report Module", desc: "5-step Patient Care Report workflow from responding unit info to transport and hospital details.", color: "bg-violet-600" },
+  { icon: FileText, label: "Patient Care Records", desc: "Patient Care Report workflow from field creation through dispatcher review.", color: "bg-violet-600" },
   { icon: BarChart2, label: "Analytics Dashboard", desc: "Comprehensive charts and graphs for incident trends, hotspots, and response performance metrics.", color: "bg-teal-600" },
   { icon: Users, label: "User Management", desc: "Admin panel for managing field officers, dispatchers, and administrators with role-based access.", color: "bg-emerald-600" },
   { icon: Globe, label: "Public Interface", desc: "Simplified public dashboard with Waze-like map alerts for accident-prone areas and risk warnings.", color: "bg-orange-600" },

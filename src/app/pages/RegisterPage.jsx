@@ -3,16 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { Siren, Eye, EyeOff, CheckCircle2, ArrowLeft, User, Building, Phone, Mail, Lock, Briefcase } from 'lucide-react';
 
 const roles = [
-  { value: 'admin', label: 'Administrator', desc: 'Full system access and management' },
+  { value: 'administrator', label: 'Administrator', desc: 'Full system access and management' },
   { value: 'dispatcher', label: 'Dispatch Officer', desc: 'Incident dispatch and coordination' },
-  { value: 'field_officer', label: 'Field Officer', desc: 'PCR reports and field operations' },
+  { value: 'field_responder', label: 'Field Officer', desc: 'PCR reports and field operations' },
 ];
 
 export default function RegisterPage() {
   const navigate = useNavigate();
   const [form, setForm] = useState({
     name: '', position: '', agency: '', contact: '',
-    email: '', password: '', confirmPassword: '', role: 'field_officer'
+    email: '', password: '', confirmPassword: '', role: 'field_responder'
   });
   const [showPassword, setShowPassword] = useState(false);
   const [submitted, setSubmitted] = useState(false);

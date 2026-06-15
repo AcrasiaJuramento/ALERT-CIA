@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
   Search, Filter, ChevronDown, Eye, CheckCircle2, XCircle,
   Clock, AlertTriangle, FileText, User, MapPin, Calendar,
@@ -9,7 +8,6 @@ import { pcrReports } from '../data/mockData';
 import { toast } from 'sonner';
 
 export default function PCRVerification() {
-  const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('submitted');
   const [selectedPCR, setSelectedPCR] = useState(null);
@@ -66,9 +64,9 @@ export default function PCRVerification() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-            PCR Verification
+            PCR Review & Verification
           </h1>
-          <p className="text-muted-foreground text-xs mt-0.5">Review and verify patient care reports</p>
+          <p className="text-muted-foreground text-xs mt-0.5">Review evidence, verify accuracy, and approve or return submitted Patient Care Reports.</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">

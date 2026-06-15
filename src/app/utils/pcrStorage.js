@@ -118,7 +118,39 @@ export function savePCR(record) {
 
 export function setPCRs(records) { localStorage.setItem(PCR_STORAGE_KEY, JSON.stringify(records)); }
 
-export const printPCR = () => setTimeout(() => window.print(), 50);
+export async function exportPCRToPdf(record) {
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const source = [...document.querySelectorAll(".pcr-print-source")]
+    .find(element => element.dataset.pcrExportId === record.id);
+  if (!source) throw new Error("PCR export layout is not available.");
+
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+    import("html2canvas"),
+    import("jspdf"),
+  ]);
+  const pages = [...source.querySelectorAll(".pcr-page")];
+  if (!pages.length) throw new Error("PCR export pages are not available.");
+
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+
+  for (let index = 0; index < pages.length; index += 1) {
+    const canvas = await html2canvas(pages[index], {
+      backgroundColor: "#ffffff",
+      scale: 2,
+      useCORS: true,
+      logging: false,
+    });
+    const ratio = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
+    const width = canvas.width * ratio;
+    const height = canvas.height * ratio;
+    if (index > 0) pdf.addPage();
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", (pageWidth - width) / 2, 0, width, height, undefined, "FAST");
+  }
+
+  pdf.save(`${record.responseNumber || "PCR-report"}.pdf`);
+}
 
 export async function exportPCRToDocx(record) {
   const { Document, HeadingLevel, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } = await import("docx");

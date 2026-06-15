@@ -8,7 +8,7 @@ The officer reports page filters by `created_by`, paginates after filtering, ope
 
 ## Domain Boundaries
 
-- Identity and access: `users`, `roles`, `user_roles`, `officers`, `stations`.
+- Identity and access: `profiles`, `roles`, `profile_roles`, `stations`.
 - Dispatch: `incidents`, `vehicles`, `crew_assignments`.
 - Clinical: `patients`, `pcr_reports`, `vital_signs`, `treatments`.
 - Handover: `hospital_endorsements`, `transfers`.
