@@ -1,11 +1,16 @@
-import { useState } from 'react';
+import { createElement, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, Users, CheckCircle2, Clock, TrendingUp,
-  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw
+  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2
 } from 'lucide-react';
+import {
+  Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
+import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { incidents, recentActivity } from '../data/mockData';
+import { analyticsIncidents, filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/analyticsModule';
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -104,11 +109,37 @@ const activityColor = {
   info: 'bg-slate-500',
 };
 
+const priorityColors = {
+  Critical: '#dc2626',
+  High: '#f97316',
+  Medium: '#eab308',
+  Low: '#22c55e',
+};
+
+const AnalyticsTooltip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-border bg-card p-3 text-xs shadow-xl">
+      <div className="mb-1 font-semibold text-foreground">{label}</div>
+      {payload.map((entry) => (
+        <div key={entry.name} className="flex items-center gap-2 text-muted-foreground">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
+          {entry.name}: <span className="font-semibold text-foreground">{entry.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 export default function Dashboard() {
   const { can } = useAuth();
   const navigate = useNavigate();
   const [selectedIncident, setSelectedIncident] = useState(null);
+  const [rankingView, setRankingView] = useState('bar');
   const activeIncidents = incidents.filter(i => i.status !== 'resolved').slice(0, 6);
+  const todayAnalytics = useMemo(() => filterIncidentsByRange(analyticsIncidents, 'today'), []);
+  const barangayRanking = useMemo(() => getBarangayStats(todayAnalytics).filter((item) => item.count > 0), [todayAnalytics]);
+  const priorityData = useMemo(() => summarizeBy(todayAnalytics, 'priority'), [todayAnalytics]);
 
   return (
     <div className="p-5 space-y-5 min-h-full bg-(--emergency-bg)" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -137,11 +168,11 @@ export default function Dashboard() {
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {statCards.map(({ label, value, change, icon: Icon, color, bg, border, trend }) => (
+        {statCards.map(({ label, value, change, icon, color, bg, border, trend }) => (
           <div key={label} className={`p-4 rounded-xl border ${bg} ${border} bg-card`}>
             <div className="flex items-start justify-between mb-3">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
-                <Icon className={`w-4 h-4 ${color}`} />
+                {createElement(icon, { className: `w-4 h-4 ${color}` })}
               </div>
               <TrendingUp className={`w-3.5 h-3.5 ${trend === 'up' ? 'text-red-400' : trend === 'down' ? 'text-green-400 rotate-180' : 'text-muted-foreground'}`} />
             </div>
@@ -150,6 +181,105 @@ export default function Dashboard() {
             <div className="text-muted-foreground text-[9px] opacity-70">{change}</div>
           </div>
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
+        <div className="xl:col-span-2">
+          <BarangayHeatmap
+            incidents={todayAnalytics}
+            allIncidents={analyticsIncidents}
+            compact
+            range="today"
+          />
+        </div>
+        <div className="space-y-5">
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Top Barangays by Incident Count Today</h3>
+                <p className="text-xs text-muted-foreground">Highest to lowest ranking</p>
+              </div>
+              <div className="flex rounded-lg border border-border bg-secondary/40 p-0.5">
+                <button
+                  onClick={() => setRankingView('bar')}
+                  className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'bar' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                  title="Bar chart view"
+                >
+                  <BarChart2 className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => setRankingView('table')}
+                  className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'table' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                  title="Table view"
+                >
+                  <Table2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+            {rankingView === 'bar' ? (
+              <ResponsiveContainer width="100%" height={230}>
+                <BarChart data={barangayRanking} layout="vertical" margin={{ top: 0, right: 8, left: 22, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis type="number" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" />
+                  <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" width={78} />
+                  <Tooltip content={<AnalyticsTooltip />} />
+                  <Bar dataKey="count" name="Incidents" fill="#2563eb" radius={[0, 4, 4, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-muted-foreground">
+                      <th className="py-2 text-left font-medium">Barangay</th>
+                      <th className="py-2 text-right font-medium">Total</th>
+                      <th className="py-2 text-right font-medium">Share</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {barangayRanking.map((item) => (
+                      <tr key={item.name} className="border-b border-border/60">
+                        <td className="py-2 text-foreground">{item.name}</td>
+                        <td className="py-2 text-right font-semibold text-foreground">{item.count}</td>
+                        <td className="py-2 text-right text-muted-foreground">{item.percent}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-card border border-border rounded-lg p-4">
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-foreground">Incidents by Priority</h3>
+              <p className="text-xs text-muted-foreground">Critical, high, medium, and low distribution</p>
+            </div>
+            <div className="grid grid-cols-[120px_1fr] gap-3">
+              <ResponsiveContainer width="100%" height={120}>
+                <PieChart>
+                  <Pie data={priorityData} dataKey="count" nameKey="name" innerRadius={34} outerRadius={55} paddingAngle={2}>
+                    {priorityData.map((entry) => <Cell key={entry.name} fill={priorityColors[entry.name]} />)}
+                  </Pie>
+                  <Tooltip content={<AnalyticsTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-2">
+                {priorityData.map((item) => (
+                  <div key={item.name}>
+                    <div className="mb-1 flex justify-between text-xs">
+                      <span className="text-muted-foreground">{item.name}</span>
+                      <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                      <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: priorityColors[item.name] }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Main Grid: Map + Side Panel */}

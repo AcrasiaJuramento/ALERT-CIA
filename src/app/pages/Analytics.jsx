@@ -1,304 +1,399 @@
-import { useState } from 'react';
-import { TrendingUp, TrendingDown, BarChart2, Calendar, Download, RefreshCw } from 'lucide-react';
+import { createElement, useMemo, useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, AreaChart, Area, Legend
+  Activity, AlertTriangle, BarChart2, Calendar, Car, HeartPulse, MapPinned, ShieldCheck, TrendingDown, TrendingUp,
+} from 'lucide-react';
+import {
+  Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { analyticsData } from '../data/mockData';
-import { useTheme } from '../contexts/ThemeContext';
+import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
+import {
+  analyticsIncidents, filterIncidentsByRange, filterOptions, getBarangayStats, months, reportRows, summarizeBy,
+} from '../data/analyticsModule';
 
-const kpiCards = [
-  { label: 'Total Incidents (March)', value: '80', change: '+12%', trend: 'up', color: 'text-red-400', bg: 'bg-red-500/10', border: 'border-red-500/20' },
-  { label: 'Avg Response Time', value: '7.4 min', change: '-15%', trend: 'down', color: 'text-green-400', bg: 'bg-green-500/10', border: 'border-green-500/20' },
-  { label: 'Resolution Rate', value: '84%', change: '+3%', trend: 'up', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
-  { label: 'Active Teams', value: '5', change: '0%', trend: 'neutral', color: 'text-purple-400', bg: 'bg-purple-500/10', border: 'border-purple-500/20' },
-];
+const colors = ['#2563eb', '#dc2626', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#64748b'];
 
-const CustomTooltip = ({ active, payload, label }) => {
-  if (active && payload && payload.length) {
-    return (
-      <div className="bg-card border border-border rounded-xl p-3 shadow-xl">
-        <p className="text-xs text-muted-foreground mb-2">{label}</p>
-        {payload.map((entry) => (
-          <div key={entry.name} className="flex items-center gap-2 text-xs">
-            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-            <span className="text-muted-foreground capitalize">{entry.name}:</span>
-            <span className="text-foreground font-semibold">{entry.value}</span>
-          </div>
-        ))}
-      </div>
-    );
-  }
-  return null;
+const priorityColors = {
+  Critical: '#dc2626',
+  High: '#f97316',
+  Medium: '#eab308',
+  Low: '#22c55e',
 };
 
-export default function Analytics() {
-  const [dateRange, setDateRange] = useState('month');
-  const { isDarkMode } = useTheme();
-
-  const gridColor = isDarkMode ? '#1e293b' : '#e2e8f0';
-  const axisColor = isDarkMode ? '#64748b' : '#94a3b8';
-
+function ChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
   return (
-    <div className="p-5 space-y-5 bg-background min-h-full transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-            Analytics Dashboard
-          </h1>
-          <p className="text-muted-foreground text-xs mt-0.5">Performance metrics and incident trend analysis</p>
+    <div className="rounded-lg border border-border bg-card p-3 text-xs shadow-xl">
+      <div className="mb-1 font-semibold text-foreground">{label}</div>
+      {payload.map((entry) => (
+        <div key={entry.name} className="flex items-center gap-2 text-muted-foreground">
+          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: entry.color }} />
+          {entry.name}: <span className="font-semibold text-foreground">{entry.value}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex bg-secondary border border-border rounded-lg overflow-hidden text-xs">
-            {['week', 'month', '3months', 'year'].map(range => (
-              <button
-                key={range}
-                onClick={() => setDateRange(range)}
-                className={`px-3 py-2 capitalize transition-all ${
-                  dateRange === range ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                {range === '3months' ? '3M' : range === 'week' ? 'Week' : range === 'month' ? 'Month' : 'Year'}
-              </button>
-            ))}
-          </div>
-          <button className="flex items-center gap-1.5 px-3 py-2 bg-secondary border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground transition-all">
-            <Download className="w-3.5 h-3.5" />
-            Export
-          </button>
-        </div>
-      </div>
+      ))}
+    </div>
+  );
+}
 
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {kpiCards.map(({ label, value, change, trend, color, bg, border }) => (
-          <div key={label} className={`p-4 rounded-xl border ${bg} ${border} bg-card transition-colors duration-300`}>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
-              <div className={`flex items-center gap-0.5 text-[10px] font-medium ${
-                trend === 'up' ? (label.includes('Time') ? 'text-red-400' : 'text-green-400') :
-                trend === 'down' ? (label.includes('Time') ? 'text-green-400' : 'text-red-400') : 'text-muted-foreground'
-              }`}>
-                {trend === 'up' ? <TrendingUp className="w-3 h-3" /> : trend === 'down' ? <TrendingDown className="w-3 h-3" /> : null}
-                {change}
-              </div>
-            </div>
-            <div className={`text-2xl font-bold ${color}`}>{value}</div>
-          </div>
+function DateFilters({ range, setRange, customRange, setCustomRange }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-card p-1.5 shadow-sm">
+      <div className="flex overflow-hidden rounded-md border border-border bg-secondary/40 text-xs">
+        {filterOptions.map((option) => (
+          <button
+            key={option.value}
+            onClick={() => setRange(option.value)}
+            className={`px-3 py-2 font-medium transition-all ${range === option.value ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+          >
+            {option.label}
+          </button>
         ))}
       </div>
-
-      {/* Charts Row 1 */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        {/* Incidents by Month (stacked bar) */}
-        <div className="xl:col-span-2 bg-card border border-border rounded-xl p-4 transition-colors duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Incidents by Type — Monthly</h3>
-              <p className="text-xs text-muted-foreground">Last 6 months breakdown</p>
-            </div>
-            <BarChart2 className="w-4 h-4 text-muted-foreground" />
-          </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={analyticsData.incidentsByMonth} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-              <XAxis dataKey="month" tick={{ fill: axisColor, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: axisColor, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="vehicular" stackId="a" fill="#EF4444" radius={[0, 0, 0, 0]} />
-              <Bar dataKey="medical" stackId="a" fill="#3B82F6" />
-              <Bar dataKey="fire" stackId="a" fill="#F97316" />
-              <Bar dataKey="flood" stackId="a" fill="#0EA5E9" />
-              <Bar dataKey="crime" stackId="a" fill="#8B5CF6" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-          <div className="flex flex-wrap gap-3 mt-2">
-            {[
-              { color: '#EF4444', label: 'Vehicular' },
-              { color: '#3B82F6', label: 'Medical' },
-              { color: '#F97316', label: 'Fire' },
-              { color: '#0EA5E9', label: 'Flood' },
-              { color: '#8B5CF6', label: 'Crime' },
-            ].map(({ color, label }) => (
-              <div key={label} className="flex items-center gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: color }} />
-                <span className="text-[10px] text-muted-foreground">{label}</span>
-              </div>
-            ))}
-          </div>
+      {range === 'custom' && (
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={customRange.start}
+            onChange={(event) => setCustomRange((current) => ({ ...current, start: event.target.value }))}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs text-foreground outline-none focus:border-blue-500"
+          />
+          <input
+            type="date"
+            value={customRange.end}
+            onChange={(event) => setCustomRange((current) => ({ ...current, end: event.target.value }))}
+            className="h-9 rounded-md border border-border bg-background px-3 text-xs text-foreground outline-none focus:border-blue-500"
+          />
         </div>
+      )}
+    </div>
+  );
+}
 
-        {/* Incident Types Pie */}
-        <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
-          <div className="mb-4">
-            <h3 className="text-sm font-semibold text-foreground">Incident Distribution</h3>
-            <p className="text-xs text-muted-foreground">By type (all time)</p>
-          </div>
-          <ResponsiveContainer width="100%" height={180}>
+function RankingTable({ rows }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="border-b border-border text-muted-foreground">
+            <th className="px-4 py-2 text-left font-medium">Barangay</th>
+            <th className="px-3 py-2 text-right font-medium">Total</th>
+            <th className="px-3 py-2 text-right font-medium">Share</th>
+            <th className="px-3 py-2 text-right font-medium">Trend</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.name} className="border-b border-border/60">
+              <td className="px-4 py-2 text-foreground">{row.name}</td>
+              <td className="px-3 py-2 text-right font-semibold text-foreground">{row.count}</td>
+              <td className="px-3 py-2 text-right text-muted-foreground">{row.percent}%</td>
+              <td className="px-3 py-2">
+                <div className="flex justify-end">
+                  {row.trend === 'up' ? <TrendingUp className="h-3.5 w-3.5 text-red-400" /> : row.trend === 'down' ? <TrendingDown className="h-3.5 w-3.5 text-green-400" /> : <span className="text-muted-foreground">-</span>}
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function MetricCard({ label, value, helper, icon: Icon, tone }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+          <div className="mt-2 text-2xl font-bold text-foreground">{value}</div>
+          <div className="mt-1 truncate text-xs text-muted-foreground">{helper}</div>
+        </div>
+        <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg border ${tone}`}>
+          {createElement(Icon, { className: 'h-4 w-4' })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({ title, subtitle }) {
+  return (
+    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground">{title}</h2>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+function DistributionCard({ title, subtitle, data, type = 'bar' }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[1fr_180px]">
+        <ResponsiveContainer width="100%" height={220}>
+          {type === 'pie' ? (
             <PieChart>
-              <Pie
-                data={analyticsData.incidentsByType}
-                cx="50%"
-                cy="50%"
-                innerRadius={50}
-                outerRadius={80}
-                paddingAngle={3}
-                dataKey="value"
-              >
-                {analyticsData.incidentsByType.map((entry, index) => (
-                  <Cell key={index} fill={entry.color} />
-                ))}
+              <Pie data={data} dataKey="count" nameKey="name" innerRadius={55} outerRadius={86} paddingAngle={2}>
+                {data.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
               </Pie>
-              <Tooltip
-                contentStyle={{
-                  background: isDarkMode ? '#1e293b' : '#ffffff',
-                  border: `1px solid ${isDarkMode ? '#334155' : '#e2e8f0'}`,
-                  borderRadius: '8px',
-                  fontSize: '11px',
-                  color: isDarkMode ? '#e2e8f0' : '#1e293b',
-                }}
-                itemStyle={{ color: isDarkMode ? '#e2e8f0' : '#1e293b' }}
-              />
+              <Tooltip content={<ChartTooltip />} />
             </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-1.5 mt-2">
-            {analyticsData.incidentsByType.map(({ name, value, color }) => (
-              <div key={name} className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
-                  <span className="text-[10px] text-muted-foreground">{name}</span>
-                </div>
-                <span className="text-[10px] font-semibold text-foreground">{value}</span>
+          ) : (
+            <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+              <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+              <Tooltip content={<ChartTooltip />} />
+              <Bar dataKey="count" name="Count" radius={[4, 4, 0, 0]}>
+                {data.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+              </Bar>
+            </BarChart>
+          )}
+        </ResponsiveContainer>
+        <div className="space-y-2">
+          {data.map((item, index) => (
+            <div key={item.name}>
+              <div className="mb-1 flex justify-between gap-3 text-xs">
+                <span className="truncate text-muted-foreground">{item.name}</span>
+                <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Charts Row 2 */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
-        {/* Response Time by Hour */}
-        <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Avg Response Time by Hour</h3>
-              <p className="text-xs text-muted-foreground">Peak response hours analysis</p>
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={analyticsData.responseTime} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-              <XAxis dataKey="time" tick={{ fill: axisColor, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: axisColor, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<CustomTooltip />} />
-              <Area
-                type="monotone"
-                dataKey="avgMin"
-                stroke="#3B82F6"
-                strokeWidth={2}
-                fill="url(#colorResponse)"
-                name="Avg Minutes"
-              />
-              <defs>
-                <linearGradient id="colorResponse" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#3B82F6" stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        {/* Weekly Trend */}
-        <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground">Weekly Incident Trend</h3>
-              <p className="text-xs text-muted-foreground">Incidents vs. resolved this week</p>
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={analyticsData.weeklyTrend} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
-              <XAxis dataKey="day" tick={{ fill: axisColor, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: axisColor, fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<CustomTooltip />} />
-              <Line
-                type="monotone"
-                dataKey="incidents"
-                stroke="#EF4444"
-                strokeWidth={2}
-                dot={{ fill: '#EF4444', r: 3 }}
-                name="Reported"
-              />
-              <Line
-                type="monotone"
-                dataKey="resolved"
-                stroke="#22C55E"
-                strokeWidth={2}
-                dot={{ fill: '#22C55E', r: 3 }}
-                name="Resolved"
-              />
-            </LineChart>
-          </ResponsiveContainer>
-          <div className="flex gap-4 mt-2">
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-0.5 bg-red-400" />
-              <span className="text-[10px] text-muted-foreground">Reported</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-0.5 bg-green-400" />
-              <span className="text-[10px] text-muted-foreground">Resolved</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Top Locations */}
-      <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="text-sm font-semibold text-foreground">Top Incident Locations (Hotspots)</h3>
-            <p className="text-xs text-muted-foreground">Locations with highest incident frequency</p>
-          </div>
-        </div>
-        <div className="space-y-3">
-          {analyticsData.topLocations.map(({ location, incidents: count }, i) => {
-            const max = analyticsData.topLocations[0].incidents;
-            const pct = (count / max) * 100;
-            return (
-              <div key={location} className="flex items-center gap-4">
-                <span className="w-4 text-[10px] text-muted-foreground font-mono">{i + 1}</span>
-                <div className="w-36 text-xs text-foreground/80 truncate">{location}</div>
-                <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${
-                      i === 0 ? 'bg-red-500' : i === 1 ? 'bg-orange-500' : i === 2 ? 'bg-yellow-500' : 'bg-blue-500'
-                    }`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <span className="text-xs text-foreground font-semibold w-8 text-right">{count}</span>
+              <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colors[index % colors.length] }} />
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </div>
+    </div>
+  );
+}
 
-      {/* AI Prediction Note */}
-      <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
-        <div className="flex items-start gap-3">
-          <div className="w-8 h-8 bg-blue-600/20 border border-blue-500/30 rounded-lg flex items-center justify-center shrink-0">
-            <TrendingUp className="w-4 h-4 text-blue-400" />
+function HorizontalMiniBars({ title, data, accent = '#2563eb' }) {
+  const max = Math.max(...data.map((item) => item.count), 1);
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <span className="rounded-md bg-secondary px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+          {data.reduce((sum, item) => sum + item.count, 0)} cases
+        </span>
+      </div>
+      <div className="space-y-3">
+        {data.length ? data.map((item, index) => (
+          <div key={item.name}>
+            <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
+              <span className="truncate text-muted-foreground">{item.name}</span>
+              <span className="font-semibold text-foreground">{item.count}</span>
+            </div>
+            <div className="h-2.5 overflow-hidden rounded-full bg-secondary">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${Math.max((item.count / max) * 100, 8)}%`,
+                  backgroundColor: index === 0 ? accent : '#64748b',
+                }}
+              />
+            </div>
           </div>
-          <div>
-            <h4 className="text-sm font-semibold text-blue-400 mb-1">AI Spatial-Temporal Predictions</h4>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              Based on historical patterns, <strong className="text-foreground">Saturday afternoons (14:00–18:00)</strong> have the highest incident probability on Maharlika Highway (+35% above baseline). 
-              <strong className="text-foreground"> Flash flood risk</strong> in Brgy. Pandan and Bagumbayan is elevated this week due to weather patterns. 
-              AI model confidence: <strong className="text-green-400">87%</strong>
+        )) : (
+          <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
+            No MVC records in this range
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ComplianceBarsCard({ license, helmet, alcohol }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="mb-4 flex flex-col gap-2 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">License | Helmet | Alcohol</h3>
+          <p className="text-xs text-muted-foreground">Motor vehicle crash compliance indicators by count</p>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          <ShieldCheck className="h-3.5 w-3.5 text-blue-400" />
+          Risk Factors
+        </div>
+      </div>
+      <div className="grid gap-5 lg:grid-cols-3">
+        <HorizontalMiniBars title="License" data={license} accent="#2563eb" />
+        <HorizontalMiniBars title="Helmet" data={helmet} accent="#22c55e" />
+        <HorizontalMiniBars title="Alcohol" data={alcohol} accent="#dc2626" />
+      </div>
+    </div>
+  );
+}
+
+function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      <ResponsiveContainer width="100%" height={240}>
+        {kind === 'line' ? (
+          <LineChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+            <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <Line type="monotone" dataKey="count" name="Count" stroke="#2563eb" strokeWidth={2} dot={{ r: 3, fill: '#2563eb' }} />
+          </LineChart>
+        ) : kind === 'pie' ? (
+          <PieChart>
+            <Pie data={data} dataKey="count" nameKey="name" innerRadius={58} outerRadius={90} paddingAngle={2}>
+              {data.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+            </Pie>
+            <Tooltip content={<ChartTooltip />} />
+          </PieChart>
+        ) : (
+          <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+            <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <Bar dataKey="count" name="Count" radius={[4, 4, 0, 0]}>
+              {data.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+            </Bar>
+          </BarChart>
+        )}
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export default function Analytics() {
+  const [range, setRange] = useState('today');
+  const [customRange, setCustomRange] = useState({ start: '', end: '' });
+  const [rankingView, setRankingView] = useState('bar');
+
+  const filtered = useMemo(() => filterIncidentsByRange(analyticsIncidents, range, customRange), [range, customRange]);
+  const barangays = useMemo(() => getBarangayStats(filtered).filter((item) => item.count > 0), [filtered]);
+  const priority = useMemo(() => summarizeBy(filtered, 'priority'), [filtered]);
+  const vehicleType = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.vehicleType), [filtered]);
+  const personInvolved = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.personInvolved), [filtered]);
+  const engineSize = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.engineSize), [filtered]);
+  const license = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.licenseStatus), [filtered]);
+  const helmet = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.helmetUsage), [filtered]);
+  const alcohol = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.alcoholInvolvement), [filtered]);
+  const traumaCount = filtered.filter((item) => item.classification === 'Trauma').length;
+  const medicalCount = filtered.filter((item) => item.classification === 'Medical').length;
+  const mvcCount = filtered.filter((item) => item.classification === 'MVC').length;
+  const monthlyTotals = useMemo(() => months.map((month, index) => ({
+    month: month.slice(0, 3),
+    count: reportRows.reduce((sum, row) => sum + row.values[index], 0),
+  })), []);
+  const categoryComparison = useMemo(() => ['Medical', 'Trauma', 'Motor Vehicle Crash Type', 'Conduction', 'Dialysis'].map((category) => {
+    const row = reportRows.find((item) => item.category === category);
+    return { name: category === 'Motor Vehicle Crash Type' ? 'MVC' : category, count: row?.total || 0 };
+  }), []);
+  const reportTraumaStats = useMemo(() => reportRows
+    .filter((row) => ['Fall', 'Electrocution', 'Domestic Violence', 'Fire Rescue Incident'].includes(row.category))
+    .map((row) => ({ name: row.category, count: row.total })), []);
+  const reportMedicalStats = useMemo(() => reportRows
+    .filter((row) => ['Pediatric', 'Psychiatric', 'Surgical', 'Obstetrical'].includes(row.category))
+    .map((row) => ({ name: row.category, count: row.total })), []);
+  const reportMvcStats = useMemo(() => reportRows
+    .filter((row) => ['Collision', 'Self-Accident'].includes(row.category))
+    .map((row) => ({ name: row.category, count: row.total })), []);
+
+  return (
+    <div className="min-h-full bg-background p-5" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <div className="mb-5 rounded-lg border border-border bg-card px-5 py-4 shadow-sm">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+          <div className="min-w-0">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-400">
+              <Activity className="h-3 w-3" />
+              Emergency Intelligence
+            </div>
+            <h1 className="text-2xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+              Analytics Command Center
+            </h1>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
+              Incident trends, barangay hotspots, medical classifications, and MVC risk indicators for Echague operations.
             </p>
+          </div>
+          <DateFilters range={range} setRange={setRange} customRange={customRange} setCustomRange={setCustomRange} />
+        </div>
+      </div>
+
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <MetricCard label="Total Incidents" value={filtered.length} helper="Filtered emergency records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
+        <MetricCard label="Barangays Affected" value={barangays.length} helper="With reported activity" icon={MapPinned} tone="border-blue-500/20 bg-blue-500/10 text-blue-400" />
+        <MetricCard label="Medical Cases" value={medicalCount} helper={`${traumaCount} trauma cases`} icon={HeartPulse} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
+        <MetricCard label="MVC Cases" value={mvcCount} helper="Crash-related incidents" icon={Car} tone="border-orange-500/20 bg-orange-500/10 text-orange-400" />
+      </div>
+
+      <div className="mb-5">
+        <BarangayHeatmap
+          incidents={filtered}
+          allIncidents={analyticsIncidents}
+          range={range}
+          customRange={customRange}
+          title="Incidents by Barangay GIS Dashboard"
+        />
+      </div>
+
+      <SectionHeader title="Barangay and Priority Intelligence" subtitle="Operational ranking and severity mix for the selected date range" />
+      <div className="mb-5 grid gap-5 xl:grid-cols-2">
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="mb-4 flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Incidents by Barangay</h3>
+              <p className="text-xs text-muted-foreground">Highest to lowest ranking with share and trend indicator</p>
+            </div>
+            <div className="flex rounded-lg border border-border bg-secondary/40 p-0.5">
+              <button onClick={() => setRankingView('bar')} className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'bar' ? 'bg-blue-600 text-white' : 'text-muted-foreground'}`} title="Bar chart">
+                <BarChart2 className="h-3.5 w-3.5" />
+              </button>
+              <button onClick={() => setRankingView('table')} className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'table' ? 'bg-blue-600 text-white' : 'text-muted-foreground'}`} title="Table">
+                <Calendar className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          {rankingView === 'bar' ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={barangays} layout="vertical" margin={{ top: 0, right: 12, left: 28, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: '#94a3b8' }} width={86} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} />
+                <Bar dataKey="count" name="Incidents" fill="#2563eb" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <RankingTable rows={barangays} />}
+        </div>
+
+        <DistributionCard title="Incidents by Priority" subtitle="Pie, bar, and percentage distribution" data={priority.map((item) => ({ ...item, color: priorityColors[item.name] }))} type="pie" />
+      </div>
+
+      <SectionHeader title="Overall Analytics Visualizations" subtitle="Report-grade charts moved from spreadsheet analytics for faster operational review" />
+      <div className="mb-5 grid gap-5 xl:grid-cols-2">
+        <ReportChartCard title="Monthly Incident Trend" subtitle="Monthly totals across all report categories" data={monthlyTotals} kind="line" />
+        <ReportChartCard title="Incident Category Comparison" subtitle="Major category totals from spreadsheet reports" data={categoryComparison} />
+        <ReportChartCard title="Trauma Statistics" subtitle="Fall, electrocution, domestic violence, and fire rescue" data={reportTraumaStats} />
+        <ReportChartCard title="Medical Statistics" subtitle="Pediatric, psychiatric, surgical, and obstetrical cases" data={reportMedicalStats} kind="pie" />
+      </div>
+
+      <div>
+        <SectionHeader title="Motor Vehicle Crash Analytics" subtitle="Crash profile, vehicle involvement, and road safety compliance indicators" />
+        <div className="grid gap-5 xl:grid-cols-2">
+          <ReportChartCard title="MVC Statistics" subtitle="Collision and self-accident totals from spreadsheet reports" data={reportMvcStats} />
+          <DistributionCard title="Vehicle Type" subtitle="Bicycle, tricycle, motorcycle, private vehicle, public utility vehicle, and others" data={vehicleType} />
+          <DistributionCard title="Person Involved" subtitle="Driver, passenger, and pedestrian" data={personInvolved} />
+          <DistributionCard title="Engine Size" subtitle="Below 4500cc and above 4500cc" data={engineSize} />
+          <div className="xl:col-span-2">
+            <ComplianceBarsCard license={license} helmet={helmet} alcohol={alcohol} />
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { createBrowserRouter } from 'react-router-dom'
+import { createBrowserRouter, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import PublicLayout from './components/PublicLayout'
 import LandingPage from './pages/LandingPage'
@@ -7,11 +7,11 @@ import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
 import PCRModule from './pages/PCRModule'
 import PCRReports from './pages/PCRReports'
-import PCRVerification from './pages/PCRVerification';
 import IncidentList from './pages/IncidentList'
 import IncidentDetails from './pages/IncidentDetails'
 import MapMonitoring from './pages/MapMonitoring'
 import Analytics from './pages/Analytics'
+import ReportsAnalytics from './pages/ReportsAnalytics'
 import UserManagement from './pages/UserManagement'
 import SystemSettings from './pages/SystemSettings'
 import PublicDashboard from './pages/public/PublicDashboard'
@@ -37,8 +37,9 @@ export const router = createBrowserRouter([
       { path: 'map', element: protect(PERMISSIONS.VIEW_MAP, <MapMonitoring />) },
       { path: 'pcr', element: protect(PERMISSIONS.VIEW_PCR_RECORDS, <PCRReports />) },
       { path: 'pcr/new', element: protect(PERMISSIONS.CREATE_PCR, <PCRModule />) },
-      { path: 'pcr-verification', element: protect(PERMISSIONS.REVIEW_PCR, <PCRVerification />) },
+      { path: 'pcr-verification', element: <Navigate to="/admin/pcr" replace /> },
       { path: 'analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <Analytics />) },
+      { path: 'reports-analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <ReportsAnalytics />) },
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
       { path: 'access-denied', element: <AccessDenied /> },

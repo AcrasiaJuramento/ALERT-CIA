@@ -15,6 +15,99 @@
   margin: 12px;
 }
 
+.echague-gis-tooltip {
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.92);
+  color: #f8fafc;
+  border-radius: 8px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.25);
+}
+
+.echague-gis-popup .leaflet-popup-content-wrapper {
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.98);
+  color: #e2e8f0;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.38);
+}
+
+.echague-gis-popup .leaflet-popup-content {
+  margin: 0;
+}
+
+.gis-popup {
+  min-width: 240px;
+  padding: 2px;
+}
+
+.gis-popup-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.gis-popup-source {
+  margin-top: 2px;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.gis-popup-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.gis-popup-card {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(30, 41, 59, 0.85);
+}
+
+.gis-popup-card span,
+.gis-popup-row span,
+.gis-popup-most-common span,
+.gis-popup-range {
+  display: block;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.gis-popup-card strong,
+.gis-popup-row strong,
+.gis-popup-most-common strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #f8fafc;
+}
+
+.gis-popup-periods {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.gis-popup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  padding-bottom: 4px;
+}
+
+.gis-popup-range {
+  margin-top: 8px;
+}
+
+.gis-popup-most-common {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
 .leaflet-incident-marker-shell {
   background: transparent;
   border: 0;

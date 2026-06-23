@@ -1,7 +1,7 @@
 import {
   AlertTriangle,
   BarChart2,
-  ClipboardCheck,
+  FileSpreadsheet,
   FilePlus2,
   FileText,
   LayoutDashboard,
@@ -70,8 +70,8 @@ export const NAVIGATION_ITEMS = [
   { label: 'Map Monitor', icon: Map, path: '/admin/map', permission: PERMISSIONS.VIEW_MAP },
   { label: 'Patient Care Records', icon: FileText, path: '/admin/pcr', permission: PERMISSIONS.VIEW_PCR_RECORDS, group: 'Patient Care' },
   { label: 'Create PCR Report', icon: FilePlus2, path: '/admin/pcr/new', permission: PERMISSIONS.CREATE_PCR, group: 'Patient Care' },
-  { label: 'PCR Review & Verification', icon: ClipboardCheck, path: '/admin/pcr-verification', permission: PERMISSIONS.REVIEW_PCR, group: 'Patient Care', badge: true },
   { label: 'Analytics', icon: BarChart2, path: '/admin/analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
+  { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
   { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS },
   { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS },
 ];
