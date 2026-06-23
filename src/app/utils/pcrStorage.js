@@ -11,6 +11,11 @@ export const createPCR = () => ({
   respondingTeam: "", vehicle: "", driver: "", mainAider: "", assistantAider: "", natureOfCall: "Emergency",
   dateOfIncident: new Date().toISOString().slice(0, 10), timeOfIncident: "", placeOfIncident: "",
   dispatchTime: "", arrivalScene: "", departureScene: "", arrivalHospital: "", departureHospital: "", backToBase: "",
+  timeline: {
+    dateOfIncident: new Date().toISOString().slice(0, 10), timeOfIncident: "", placeOfIncident: "",
+    dispatchTime: "", arrivalScene: "", departureScene: "", endorsementTime: "",
+    arrivalHospital: "", departureHospital: "", backToBase: "",
+  },
   patientName: "", age: "", birthday: "", gender: "", civilStatus: "", address: "", contactPerson: "", contactNumber: "",
   triage: "", emergencyTypes: [], traumaTypes: [], emergencyOther: "", assaultDetails: "", animalBiteDetails: "",
   incidentNature: "", ingestionItem: "", ingestionQuantity: "", fallDetails: "",
@@ -56,19 +61,19 @@ export function addAuditLog(reportId, actionType, previousValue, newValue) {
 }
 
 export function synchronizePCR(record) {
-  const next = { ...record };
+  const next = { ...record, timeline: { ...(record.timeline || {}) } };
+  ["dateOfIncident", "timeOfIncident", "placeOfIncident", "dispatchTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase"].forEach(key => {
+    next.timeline[key] = next.timeline[key] || next[key] || "";
+    next[key] = next.timeline[key] ?? next[key] ?? "";
+  });
+  next.timeline.endorsementTime = next.timeline.endorsementTime || next.endorsementTime || next.hospitalTime || next.arrivalHospital || "";
   if (next.arrivalHospital) {
     next.hospitalTime = next.arrivalHospital;
     next.endorsementTime = next.arrivalHospital;
+    next.timeline.endorsementTime = next.arrivalHospital;
     next.transferArrivalTime = next.arrivalHospital;
     next.hospitalDate = next.hospitalDate || next.dateOfIncident;
     next.endorsementDate = next.endorsementDate || next.dateOfIncident;
-  }
-  const receiverComplete = next.receiverName?.trim() && next.receiverPosition?.trim() && next.receiverContact?.trim() && next.receiverConfirmed;
-  if (receiverComplete && !next.departureHospital) {
-    const now = new Date();
-    next.departureHospital = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
-    next.departureHospitalGeneratedAt = now.toISOString();
   }
   return next;
 }
