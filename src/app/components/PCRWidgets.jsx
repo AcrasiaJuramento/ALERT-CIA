@@ -38,13 +38,16 @@ export function AnatomyEditor({ value, onSave, onClose }) {
     <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[96vh] overflow-hidden flex flex-col">
       <div className="px-4 py-3 border-b flex items-center justify-between"><div><h3 className="font-bold text-slate-900">Human Anatomy Body Mapping</h3><p className="text-xs text-slate-500">Draw with mouse, touch, or stylus. Use Pan and zoom for precision.</p></div><button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-100"><X size={18} /></button></div>
       <div className="p-3 border-b flex flex-wrap gap-2 items-center">
-        {tools.map(([name, icon]) => <button key={name} onClick={() => setTool(name)} className={`px-3 py-2 rounded-lg text-xs font-semibold flex gap-1 items-center ${tool === name ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700"}`}>{icon}{name[0].toUpperCase() + name.slice(1)}</button>)}
-        <input type="color" value={color} onChange={e => setColor(e.target.value)} className="w-9 h-9" title="Marking color" />
+        {tools.map(([name, icon]) => <button key={name} onClick={() => setTool(name)} className={`px-3 py-2 rounded-lg text-xs font-semibold flex gap-1 items-center ${tool === name ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-800 hover:bg-slate-200"}`}>{icon}{name[0].toUpperCase() + name.slice(1)}</button>)}
+        <label className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-slate-100 border border-slate-200 text-xs font-semibold text-slate-800">
+          Color
+          <input type="color" value={color} onChange={e => setColor(e.target.value)} className="w-10 h-8 rounded-md border-2 border-slate-400 cursor-pointer bg-white p-0.5" title="Marking color" />
+        </label>
         {tool === "text" && <><select value={label} onChange={e => setLabel(e.target.value)} className="border rounded-lg px-2 py-2 text-xs">{["Cut", "Bruise", "Burn", "Fracture", "Swelling", "Bleeding", "Pain", "Gunshot", "Stab Wound", "Others"].map(x => <option key={x}>{x}</option>)}</select>{label === "Others" && <input value={customLabel} onChange={e => setCustomLabel(e.target.value)} placeholder="Custom injury" className="border rounded-lg px-2 py-2 text-xs" />}</>}
-        <button onClick={() => { const last = marks.at(-1); if (last) { setMarks(m => m.slice(0, -1)); setRedo(r => [...r, last]); } }} className="p-2 bg-slate-100 rounded-lg" title="Undo"><Undo2 size={16} /></button>
-        <button onClick={() => { const item = redo.at(-1); if (item) { setRedo(r => r.slice(0, -1)); setMarks(m => [...m, item]); } }} className="p-2 bg-slate-100 rounded-lg" title="Redo"><Redo2 size={16} /></button>
-        <button onClick={() => setMarks([])} className="p-2 bg-red-50 text-red-600 rounded-lg" title="Clear"><Trash2 size={16} /></button>
-        <button onClick={() => setZoom(z => Math.min(3, z + .25))} className="p-2 bg-slate-100 rounded-lg"><ZoomIn size={16} /></button><button onClick={() => setZoom(z => Math.max(.75, z - .25))} className="p-2 bg-slate-100 rounded-lg"><ZoomOut size={16} /></button><span className="text-xs text-slate-500">{Math.round(zoom * 100)}%</span>
+        <button onClick={() => { const last = marks.at(-1); if (last) { setMarks(m => m.slice(0, -1)); setRedo(r => [...r, last]); } }} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1" title="Undo"><Undo2 size={16} />Undo</button>
+        <button onClick={() => { const item = redo.at(-1); if (item) { setRedo(r => r.slice(0, -1)); setMarks(m => [...m, item]); } }} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1" title="Redo"><Redo2 size={16} />Redo</button>
+        <button onClick={() => setMarks([])} className="px-3 py-2 bg-red-50 hover:bg-red-100 text-red-700 rounded-lg text-xs font-semibold flex items-center gap-1" title="Clear"><Trash2 size={16} />Clear</button>
+        <button onClick={() => setZoom(z => Math.min(3, z + .25))} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"><ZoomIn size={16} />Zoom In</button><button onClick={() => setZoom(z => Math.max(.75, z - .25))} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"><ZoomOut size={16} />Zoom Out</button><span className="text-xs font-semibold text-slate-600">{Math.round(zoom * 100)}%</span>
       </div>
       <div className="flex-1 overflow-hidden bg-slate-200 min-h-[360px] touch-none cursor-crosshair">
         <svg ref={svgRef} viewBox="0 0 600 330" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} className="w-full h-full select-none" style={{ transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})`, transformOrigin: "center" }}>
@@ -70,10 +73,12 @@ export function SignaturePad({ value, onChange, label = "Digital Signature" }) {
 const Yn = ({ value }) => <span>{value === "yes" || value === true ? "☒ YES  ☐ NO" : value === "no" || value === false ? "☐ YES  ☒ NO" : "☐ YES  ☐ NO"}</span>;
 const Checked = ({ on }) => <span>{on ? "☒" : "☐"}</span>;
 const Cell = ({ label, value, className = "" }) => <div className={`pcr-cell ${className}`}><b>{label}</b>{value != null && <span> {value || ""}</span>}</div>;
+const PaperCheck = ({ on, label }) => <span className="mr-2">{on ? "[x]" : "[ ]"} {label}</span>;
+const TriageMark = ({ color, label, selected }) => <span className={`pcr-triage pcr-triage-${color} ${selected ? "pcr-triage-selected" : ""}`}>{selected ? "[x]" : "[ ]"} {label}</span>;
 export function PrintablePCR({ record, printOnly = false }) {
   if (!record) return null; const gcsTotal = [record.gcs?.eye, record.gcs?.verbal, record.gcs?.motor].reduce((a,b)=>a+Number(b||0),0);
   return <div className={`pcr-paper ${printOnly ? "pcr-print-source" : "pcr-preview"} text-black bg-white`} data-pcr-export-id={record.id}>
-    <style>{`@media screen{.pcr-print-source{position:absolute;left:-10000px;width:210mm}}@media print{body *{visibility:hidden!important}.pcr-preview{display:none!important}.pcr-print-source,.pcr-print-source *{visibility:visible!important}.pcr-print-source{position:absolute!important;left:0!important;top:0!important;width:100%!important}.pcr-page{page-break-after:always}.pcr-page:last-child{page-break-after:auto}}.pcr-paper{font-family:Arial,sans-serif;font-size:9px}.pcr-page{padding:7mm}.pcr-title{text-align:center;font-weight:700;font-size:16px;margin:4px}.pcr-grid{display:grid;border-left:1px solid #111;border-top:1px solid #111}.pcr-cell{min-height:25px;padding:4px;border-right:1px solid #111;border-bottom:1px solid #111}.pcr-cell b{font-size:8px;text-transform:uppercase}.pcr-section{text-align:center;font-weight:700;background:#eee;padding:3px;border:1px solid #111;border-bottom:0}.pcr-table{width:100%;border-collapse:collapse}.pcr-table td,.pcr-table th{border:1px solid #111;padding:3px}.pcr-sign{height:55px;object-fit:contain;max-width:100%}.pcr-anatomy{height:235px;width:100%}`}</style>
+    <style>{`@media screen{.pcr-print-source{position:absolute;left:-10000px;width:210mm}}@media print{body *{visibility:hidden!important}.pcr-preview{display:none!important}.pcr-print-source,.pcr-print-source *{visibility:visible!important}.pcr-print-source{position:absolute!important;left:0!important;top:0!important;width:100%!important}.pcr-page{page-break-after:always}.pcr-page:last-child{page-break-after:auto}}.pcr-paper{font-family:Arial,sans-serif;font-size:9px}.pcr-page{padding:7mm}.pcr-title{text-align:center;font-weight:700;font-size:16px;margin:4px}.pcr-grid{display:grid;border-left:1px solid #111;border-top:1px solid #111}.pcr-cell{min-height:25px;padding:4px;border-right:1px solid #111;border-bottom:1px solid #111}.pcr-cell b{font-size:8px;text-transform:uppercase}.pcr-section{text-align:center;font-weight:700;background:#eee;padding:3px;border:1px solid #111;border-bottom:0}.pcr-table{width:100%;border-collapse:collapse}.pcr-table td,.pcr-table th{border:1px solid #111;padding:3px}.pcr-sign{height:55px;object-fit:contain;max-width:100%}.pcr-anatomy{height:235px;width:100%}.pcr-triage{display:inline-block;width:24%;padding:4px 6px;margin-right:1%;border:1px solid #111;text-align:center;font-weight:700}.pcr-triage-red{background:#dc2626;color:#fff}.pcr-triage-yellow{background:#fde047;color:#111}.pcr-triage-green{background:#16a34a;color:#fff}.pcr-triage-black{background:#111827;color:#fff}.pcr-triage-selected{outline:2px solid #111;outline-offset:-3px}`}</style>
     <section className="pcr-page">
       <div className="text-center text-[9px]">Republic of the Philippines<br/>Province of Isabela<br/><b>MUNICIPALITY OF ECHAGUE</b></div><div className="pcr-title">PATIENT CARE REPORT</div><div className="text-center mb-2">Echague Rescue Emergency Medical Service</div>
       <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr 1fr"}}><Cell label="Response No." value={record.responseNumber}/><Cell label="Responding Team" value={record.respondingTeam}/><Cell label="Vehicle" value={record.vehicle}/><Cell label="Driver" value={record.driver}/><Cell label="Main Aider" value={record.mainAider}/><Cell label="Assistant Aider" value={record.assistantAider}/></div>
@@ -82,8 +87,40 @@ export function PrintablePCR({ record, printOnly = false }) {
       <div className="pcr-grid mt-1" style={{gridTemplateColumns:"1fr 1fr 1fr 1fr"}}><Cell label="Nature of Call" value={record.natureOfCall}/><Cell label="Date of Incident" value={record.dateOfIncident}/><Cell label="Time of Incident" value={record.timeOfIncident}/><Cell label="Place of Incident" value={record.placeOfIncident}/></div>
       <table className="pcr-table"><tbody><tr>{["Dispatch","Arrival Scene","Departure Scene","Arrival Hospital","Departure Hospital","Back to Base"].map((x,i)=><td key={x}><b>{x}</b><br/>{[record.dispatchTime,record.arrivalScene,record.departureScene,record.arrivalHospital,record.departureHospital,record.backToBase][i]}</td>)}</tr></tbody></table>
       <div className="pcr-section">PATIENT ASSESSMENT</div><div className="pcr-cell"><b>TRIAGE:</b> ☐ RED ☐ YELLOW ☐ GREEN ☐ BLACK &nbsp; <b>Selected:</b> {record.triage}</div>
-      <div className="pcr-cell"><b>TYPE OF EMERGENCY:</b> {[...record.emergencyTypes,...record.traumaTypes].join(", ")} {record.emergencyOther}</div>
-      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Obstetric Data" value={`LMP ${record.obstetric?.lmp} G ${record.obstetric?.g} P ${record.obstetric?.p} EDC ${record.obstetric?.edc} AOG ${record.obstetric?.aog}`}/><Cell label="Motor Vehicle Crash" value={`${record.crash?.vehicle} ${record.crash?.role} Plate ${record.crash?.plate}`}/><Cell label="Chief Complaint / Initial Assessment" value={record.chiefComplaint}/><div className="pcr-cell row-span-2"><AnatomyFigure marks={record.bodyMap?.marks} className="pcr-anatomy"/></div><div className="pcr-cell"><b>VITAL SIGNS</b><table className="pcr-table"><thead><tr><th>Time</th><th>BP</th><th>Pulse</th><th>Resp.</th><th>Temp.</th><th>SpO2</th></tr></thead><tbody>{record.vitals.map(v=><tr key={v.id}><td>{v.time}</td><td>{v.bp}</td><td>{v.pulse}</td><td>{v.respiratory}</td><td>{v.temperature}</td><td>{v.oxygen}</td></tr>)}</tbody></table></div></div>
+      <div className="pcr-cell"><b>TRIAGE COLOR:</b><br/><TriageMark color="red" label="RED" selected={record.triage === "Red"}/><TriageMark color="yellow" label="YELLOW" selected={record.triage === "Yellow"}/><TriageMark color="green" label="GREEN" selected={record.triage === "Green"}/><TriageMark color="black" label="BLACK" selected={record.triage === "Black"}/></div>
+      <div className="pcr-section">TYPE OF EMERGENCY</div>
+      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr 260px"}}>
+        <div className="pcr-cell">
+          <b><PaperCheck on={record.emergencyTypes?.includes("Medical")} label="MEDICAL"/></b><br/>
+          {["Pediatric","Psychiatric","Surgical","Obstetrical","Drowning"].map(item => <PaperCheck key={item} on={record.emergencyTypes?.includes(item)} label={item}/>)}
+          <br/><b>Others:</b> {record.emergencyOther}
+        </div>
+        <div className="pcr-cell">
+          <b><PaperCheck on={record.traumaTypes?.includes("Trauma")} label="TRAUMA"/></b><br/>
+          {["Fall","Electrocution","Domestic Violence","Water Rescue Incident","Fire Incident","Motor Vehicle Crash"].map(item => <PaperCheck key={item} on={record.traumaTypes?.includes(item)} label={item}/>)}
+          <br/><PaperCheck on={record.traumaTypes?.includes("Assault")} label="ASSAULT"/> <b>Pls. specify:</b> {record.assaultDetails}
+          <br/><PaperCheck on={record.traumaTypes?.includes("Animal Bite")} label="ANIMAL BITE"/> <b>Pls. specify:</b> {record.animalBiteDetails}
+        </div>
+        <div className="pcr-cell">
+          <b>Nature:</b> {record.incidentNature}<br/>
+          <b>If Ingestion:</b> {record.ingestionItem}<br/>
+          <b>Quantity:</b> {record.ingestionQuantity}<br/>
+          <b>If Fall:</b> {record.fallDetails}
+        </div>
+      </div>
+      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1.45fr"}}>
+        <Cell label="Obstetric Data" value={`LMP ${record.obstetric?.lmp} G ${record.obstetric?.g} P ${record.obstetric?.p} EDC ${record.obstetric?.edc} BOW ${record.obstetric?.bow} AOG ${record.obstetric?.aog} BABY ${record.obstetric?.baby} IE ${record.obstetric?.ie} PLACENTA ${record.obstetric?.placenta}`}/>
+        <div className="pcr-cell">
+          <PaperCheck on={record.crash?.selfAccident} label="SELF-ACCIDENT"/> <PaperCheck on={record.crash?.collision} label="COLLISION"/><br/>
+          <b>Vehicle Involved:</b> {record.crash?.vehicle}<br/>
+          <b>Driver / Passenger / Pedestrian:</b> {record.crash?.role} &nbsp; <b>PLATE #:</b> {record.crash?.plate}<br/>
+          <b>Alcohol Breath:</b> {record.crash?.alcohol} &nbsp; <b>Helmet:</b> {record.crash?.helmet}<br/>
+          <b>Driver's License:</b> {record.crash?.license}
+        </div>
+        <Cell label="Chief Complaint / Initial Assessment" value={record.chiefComplaint}/>
+        <div className="pcr-cell row-span-2"><AnatomyFigure marks={record.bodyMap?.marks} className="pcr-anatomy"/></div>
+        <div className="pcr-cell"><b>VITAL SIGNS</b><table className="pcr-table"><thead><tr><th>Time</th><th>BP</th><th>Pulse</th><th>Resp.</th><th>Temp.</th><th>SpO2</th></tr></thead><tbody>{record.vitals.map(v=><tr key={v.id}><td>{v.time}</td><td>{v.bp}</td><td>{v.pulse}</td><td>{v.respiratory}</td><td>{v.temperature}</td><td>{v.oxygen}</td></tr>)}</tbody></table></div>
+      </div>
       <div className="pcr-section">GLASGOW COMA SCALE (GCS)</div><table className="pcr-table"><tbody><tr>{Object.entries(GCS_OPTIONS).map(([k,opts])=><td key={k}><b>{k.toUpperCase()} RESPONSE</b><br/>{opts.map(([n,s])=><span key={s}><Checked on={Number(record.gcs?.[k])===s}/> {n} ({s})<br/></span>)}</td>)}<td><b>TOTAL SCORE</b><br/><span className="text-xl">{gcsTotal || ""}</span><br/>Best Response = 15<br/>Comatose = 8 or less<br/>Unresponsive = 3</td></tr></tbody></table>
       <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Consent for Care" value={record.consentForCare}/><Cell label="Endorsed To / Received By / Hospital" value={`${record.endorsedTo} / ${record.receivedBy} / ${record.endorsementHospital}`}/><Cell label="Endorsement of Valuables" value={record.valuables}/><Cell label="Received By / Contact" value={`${record.valuablesReceivedBy} / ${record.valuablesContact}`}/></div>
     </section>
