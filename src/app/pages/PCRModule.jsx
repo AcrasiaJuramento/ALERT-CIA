@@ -13,8 +13,27 @@ const medicalHistory = ["None", "Heart Disease", "Hypertension", "Seizure", "COP
 
 function Field({ label, children, wide = false }) { return <label className={wide ? "md:col-span-2" : ""}><span className="block text-xs font-medium text-muted-foreground mb-1">{label}</span>{children}</label>; }
 function Section({ title, children }) { return <section className="border border-border rounded-xl overflow-hidden"><h3 className="px-4 py-2.5 bg-secondary text-sm font-bold text-foreground uppercase tracking-wide">{title}</h3><div className="p-4">{children}</div></section>; }
-function CheckGroup({ options, value = [], onChange, columns = 3 }) { const toggle = option => onChange(value.includes(option) ? value.filter(x => x !== option) : [...value, option]); const grid = columns === 2 ? "md:grid-cols-2" : "md:grid-cols-3"; return <div className={`grid grid-cols-2 ${grid} gap-2`}>{options.map(option => <label key={option} className="flex gap-2 items-center text-xs text-foreground p-2 rounded-lg border border-border bg-secondary/30"><input type="checkbox" checked={value.includes(option)} onChange={() => toggle(option)} className="accent-blue-600" />{option}</label>)}</div>; }
+function CheckGroup({ options, value = [], onChange, columns = 3 }) {
+  const toggle = option => onChange(value.includes(option) ? value.filter(x => x !== option) : [...value, option]);
+  const minWidth = columns === 2 ? "150px" : "170px";
+  return <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${minWidth}, 1fr))` }}>{options.map(option => <label key={option} className="flex gap-2 items-start min-w-0 text-xs leading-snug text-foreground p-2 rounded-lg border border-border bg-secondary/30"><input type="checkbox" checked={value.includes(option)} onChange={() => toggle(option)} className="accent-blue-600 shrink-0 mt-0.5" /><span className="min-w-0 whitespace-normal break-words">{option}</span></label>)}</div>;
+}
 function RadioButtons({ options, value, onChange }) { return <div className="flex flex-wrap gap-2">{options.map(option => <button type="button" key={option} onClick={() => onChange(option)} className={`px-3 py-2 rounded-lg border text-xs font-semibold ${value === option ? "bg-blue-600 border-blue-600 text-white" : "border-border text-muted-foreground"}`}>{option}</button>)}</div>; }
+function TriageButtons({ value, onChange }) {
+  const active = {
+    Red: "bg-red-600 border-red-600 text-white shadow-red-500/20",
+    Yellow: "bg-yellow-400 border-yellow-400 text-slate-950 shadow-yellow-500/20",
+    Green: "bg-green-600 border-green-600 text-white shadow-green-500/20",
+    Black: "bg-slate-950 border-slate-950 text-white shadow-slate-900/20",
+  };
+  const inactive = {
+    Red: "border-red-300 text-red-500 bg-red-500/10 hover:bg-red-500/20",
+    Yellow: "border-yellow-300 text-yellow-500 bg-yellow-500/10 hover:bg-yellow-500/20",
+    Green: "border-green-300 text-green-500 bg-green-500/10 hover:bg-green-500/20",
+    Black: "border-slate-500 text-slate-300 bg-slate-900/30 hover:bg-slate-900/50",
+  };
+  return <div className="grid grid-cols-2 md:grid-cols-4 gap-2">{["Red","Yellow","Green","Black"].map(option => <button type="button" key={option} onClick={() => onChange(option)} className={`px-4 py-3 rounded-xl border-2 text-sm font-black uppercase tracking-wide shadow-sm transition-all ${value === option ? active[option] : inactive[option]}`}>{option}</button>)}</div>;
+}
 function DetailedPCRReview({ record, onClose }) {
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
@@ -28,6 +47,12 @@ function DetailedPCRReview({ record, onClose }) {
     };
   }, [onClose]);
   const changeZoom = amount => setZoom(value => Math.min(1.75, Math.max(.75, Number((value + amount).toFixed(2)))));
+  const reviewScaleStyle = {
+    width: "210mm",
+    transform: `scale(${zoom})`,
+    transformOrigin: "top center",
+    marginBottom: `${Math.max(0, zoom - 1) * 1200}px`,
+  };
   return <div className="fixed inset-0 z-50 bg-black/75 p-2 md:p-5 flex flex-col" role="dialog" aria-modal="true" aria-label="Detailed PCR report review">
     <div className="bg-card border border-border rounded-t-xl px-3 py-2.5 flex flex-wrap items-center justify-between gap-2">
       <div><h2 className="font-bold text-sm md:text-base">Detailed PCR Report</h2><p className="text-[11px] text-muted-foreground">Zoom and scroll to review every section before submission.</p></div>
@@ -40,7 +65,7 @@ function DetailedPCRReview({ record, onClose }) {
       </div>
     </div>
     <div className="flex-1 overflow-auto bg-slate-200 rounded-b-xl p-2 md:p-6">
-      <div className="mx-auto bg-white shadow-xl origin-top-left" style={{ width: "210mm", zoom }}><PrintablePCR record={record}/></div>
+      <div className="mx-auto bg-white shadow-xl" style={reviewScaleStyle}><PrintablePCR record={record}/></div>
     </div>
   </div>;
 }
@@ -91,8 +116,57 @@ export default function PCRModule() {
         <Section title="Nature, Incident and Response Timeline"><div className="mb-3"><RadioButtons options={["Emergency","Conduction"]} value={form.natureOfCall} onChange={v=>update("natureOfCall",v)}/></div><div className="grid md:grid-cols-3 gap-3"><Field label="Date of Incident"><input type="date" className={input} value={form.dateOfIncident} onChange={e=>update("dateOfIncident",e.target.value)}/></Field><Field label="Time of Incident"><input type="time" className={input} value={form.timeOfIncident} onChange={e=>update("timeOfIncident",e.target.value)}/></Field><Field label="Place of Incident"><input className={input} value={form.placeOfIncident} onChange={e=>update("placeOfIncident",e.target.value)}/></Field>{[["Dispatch Time","dispatchTime"],["Arrival at Scene","arrivalScene"],["Departure at Scene","departureScene"],["Arrival at Hospital","arrivalHospital"],["Departure at Hospital","departureHospital"],["Back to Base","backToBase"]].map(([l,k])=><Field label={l} key={k}><input type="time" className={`${input} ${chronologyError ? "border-red-500/50" : ""}`} value={form[k]} disabled={k==="departureHospital"&&Boolean(form.departureHospitalGeneratedAt)} onChange={e=>updateTimeline(k,e.target.value)}/></Field>)}</div><div className="mt-3 grid md:grid-cols-2 gap-2 text-xs text-muted-foreground"><div className="bg-secondary rounded-lg p-2">Scene to hospital travel: <b>{hospitalTravel || "Pending"}</b></div><div className="bg-secondary rounded-lg p-2">Hospital to base travel: <b>{returnTravel || "Pending"}</b></div></div></Section>
       </>}
       {step === 1 && <>
-        <Section title="Triage and Type of Emergency"><div className="space-y-3"><RadioButtons options={["Red","Yellow","Green","Black"]} value={form.triage} onChange={v=>update("triage",v)}/><CheckGroup options={emergencyTypes} value={form.emergencyTypes} onChange={v=>update("emergencyTypes",v)}/><CheckGroup options={traumaTypes} value={form.traumaTypes} onChange={v=>update("traumaTypes",v)}/><div className="grid md:grid-cols-3 gap-3"><Field label="Other Emergency"><input className={input} value={form.emergencyOther} onChange={e=>update("emergencyOther",e.target.value)}/></Field><Field label="Assault Details"><input className={input} value={form.assaultDetails} onChange={e=>update("assaultDetails",e.target.value)}/></Field><Field label="Animal Bite Details"><input className={input} value={form.animalBiteDetails} onChange={e=>update("animalBiteDetails",e.target.value)}/></Field><Field label="Nature (self-inflicted / accidental)"><input className={input} value={form.incidentNature} onChange={e=>update("incidentNature",e.target.value)}/></Field><Field label="Ingestion Item and Quantity"><input className={input} value={`${form.ingestionItem}${form.ingestionQuantity?` / ${form.ingestionQuantity}`:""}`} onChange={e=>update("ingestionItem",e.target.value)}/></Field><Field label="Fall Details"><input className={input} value={form.fallDetails} onChange={e=>update("fallDetails",e.target.value)}/></Field></div></div></Section>
-        <Section title="Obstetric and Motor Vehicle Data"><div className="grid md:grid-cols-2 gap-4"><div className="grid grid-cols-3 gap-2">{Object.keys(form.obstetric).map(k=><Field key={k} label={k.toUpperCase()}><input className={input} value={form.obstetric[k]} onChange={e=>nested("obstetric",k,e.target.value)}/></Field>)}</div><div className="grid grid-cols-2 gap-2">{[["Vehicle Involved","vehicle"],["Driver / Passenger / Pedestrian","role"],["Plate No.","plate"],["Alcohol Breath","alcohol"],["Helmet","helmet"],["Driver's License","license"]].map(([l,k])=><Field key={k} label={l}><input className={input} value={form.crash[k]} onChange={e=>nested("crash",k,e.target.value)}/></Field>)}</div></div></Section>
+        <Section title="Triage and Type of Emergency">
+          <div className="space-y-4">
+            <TriageButtons value={form.triage} onChange={v=>update("triage",v)}/>
+            <div className="grid lg:grid-cols-[1fr_1fr_260px] gap-3">
+              <div className="border border-border rounded-xl p-3 bg-secondary/20">
+                <label className="flex gap-2 items-center text-sm font-bold mb-2">
+                  <input type="checkbox" checked={form.emergencyTypes.includes("Medical")} onChange={() => update("emergencyTypes", form.emergencyTypes.includes("Medical") ? form.emergencyTypes.filter(x=>x!=="Medical") : [...form.emergencyTypes,"Medical"])} className="accent-blue-600"/>
+                  MEDICAL
+                </label>
+                <CheckGroup options={emergencyTypes.filter(x=>x!=="Medical")} value={form.emergencyTypes} onChange={v=>update("emergencyTypes",v)}/>
+                <input className={`${input} mt-2`} placeholder="Others" value={form.emergencyOther} onChange={e=>update("emergencyOther",e.target.value)}/>
+              </div>
+              <div className="border border-border rounded-xl p-3 bg-secondary/20">
+                <label className="flex gap-2 items-center text-sm font-bold mb-2">
+                  <input type="checkbox" checked={form.traumaTypes.includes("Trauma")} onChange={() => update("traumaTypes", form.traumaTypes.includes("Trauma") ? form.traumaTypes.filter(x=>x!=="Trauma") : [...form.traumaTypes,"Trauma"])} className="accent-red-600"/>
+                  TRAUMA
+                </label>
+                <CheckGroup options={traumaTypes.filter(x=>x!=="Trauma")} value={form.traumaTypes} onChange={v=>update("traumaTypes",v)}/>
+                <div className="grid md:grid-cols-2 gap-2 mt-2">
+                  <input className={input} placeholder="Assault: hacking, stabbing, shooting..." value={form.assaultDetails} onChange={e=>update("assaultDetails",e.target.value)}/>
+                  <input className={input} placeholder="Animal bite: dog/cat/snake/others" value={form.animalBiteDetails} onChange={e=>update("animalBiteDetails",e.target.value)}/>
+                </div>
+              </div>
+              <div className="border border-border rounded-xl p-3 bg-card space-y-2">
+                <Field label="Nature"><input className={input} placeholder="Self-inflicted / accidental" value={form.incidentNature} onChange={e=>update("incidentNature",e.target.value)}/></Field>
+                <Field label="If ingestion"><input className={input} placeholder="Specify item" value={form.ingestionItem} onChange={e=>update("ingestionItem",e.target.value)}/></Field>
+                <Field label="Quantity"><input className={input} value={form.ingestionQuantity} onChange={e=>update("ingestionQuantity",e.target.value)}/></Field>
+                <Field label="If fall"><input className={input} value={form.fallDetails} onChange={e=>update("fallDetails",e.target.value)}/></Field>
+              </div>
+            </div>
+          </div>
+        </Section>
+        <Section title="Obstetric and Motor Vehicle Data">
+          <div className="grid lg:grid-cols-[1fr_1.4fr] gap-4">
+            <div className="grid grid-cols-3 gap-2">{Object.keys(form.obstetric).map(k=><Field key={k} label={k.toUpperCase()}><input className={input} value={form.obstetric[k]} onChange={e=>nested("obstetric",k,e.target.value)}/></Field>)}</div>
+            <div className="border border-border rounded-xl overflow-hidden">
+              <div className="grid grid-cols-2 border-b border-border">
+                <label className="p-2 text-xs font-bold flex items-center gap-2 border-r border-border"><input type="checkbox" checked={form.crash.selfAccident} onChange={e=>nested("crash","selfAccident",e.target.checked)} className="accent-blue-600"/>SELF-ACCIDENT</label>
+                <label className="p-2 text-xs font-bold flex items-center gap-2"><input type="checkbox" checked={form.crash.collision} onChange={e=>nested("crash","collision",e.target.checked)} className="accent-blue-600"/>COLLISION</label>
+              </div>
+              <div className="grid md:grid-cols-[1fr_1fr_.8fr] gap-2 p-3">
+                <Field label="Vehicle Involved"><input className={input} value={form.crash.vehicle} onChange={e=>nested("crash","vehicle",e.target.value)}/></Field>
+                <Field label="Driver / Passenger / Pedestrian"><input className={input} value={form.crash.role} onChange={e=>nested("crash","role",e.target.value)}/></Field>
+                <Field label="Plate #"><input className={input} value={form.crash.plate} onChange={e=>nested("crash","plate",e.target.value)}/></Field>
+                <Field label="Alcohol Breath"><select className={input} value={form.crash.alcohol} onChange={e=>nested("crash","alcohol",e.target.value)}><option/><option>Positive</option><option>Negative</option></select></Field>
+                <Field label="Helmet"><select className={input} value={form.crash.helmet} onChange={e=>nested("crash","helmet",e.target.value)}><option/><option>Positive</option><option>Negative</option><option>N/A</option></select></Field>
+                <Field label="Driver's License"><select className={input} value={form.crash.license} onChange={e=>nested("crash","license",e.target.value)}><option/><option>Positive</option><option>Negative</option><option>Not Applicable</option></select></Field>
+              </div>
+            </div>
+          </div>
+        </Section>
         <Section title="Chief Complaint, Vital Signs and Body Map"><Field label="Chief Complaint / Initial Assessment"><textarea rows="3" className={input} value={form.chiefComplaint} onChange={e=>update("chiefComplaint",e.target.value)}/></Field><div className="grid lg:grid-cols-[1.35fr_.65fr] gap-4 mt-4"><div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr>{["Time","Blood Pressure","Pulse Rate","Respiratory Rate","Temperature °C","Oxygen Saturation %",""] .map(x=><th className="border border-border p-2" key={x}>{x}</th>)}</tr></thead><tbody>{form.vitals.map(v=><tr key={v.id}>{["time","bp","pulse","respiratory","temperature","oxygen"].map(k=><td className="border border-border p-1" key={k}><input type={k==="time"?"time":"text"} className={`${input} min-w-24`} value={v[k]} onChange={e=>setVital(v.id,k,e.target.value)}/></td>)}<td className="border border-border p-1"><button onClick={()=>form.vitals.length>1&&update("vitals",form.vitals.filter(x=>x.id!==v.id))} className="text-red-500"><Trash2 size={15}/></button></td></tr>)}</tbody></table><button onClick={()=>update("vitals",[...form.vitals,newVital()])} className="mt-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs flex gap-1 items-center"><Plus size={14}/>Add vital-sign time row</button></div><button type="button" onClick={()=>setBodyOpen(true)} className="border-2 border-dashed border-blue-400 rounded-xl bg-white overflow-hidden hover:ring-4 ring-blue-500/20"><AnatomyFigure marks={form.bodyMap.marks} className="w-full"/><span className="block text-xs text-blue-600 font-semibold pb-2">Click to open body mapping editor</span></button></div></Section>
         <Section title="Glasgow Coma Scale"><div className="grid md:grid-cols-4 gap-3">{Object.entries(GCS_OPTIONS).map(([key,options])=><Field key={key} label={`${key.toUpperCase()} Response`}><select className={input} value={form.gcs[key]} onChange={e=>nested("gcs",key,e.target.value)}><option value="">Select</option>{options.map(([name,score])=><option key={score} value={score}>{name} - {score}</option>)}</select></Field>)}<div className="rounded-xl bg-blue-600 text-white p-4 text-center"><div className="text-xs">TOTAL GCS</div><div className="text-3xl font-bold">{gcsTotal || "-"}</div></div></div></Section>
       </>}
