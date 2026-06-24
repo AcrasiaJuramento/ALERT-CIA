@@ -6,6 +6,7 @@ export const CURRENT_USER = { id: "officer-roberto-aquino", name: "Cpl. Roberto 
 export const newVital = () => ({ id: crypto.randomUUID(), time: "", bp: "", pulse: "", respiratory: "", temperature: "", oxygen: "" });
 
 export const createPCR = () => ({
+  dispatchId: null,
   id: crypto.randomUUID(), responseNumber: `PCR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
   status: "Draft", archived: false, createdBy: CURRENT_USER.id, updatedBy: CURRENT_USER.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   respondingTeam: "", vehicle: "", driver: "", mainAider: "", assistantAider: "", natureOfCall: "Emergency",

@@ -11,6 +11,8 @@ import { incidents, heatmapZones, dangerZones } from '../../data/mockData';
 import { useTheme } from '../../contexts/ThemeContext';
 import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
 import { latLngToSvgPoint, svgPointToLatLng } from '../../utils/mapData';
+import { ADVISORY_EVENT, loadPublishedAdvisories } from '../../utils/advisoryStorage';
+import { isIncidentCompleted, isAmbulanceAssigned } from '../../utils/incidentStatus';
 
 // ─── Echague, Isabela Locations ──────────────────────────────────────────────
 const ECHAGUE_LOCATIONS = [
@@ -109,6 +111,13 @@ const severityColors = {
   resolved: '#22C55E',
 };
 
+const advisoryCategoryLabels = {
+  flood: 'Flood',
+  road_closure: 'Road Closure',
+  weather: 'Weather',
+  general: 'General',
+};
+
 const typeIcons = {
   vehicular: Car, fire: Flame, medical: Heart,
   flood: Droplets, crime: AlertTriangle, other: AlertTriangle,
@@ -180,7 +189,7 @@ function generateRoute(from, to) {
 
   // Check for nearby incidents along route
   const routeIncidents = incidents.filter(inc => {
-    if (inc.status === 'resolved') return false;
+    if (isIncidentCompleted(inc.status)) return false;
     const ix = (inc.coordinates.x / 100) * 900;
     const iy = (inc.coordinates.y / 100) * 650;
     // Check if incident is near any waypoint
@@ -611,12 +620,12 @@ function EchagueMapSVG({
       )}
 
       {/* ── Incident Markers ── */}
-      {incidents.filter(i => i.status !== 'resolved').map((incident) => {
+      {incidents.filter(i => !isIncidentCompleted(i.status)).map((incident) => {
         const cx = (incident.coordinates.x / 100) * 900;
         const cy = (incident.coordinates.y / 100) * 650;
         const color = severityColors[incident.severity];
         const isSelected = selectedIncident === incident.id;
-        const isActive = incident.status === 'active' || incident.status === 'responding';
+        const isActive = isAmbulanceAssigned(incident.status);
 
         return (
           <g key={incident.id} style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); onIncidentClick(incident.id); }}>
@@ -748,6 +757,18 @@ export default function PublicMap() {
   const [dismissedAlerts, setDismissedAlerts] = useState([]);
   const [showSafetyInfo, setShowSafetyInfo] = useState(false);
   const [showIncidentPanel, setShowIncidentPanel] = useState(true);
+  const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
+  const [selectedAdvisory, setSelectedAdvisory] = useState(null);
+
+  useEffect(() => {
+    const refreshAdvisories = () => setPublicAdvisories(loadPublishedAdvisories());
+    window.addEventListener('storage', refreshAdvisories);
+    window.addEventListener(ADVISORY_EVENT, refreshAdvisories);
+    return () => {
+      window.removeEventListener('storage', refreshAdvisories);
+      window.removeEventListener(ADVISORY_EVENT, refreshAdvisories);
+    };
+  }, []);
 
   // AI alert cycling
   useEffect(() => {
@@ -797,6 +818,17 @@ export default function PublicMap() {
     handleMapClick(point.x, point.y);
   };
 
+  const handleIncidentClick = (id) => {
+    setSelectedIncident(current => current === id ? null : id);
+    setSelectedAdvisory(null);
+    setShowIncidentPanel(true);
+  };
+
+  const handleAdvisoryClick = (id) => {
+    setSelectedAdvisory(current => current === id ? null : id);
+    setSelectedIncident(null);
+  };
+
   // Calculate route
   const handleGetRoute = async () => {
     if (!fromLocation || !toLocation) return;
@@ -838,8 +870,9 @@ export default function PublicMap() {
   };
 
   const selectedInc = incidents.find(i => i.id === selectedIncident);
+  const selectedAdvisoryRecord = publicAdvisories.find(advisory => advisory.id === selectedAdvisory);
   const currentAlert = activeAlert !== null ? aiAlerts[activeAlert] : null;
-  const activeIncidents = incidents.filter(i => i.status !== 'resolved');
+  const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
   const currentGuidance = route?.steps?.[guidanceIndex] || route?.steps?.[0] || null;
   const nextGuidance = route?.steps?.[guidanceIndex + 1] || null;
   useEffect(() => {
@@ -873,7 +906,7 @@ export default function PublicMap() {
 
       {/* ── AI Alert Banner ── */}
       {currentAlert && !dismissedAlerts.includes(currentAlert.id) && (
-        <div className={`sticky top-0 z-50 py-2.5 px-4 ${
+        <div className={`sticky top-16 z-30 py-2.5 px-4 ${
           currentAlert.severity === 'critical' ? 'bg-red-600' :
           currentAlert.severity === 'warning' ? 'bg-orange-500' : 'bg-yellow-500'
         }`}>
@@ -942,10 +975,10 @@ export default function PublicMap() {
         )}
 
         {/* ── Main Map Layout ── */}
-        <div className="flex gap-3 h-[calc(100vh-200px)] min-h-130">
+        <div className="flex gap-3 h-[calc(100vh-224px)] min-h-130 overflow-hidden">
 
           {/* ── Navigation Panel (Left) ── */}
-          <div className={`relative z-[1200] shrink-0 flex flex-col gap-3 transition-all duration-300 ${navPanelOpen ? 'w-72' : 'w-10'}`}>
+          <div className={`relative z-[1200] shrink-0 flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1 transition-all duration-300 ${navPanelOpen ? 'w-72' : 'w-10 overflow-hidden pr-0'}`}>
             <button
               onClick={() => setNavPanelOpen(!navPanelOpen)}
               className="flex items-center justify-center w-full h-9 bg-card border border-border rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
@@ -1216,7 +1249,7 @@ export default function PublicMap() {
           </div>
 
           {/* ── Interactive Map ── */}
-          <div className="flex-1 relative rounded-2xl overflow-hidden border border-border shadow-xl">
+          <div className="relative min-w-0 flex-1 rounded-2xl overflow-hidden border border-border shadow-xl">
             {/* Click-to-place indicator */}
             {pendingPin && (
               <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-card/95 border border-border rounded-full px-4 py-2 shadow-lg backdrop-blur-sm animate-pulse">
@@ -1257,13 +1290,13 @@ export default function PublicMap() {
                 height="100%"
                 incidents={incidents}
                 selectedIncidentId={selectedIncident || undefined}
-                onMarkerClick={(id) => {
-                  setSelectedIncident(current => current === id ? null : id);
-                  setShowIncidentPanel(true);
-                }}
+                onMarkerClick={handleIncidentClick}
                 showControls={true}
                 showHeatmap={true}
                 showDangerZones={true}
+                advisoryMarkers={publicAdvisories}
+                selectedAdvisoryId={selectedAdvisory || undefined}
+                onAdvisoryClick={handleAdvisoryClick}
                 routes={leafletRoutes}
                 compact={true}
                 onMapClick={handleLeafletMapClick}
@@ -1340,10 +1373,47 @@ export default function PublicMap() {
                 </div>
               </div>
             )}
+
+            {/* Selected Advisory Popup */}
+            {selectedAdvisoryRecord && (
+              <div className="absolute bottom-4 left-1/2 z-[1000] w-[min(26rem,calc(100vw-1.5rem))] -translate-x-1/2 pointer-events-auto">
+                <div className={`relative z-[1001] bg-card/98 border rounded-2xl p-4 shadow-2xl transition-colors duration-300 ${
+                  selectedAdvisoryRecord.severity === 'critical' ? 'border-red-500/40' :
+                  selectedAdvisoryRecord.severity === 'warning' ? 'border-orange-500/40' :
+                  selectedAdvisoryRecord.severity === 'moderate' ? 'border-yellow-500/40' : 'border-green-500/40'
+                }`}>
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full ${
+                        selectedAdvisoryRecord.severity === 'critical' ? 'bg-red-500/20 text-red-400' :
+                        selectedAdvisoryRecord.severity === 'warning' ? 'bg-orange-500/20 text-orange-400' :
+                        selectedAdvisoryRecord.severity === 'moderate' ? 'bg-yellow-500/20 text-yellow-400' :
+                        'bg-green-500/20 text-green-400'
+                      }`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                        {selectedAdvisoryRecord.severity.toUpperCase()}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {advisoryCategoryLabels[selectedAdvisoryRecord.category] || 'General'} Advisory
+                      </span>
+                    </div>
+                    <button onClick={() => setSelectedAdvisory(null)} className="text-muted-foreground hover:text-foreground">
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <p className="text-sm font-semibold text-foreground mb-1">{selectedAdvisoryRecord.title}</p>
+                  <div className="flex items-start gap-1 mb-2">
+                    <MapPin className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                    <p className="text-xs text-muted-foreground">{selectedAdvisoryRecord.area}</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground/90 leading-relaxed">{selectedAdvisoryRecord.message || 'No description provided for this advisory.'}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* ── Right Sidebar (Incidents + Hazards) ── */}
-          <div className={`shrink-0 flex flex-col gap-3 transition-all duration-300 ${showIncidentPanel ? 'w-64' : 'w-10'}`}>
+          <div className={`shrink-0 flex h-full min-h-0 flex-col gap-3 overflow-y-auto pl-1 transition-all duration-300 ${showIncidentPanel ? 'w-64' : 'w-10 overflow-hidden pl-0'}`}>
             <button
               onClick={() => setShowIncidentPanel(!showIncidentPanel)}
               className="flex items-center justify-center w-full h-9 bg-card border border-border rounded-xl text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"

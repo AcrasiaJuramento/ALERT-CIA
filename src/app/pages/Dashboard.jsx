@@ -1,7 +1,7 @@
 import { createElement, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Activity, Users, CheckCircle2, Clock, TrendingUp,
+  AlertTriangle, Activity, Ambulance, Users, CheckCircle2, Clock, TrendingUp,
   Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2
 } from 'lucide-react';
 import {
@@ -13,6 +13,7 @@ import { incidents, recentActivity } from '../data/mockData';
 import { analyticsIncidents, filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/analyticsModule';
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
+import { getIncidentStatusLabel, isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
 
 const statCards = [
   {
@@ -28,7 +29,7 @@ const statCards = [
   {
     label: 'Active Emergencies',
     value: '8',
-    change: '3 critical, 5 responding',
+    change: 'In route, on scene, transporting',
     icon: Activity,
     color: 'text-orange-400',
     bg: 'bg-orange-500/10',
@@ -93,10 +94,10 @@ const severityBadge = {
 };
 
 const statusBadge = {
-  active: 'bg-red-600/20 text-red-400',
-  responding: 'bg-orange-600/20 text-orange-400',
-  resolved: 'bg-green-600/20 text-green-400',
-  pending: 'bg-slate-600/20 text-slate-400',
+  in_route: 'bg-blue-600/20 text-blue-400',
+  on_scene: 'bg-orange-600/20 text-orange-400',
+  transporting: 'bg-purple-600/20 text-purple-400',
+  completed: 'bg-green-600/20 text-green-400',
 };
 
 const activityColor = {
@@ -115,6 +116,8 @@ const priorityColors = {
   Medium: '#eab308',
   Low: '#22c55e',
 };
+
+const AMBULANCE_TOTAL = 10;
 
 const AnalyticsTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -136,10 +139,25 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [rankingView, setRankingView] = useState('bar');
-  const activeIncidents = incidents.filter(i => i.status !== 'resolved').slice(0, 6);
+  const activeResponses = incidents.filter(i => isAmbulanceAssigned(i.status));
+  const availableAmbulances = Math.max(AMBULANCE_TOTAL - activeResponses.length, 0);
+  const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status)).slice(0, 6);
   const todayAnalytics = useMemo(() => filterIncidentsByRange(analyticsIncidents, 'today'), []);
   const barangayRanking = useMemo(() => getBarangayStats(todayAnalytics).filter((item) => item.count > 0), [todayAnalytics]);
   const priorityData = useMemo(() => summarizeBy(todayAnalytics, 'priority'), [todayAnalytics]);
+  const dashboardStats = useMemo(() => [
+    ...statCards,
+    {
+      label: 'Ambulances Available',
+      value: `${availableAmbulances} / ${AMBULANCE_TOTAL}`,
+      change: `${activeResponses.length} active response${activeResponses.length === 1 ? '' : 's'} assigned`,
+      icon: Ambulance,
+      color: availableAmbulances <= 2 ? 'text-red-400' : 'text-purple-400',
+      bg: availableAmbulances <= 2 ? 'bg-red-500/10' : 'bg-purple-500/10',
+      border: availableAmbulances <= 2 ? 'border-red-500/20' : 'border-purple-500/20',
+      trend: availableAmbulances <= 2 ? 'up' : 'neutral',
+    },
+  ], [activeResponses.length, availableAmbulances]);
 
   return (
     <div className="p-5 space-y-5 min-h-full bg-(--emergency-bg)" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -167,8 +185,8 @@ export default function Dashboard() {
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        {statCards.map(({ label, value, change, icon, color, bg, border, trend }) => (
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+        {dashboardStats.map(({ label, value, change, icon, color, bg, border, trend }) => (
           <div key={label} className={`p-4 rounded-xl border ${bg} ${border} bg-card`}>
             <div className="flex items-start justify-between mb-3">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
@@ -341,11 +359,11 @@ export default function Dashboard() {
             </div>
             <div className="p-3 space-y-2">
               {[
-                { team: 'Alpha Team', location: 'Bridge Maragat', status: 'On Scene', color: 'text-red-400' },
-                { team: 'Bravo Team', location: 'Brgy. Poblacion', status: 'Active', color: 'text-orange-400' },
-                { team: 'Charlie Team', location: 'Brgy. San Miguel', status: 'Responding', color: 'text-orange-400' },
-                { team: 'Delta Team', location: 'Brgy. Pandan', status: 'Active', color: 'text-orange-400' },
-                { team: 'Echo Team', location: 'Brgy. Concepcion', status: 'Responding', color: 'text-orange-400' },
+                { team: 'Alpha Team', location: 'Bridge Maragat', status: 'On scene', color: 'text-orange-400' },
+                { team: 'Bravo Team', location: 'Brgy. Poblacion', status: 'In route', color: 'text-blue-400' },
+                { team: 'Charlie Team', location: 'Brgy. San Miguel', status: 'Transporting', color: 'text-purple-400' },
+                { team: 'Delta Team', location: 'Brgy. Pandan', status: 'On scene', color: 'text-orange-400' },
+                { team: 'Echo Team', location: 'Brgy. Concepcion', status: 'Transporting', color: 'text-purple-400' },
               ].map(({ team, location, status, color }) => (
                 <div key={team} className="flex items-center justify-between px-3 py-2 bg-secondary/50 rounded-lg">
                   <div>
@@ -416,7 +434,7 @@ export default function Dashboard() {
                     </td>
                     <td className="px-3 py-3">
                       <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${statusBadge[incident.status]}`}>
-                        {incident.status}
+                        {getIncidentStatusLabel(incident.status)}
                       </span>
                     </td>
                     <td className="px-3 py-3 text-muted-foreground">{incident.assignedTeam}</td>

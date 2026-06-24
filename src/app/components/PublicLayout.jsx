@@ -33,7 +33,7 @@ export default function PublicLayout() {
       }}
     >
       {/* Top Navigation */}
-      <header className="sticky top-0 z-40 bg-card border-b border-border shadow-sm transition-colors duration-300">
+      <header className="sticky top-0 z-[1000] bg-card border-b border-border shadow-sm transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => navigate('/public')}>
@@ -176,12 +176,12 @@ export default function PublicLayout() {
       </header>
 
       {/* Page Content */}
-      <main>
+      <main className="relative z-0">
         <Outlet />
       </main>
 
       {/* Footer */}
-      <footer className="bg-secondary border-t border-border text-muted-foreground py-6 mt-8 transition-colors duration-300">
+      <footer className="relative z-10 bg-secondary border-t border-border text-muted-foreground py-6 mt-8 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-red-600 rounded flex items-center justify-center">

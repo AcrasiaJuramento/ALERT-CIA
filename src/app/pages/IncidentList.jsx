@@ -5,6 +5,7 @@ import {
   AlertTriangle, Flame, Droplets, Car, Heart, Download
 } from 'lucide-react';
 import { incidents } from '../data/mockData';
+import { getIncidentStatusLabel, INCIDENT_STATUS_OPTIONS, isIncidentCompleted } from '../utils/incidentStatus';
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
@@ -14,10 +15,10 @@ const severityBadge = {
 };
 
 const statusBadge = {
-  active: 'bg-red-500/20 text-red-400',
-  responding: 'bg-orange-500/20 text-orange-400',
-  resolved: 'bg-green-500/20 text-green-400',
-  pending: 'bg-slate-500/20 text-slate-400',
+  in_route: 'bg-blue-500/20 text-blue-400',
+  on_scene: 'bg-orange-500/20 text-orange-400',
+  transporting: 'bg-purple-500/20 text-purple-400',
+  completed: 'bg-green-500/20 text-green-400',
 };
 
 const typeIcons = {
@@ -62,8 +63,8 @@ export default function IncidentList() {
   const stats = {
     total: incidents.length,
     critical: incidents.filter(i => i.severity === 'critical').length,
-    active: incidents.filter(i => i.status === 'active').length,
-    resolved: incidents.filter(i => i.status === 'resolved').length,
+    active: incidents.filter(i => !isIncidentCompleted(i.status)).length,
+    resolved: incidents.filter(i => isIncidentCompleted(i.status)).length,
   };
 
   const selectClass = 'px-3 py-2 bg-secondary border border-border rounded-lg text-muted-foreground text-xs focus:outline-none focus:border-blue-500 transition-all';
@@ -98,8 +99,8 @@ export default function IncidentList() {
         {[
           { label: 'Total', value: stats.total, color: 'text-foreground', bg: 'bg-card' },
           { label: 'Critical', value: stats.critical, color: 'text-red-400', bg: 'bg-red-500/10' },
-          { label: 'Active', value: stats.active, color: 'text-orange-400', bg: 'bg-orange-500/10' },
-          { label: 'Resolved', value: stats.resolved, color: 'text-green-400', bg: 'bg-green-500/10' },
+          { label: 'Ongoing', value: stats.active, color: 'text-orange-400', bg: 'bg-orange-500/10' },
+          { label: 'Completed', value: stats.resolved, color: 'text-green-400', bg: 'bg-green-500/10' },
         ].map(({ label, value, color, bg }) => (
           <div key={label} className={`${bg} border border-border rounded-xl p-4`}>
             <div className={`text-2xl font-bold ${color}`}>{value}</div>
@@ -143,10 +144,9 @@ export default function IncidentList() {
 
           <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={selectClass}>
             <option value="all">All Status</option>
-            <option value="active">Active</option>
-            <option value="responding">Responding</option>
-            <option value="pending">Pending</option>
-            <option value="resolved">Resolved</option>
+            {INCIDENT_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
 
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -204,7 +204,7 @@ export default function IncidentList() {
                     </td>
                     <td className="px-3 py-3.5">
                       <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${statusBadge[incident.status]}`}>
-                        {incident.status}
+                        {getIncidentStatusLabel(incident.status)}
                       </span>
                     </td>
                     <td className="px-3 py-3.5 text-muted-foreground">{incident.assignedTeam}</td>

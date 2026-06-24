@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { incidents } from '../data/mockData';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
+import { getIncidentStatusLabel, INCIDENT_STATUS_ORDER } from '../utils/incidentStatus';
 
 const typeIcons = {
   vehicular: Car,
@@ -184,14 +185,13 @@ export default function IncidentDetails() {
                 <span className="text-sm font-semibold text-white">Incident Status</span>
               </div>
               <span className="px-2 py-0.5 bg-orange-500/20 text-orange-400 text-[10px] font-semibold rounded-lg capitalize">
-                {incident.status}
+                {getIncidentStatusLabel(incident.status)}
               </span>
             </div>
             <div className="space-y-2">
-              {['pending', 'active', 'responding', 'resolved'].map(s => {
-                const statusOrder = ['pending', 'active', 'responding', 'resolved'];
-                const currentIdx = statusOrder.indexOf(incident.status);
-                const isCompleted = statusOrder.indexOf(s) < currentIdx;
+              {INCIDENT_STATUS_ORDER.map(s => {
+                const currentIdx = INCIDENT_STATUS_ORDER.indexOf(incident.status);
+                const isCompleted = INCIDENT_STATUS_ORDER.indexOf(s) < currentIdx;
                 const isCurrent = s === incident.status;
                 return (
                   <div key={s} className="flex items-center gap-2">
@@ -201,7 +201,7 @@ export default function IncidentDetails() {
                       {isCompleted && <CheckCircle2 className="w-3 h-3 text-white" />}
                     </div>
                     <span className={`text-xs capitalize ${isCurrent ? 'text-white font-semibold' : isCompleted ? 'text-slate-400' : 'text-slate-600'}`}>
-                      {s}
+                      {getIncidentStatusLabel(s)}
                     </span>
                   </div>
                 );

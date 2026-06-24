@@ -6,10 +6,12 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
 import PCRModule from './pages/PCRModule'
+import DispatchModule from './pages/DispatchModule'
 import PCRReports from './pages/PCRReports'
 import IncidentList from './pages/IncidentList'
 import IncidentDetails from './pages/IncidentDetails'
 import MapMonitoring from './pages/MapMonitoring'
+import AdvisoryModule from './pages/AdvisoryModule'
 import Analytics from './pages/Analytics'
 import ReportsAnalytics from './pages/ReportsAnalytics'
 import UserManagement from './pages/UserManagement'
@@ -35,6 +37,7 @@ export const router = createBrowserRouter([
       { path: 'incidents', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentList />) },
       { path: 'incidents/:id', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentDetails />) },
       { path: 'map', element: protect(PERMISSIONS.VIEW_MAP, <MapMonitoring />) },
+      { path: 'advisories', element: protect(PERMISSIONS.MANAGE_ADVISORIES, <AdvisoryModule />) },
       { path: 'pcr', element: protect(PERMISSIONS.VIEW_PCR_RECORDS, <PCRReports />) },
       { path: 'pcr/new', element: protect(PERMISSIONS.CREATE_PCR, <PCRModule />) },
       { path: 'pcr-verification', element: <Navigate to="/admin/pcr" replace /> },
@@ -43,6 +46,7 @@ export const router = createBrowserRouter([
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
       { path: 'access-denied', element: <AccessDenied /> },
+      { path: 'dispatch', element : protect(PERMISSIONS.VIEW_DISPATCH, <DispatchModule />) },
     ],
   },
   {
