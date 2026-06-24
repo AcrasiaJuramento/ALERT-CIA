@@ -249,7 +249,7 @@ function RankingPanel({ rows, selectedName, onSelectName, initialVisible = 3 }) 
   );
 }
 
-function BarangayGeoJsonMap({ stats, selectedName, onSelectName }) {
+function BarangayGeoJsonMap({ stats, selectedName, onSelectName, zoomBoost = 0.75, minZoom = 10 }) {
   const [geoJson, setGeoJson] = useState(null);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState('');
@@ -440,7 +440,7 @@ function BarangayGeoJsonMap({ stats, selectedName, onSelectName }) {
           <MapContainer
             center={ECHAGUE_GIS.center}
             zoom={ECHAGUE_GIS.zoom}
-            minZoom={10}
+            minZoom={minZoom}
             zoomSnap={0.25}
             zoomDelta={0.5}
             zoomControl
@@ -450,7 +450,7 @@ function BarangayGeoJsonMap({ stats, selectedName, onSelectName }) {
           >
             {geoJson && (
               <>
-                <FitGeoJsonBounds data={geoJson} />
+                <FitGeoJsonBounds data={geoJson} zoomBoost={zoomBoost} />
                 <GeoJSON
                   key={stats.map((item) => `${item.name}:${item.count}`).join('|')}
                   data={geoJson}
@@ -473,6 +473,8 @@ export function BarangayHeatmap({
   customRange = { start: '', end: '' },
   title = 'Incidents by Barangay GIS Dashboard',
   compact = false,
+  mapZoomBoost = 0.75,
+  mapMinZoom = 10,
 }) {
   const [selectedName, setSelectedName] = useState('');
 
@@ -531,7 +533,13 @@ export function BarangayHeatmap({
 
       <div className={`grid min-h-0 ${compact ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : 'xl:grid-cols-[minmax(0,1fr)_330px]'}`}>
         <div className={`relative bg-slate-100 ${compact ? 'min-h-[720px]' : 'min-h-[740px] xl:h-[calc(100vh-11rem)]'}`}>
-          <BarangayGeoJsonMap stats={stats} selectedName={selected?.name || selectedName} onSelectName={setSelectedName} />
+          <BarangayGeoJsonMap
+            stats={stats}
+            selectedName={selected?.name || selectedName}
+            onSelectName={setSelectedName}
+            zoomBoost={mapZoomBoost}
+            minZoom={mapMinZoom}
+          />
         </div>
 
         <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? 'xl:h-[720px]' : 'xl:h-[calc(100vh-11rem)] xl:min-h-[740px]'}`}>

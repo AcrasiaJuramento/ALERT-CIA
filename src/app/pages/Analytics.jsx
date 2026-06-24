@@ -1,6 +1,7 @@
 import { createElement, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, BarChart2, Calendar, Car, HeartPulse, MapPinned, ShieldCheck, TrendingDown, TrendingUp,
+  Activity, AlertTriangle, BarChart2, Calendar, Car, FilePlus2, FileText, HeartPulse, MapPinned, Radio, ShieldCheck, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -9,6 +10,7 @@ import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import {
   analyticsIncidents, filterIncidentsByRange, filterOptions, getBarangayStats, months, reportRows, summarizeBy,
 } from '../data/analyticsModule';
+import { findLinkedPCR, loadDispatchRecords } from '../utils/dispatchWorkflow';
 
 const colors = ['#2563eb', '#dc2626', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#64748b'];
 
@@ -122,6 +124,44 @@ function SectionHeader({ title, subtitle }) {
       <div>
         <h2 className="text-sm font-semibold text-foreground">{title}</h2>
         <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+    </div>
+  );
+}
+
+function DispatcherWorkflowCard({ dispatches, onRecords, onCreate }) {
+  const draft = dispatches.filter((record) => record.status === 'Draft').length;
+  const sent = dispatches.filter((record) => record.status?.includes('Sent') || record.status?.includes('Progress')).length;
+  const linked = dispatches.filter((record) => findLinkedPCR(record)).length;
+
+  return (
+    <div className="mb-5 rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+        <div>
+          <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-cyan-500/20 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-cyan-400">
+            <Radio className="h-3 w-3" />
+            Dispatcher Workflow
+          </div>
+          <h2 className="text-base font-bold text-foreground">Dispatch Intake and PCR Handoff</h2>
+          <p className="mt-1 text-xs text-muted-foreground">Track dispatch forms, field officer handoff, and linked Patient Care Records before reviewing analytics.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onRecords} className="flex items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-semibold hover:bg-secondary/80"><FileText className="h-4 w-4" />Dispatch Records</button>
+          <button onClick={onCreate} className="flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500"><FilePlus2 className="h-4 w-4" />Create Dispatch</button>
+        </div>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        {[
+          ['Total Dispatches', dispatches.length, 'text-foreground', 'bg-secondary/50 border-border'],
+          ['Draft', draft, 'text-slate-300', 'bg-slate-500/10 border-slate-500/20'],
+          ['Sent / In Progress', sent, 'text-blue-400', 'bg-blue-500/10 border-blue-500/20'],
+          ['Linked PCR', linked, 'text-green-400', 'bg-green-500/10 border-green-500/20'],
+        ].map(([label, value, textClass, cardClass]) => (
+          <div key={label} className={`rounded-lg border p-3 ${cardClass}`}>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+            <div className={`mt-1 text-xl font-bold ${textClass}`}>{value}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -273,6 +313,7 @@ function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
 }
 
 export default function Analytics() {
+  const navigate = useNavigate();
   const [range, setRange] = useState('today');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
   const [rankingView, setRankingView] = useState('bar');
@@ -306,6 +347,7 @@ export default function Analytics() {
   const reportMvcStats = useMemo(() => reportRows
     .filter((row) => ['Collision', 'Self-Accident'].includes(row.category))
     .map((row) => ({ name: row.category, count: row.total })), []);
+  const dispatches = useMemo(() => loadDispatchRecords(), []);
 
   return (
     <div className="min-h-full bg-background p-5" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -326,6 +368,12 @@ export default function Analytics() {
           <DateFilters range={range} setRange={setRange} customRange={customRange} setCustomRange={setCustomRange} />
         </div>
       </div>
+
+      <DispatcherWorkflowCard
+        dispatches={dispatches}
+        onRecords={() => navigate('/admin/dispatch')}
+        onCreate={() => navigate('/admin/dispatch/new')}
+      />
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard label="Total Incidents" value={filtered.length} helper="Filtered emergency records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />

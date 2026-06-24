@@ -175,11 +175,11 @@ export default function Dashboard() {
             Refresh
           </button>
           {can(PERMISSIONS.CREATE_PCR) && <button
-            onClick={() => navigate('/admin/pcr/new')}
+            onClick={() => navigate('/admin/dispatch/received')}
             className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition-all"
           >
             <Radio className="w-3.5 h-3.5" />
-            Create PCR Report
+            Accept Dispatch
           </button>}
         </div>
       </div>
@@ -208,6 +208,8 @@ export default function Dashboard() {
             allIncidents={analyticsIncidents}
             compact
             range="today"
+            mapZoomBoost={4}
+            mapMinZoom={8}
           />
         </div>
         <div className="space-y-5">

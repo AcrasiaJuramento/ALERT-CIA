@@ -1,3 +1,5 @@
+import { syncIncidentFromPCR } from "./dispatchWorkflow";
+
 export const PCR_STORAGE_KEY = "alert-cia-pcr-records";
 export const PCR_EDIT_KEY = "alert-cia-pcr-edit-id";
 export const PCR_AUDIT_KEY = "alert-cia-pcr-audit-log";
@@ -40,7 +42,7 @@ export const createPCR = () => ({
 
 export function loadPCRs() {
   try {
-    return JSON.parse(localStorage.getItem(PCR_STORAGE_KEY) || "[]").map(record => ({
+    return JSON.parse(localStorage.getItem(PCR_STORAGE_KEY) || "[]").map(record => synchronizePCR({
       ...record,
       createdBy: record.createdBy || CURRENT_USER.id,
       updatedBy: record.updatedBy || record.createdBy || CURRENT_USER.id,
@@ -62,7 +64,37 @@ export function addAuditLog(reportId, actionType, previousValue, newValue) {
 }
 
 export function synchronizePCR(record) {
-  const next = { ...record, timeline: { ...(record.timeline || {}) } };
+  const template = createPCR();
+  const next = {
+    ...template,
+    ...record,
+    timeline: { ...template.timeline, ...(record.timeline || {}) },
+    obstetric: { ...template.obstetric, ...(record.obstetric || {}) },
+    crash: { ...template.crash, ...(record.crash || {}) },
+    gcs: { ...template.gcs, ...(record.gcs || {}) },
+    bodyMap: { ...template.bodyMap, ...(record.bodyMap || {}), marks: record.bodyMap?.marks || template.bodyMap.marks },
+    allergies: { ...template.allergies, ...(record.allergies || {}) },
+    hospitalization: { ...template.hospitalization, ...(record.hospitalization || {}) },
+    smoking: { ...template.smoking, ...(record.smoking || {}) },
+    alcohol: { ...template.alcohol, ...(record.alcohol || {}) },
+    signatures: { ...template.signatures, ...(record.signatures || {}) },
+    signatureNames: { ...template.signatureNames, ...(record.signatureNames || {}) },
+    signatureDates: { ...template.signatureDates, ...(record.signatureDates || {}) },
+    vitals: record.vitals?.length ? record.vitals : template.vitals,
+    emergencyTypes: record.emergencyTypes || template.emergencyTypes,
+    traumaTypes: record.traumaTypes || template.traumaTypes,
+    airway: record.airway || template.airway,
+    breathing: record.breathing || template.breathing,
+    pulseFindings: record.pulseFindings || template.pulseFindings,
+    pupils: record.pupils || template.pupils,
+    skin: record.skin || template.skin,
+    painQuality: record.painQuality || template.painQuality,
+    medications: record.medications?.length ? record.medications : template.medications,
+    medicalHistory: record.medicalHistory || template.medicalHistory,
+    interventions: record.interventions || template.interventions,
+    interventionDetails: record.interventionDetails || template.interventionDetails,
+    attachments: record.attachments || template.attachments,
+  };
   ["dateOfIncident", "timeOfIncident", "placeOfIncident", "dispatchTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase"].forEach(key => {
     next.timeline[key] = next.timeline[key] || next[key] || "";
     next[key] = next.timeline[key] ?? next[key] ?? "";
@@ -104,7 +136,7 @@ export function travelDuration(start, end) {
 export function savePCR(record) {
   const records = loadPCRs();
   const previous = records.find(item => item.id === record.id);
-  const next = { ...synchronizePCR(record), createdBy: record.createdBy || CURRENT_USER.id, updatedBy: CURRENT_USER.id, updatedAt: new Date().toISOString() };
+  const next = syncIncidentFromPCR({ ...synchronizePCR(record), createdBy: record.createdBy || CURRENT_USER.id, updatedBy: CURRENT_USER.id, updatedAt: new Date().toISOString() });
   const index = records.findIndex(item => item.id === next.id);
   if (index >= 0) records[index] = next; else records.unshift(next);
   localStorage.setItem(PCR_STORAGE_KEY, JSON.stringify(records));

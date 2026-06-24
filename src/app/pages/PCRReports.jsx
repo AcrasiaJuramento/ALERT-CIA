@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { PERMISSIONS, ROLES } from '../access/rbac';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
+import { DISPATCH_EDIT_KEY, loadDispatchRecords } from '../utils/dispatchWorkflow';
 import { CURRENT_USER, exportPCRToDocx, exportPCRToPdf, loadAuditLogs, loadPCRs, PCR_EDIT_KEY, setPCRs } from '../utils/pcrStorage';
 
 export default function PCRReports() {
@@ -51,6 +52,15 @@ export default function PCRReports() {
   const edit = record => {
     sessionStorage.setItem(PCR_EDIT_KEY, record.id);
     navigate(`/admin/pcr/new?edit=${record.id}`);
+  };
+  const openDispatch = record => {
+    const dispatch = loadDispatchRecords().find(item => item.id === record.dispatchId || item.incidentId === record.incidentId);
+    if (!dispatch) {
+      toast.error('No linked Dispatch Form found for this PCR.');
+      return;
+    }
+    sessionStorage.setItem(DISPATCH_EDIT_KEY, dispatch.id);
+    navigate(`/admin/dispatch/new?edit=${dispatch.id}`);
   };
   const archive = record => {
     const nextRecord = { ...record, archived: !record.archived, updatedAt: new Date().toISOString() };
@@ -114,7 +124,7 @@ export default function PCRReports() {
           <h1 className="text-xl font-bold flex gap-2 items-center"><FileText className="text-blue-500" />Patient Care Records</h1>
           <p className="text-xs text-muted-foreground">{user.role === ROLES.FIELD_OFFICER ? `Reports submitted by ${CURRENT_USER.name}` : 'Unified records, review, verification, exports, and archival for Patient Care Reports.'}</p>
         </div>
-        {canCreate && <button onClick={() => navigate('/admin/pcr/new')} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Create PCR Report</button>}
+        {canCreate && <button onClick={() => navigate('/admin/dispatch/received')} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Accept Dispatch for PCR</button>}
       </div>
 
       <div className="mb-4 grid gap-3 md:grid-cols-3">
@@ -141,12 +151,13 @@ export default function PCRReports() {
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         {loading ? <div className="text-center py-16 text-sm text-muted-foreground">Loading Patient Care Records...</div> : <>
           <div className="overflow-x-auto"><table className="w-full text-sm">
-            <thead className="bg-secondary text-muted-foreground text-xs uppercase"><tr>{['Response No.', 'Patient', 'Incident', 'Location', 'Status', 'Updated', 'Actions'].map(item => <th key={item} className="text-left px-4 py-3">{item}</th>)}</tr></thead>
+            <thead className="bg-secondary text-muted-foreground text-xs uppercase"><tr>{['Response No.', 'Patient', 'Incident', 'Location', 'Dispatch', 'Status', 'Updated', 'Actions'].map(item => <th key={item} className="text-left px-4 py-3">{item}</th>)}</tr></thead>
             <tbody>{visibleRecords.map(record => <tr key={record.id} onClick={() => setSelected(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
               <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber}</td>
               <td className="px-4 py-3"><div className="font-semibold">{record.patientName || 'Unnamed patient'}</div><div className="text-xs text-muted-foreground">{record.age && `${record.age} yrs`} {record.gender}</div></td>
               <td className="px-4 py-3">{record.dateOfIncident}<div className="text-xs text-muted-foreground">{record.timeOfIncident}</div></td>
               <td className="px-4 py-3 max-w-52 truncate">{record.placeOfIncident || '-'}</td>
+              <td className="px-4 py-3 text-xs">{record.dispatchId ? <span className="rounded-full bg-blue-500/15 px-2 py-1 font-semibold text-blue-400">Linked</span> : <span className="text-muted-foreground">Manual PCR</span>}</td>
               <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${record.status === 'Submitted' ? 'bg-amber-500/15 text-amber-500' : record.status === 'Verified' ? 'bg-green-500/15 text-green-500' : record.status === 'Rejected' ? 'bg-red-500/15 text-red-500' : 'bg-slate-500/15 text-slate-400'}`}>{record.status}</span></td>
               <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(record.updatedAt).toLocaleString()}</td>
               <td className="px-4 py-3"><div className="flex gap-1" onClick={event => event.stopPropagation()}>
@@ -154,6 +165,7 @@ export default function PCRReports() {
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
                 <button onClick={() => doPdf(record)} title="Download PDF" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><Download size={15} /></button>
                 <button onClick={() => doWord(record)} title="Export Word" className="p-2 hover:bg-violet-500/10 text-violet-400 rounded"><Download size={15} /></button>
+                {record.dispatchId && <button onClick={() => openDispatch(record)} title="Open Dispatch Form" className="p-2 hover:bg-cyan-500/10 text-cyan-400 rounded"><FileText size={15} /></button>}
                 {canReview && record.status === 'Submitted' && <button onClick={() => updateStatus(record, 'Verified')} title="Accept" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {canReview && record.status === 'Submitted' && <button onClick={() => setRejectingRecord(record)} title="Reject" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {canCreate && <button onClick={() => archive(record)} title={record.archived ? 'Restore' : 'Archive'} className="p-2 hover:bg-red-500/10 text-red-400 rounded">{record.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}</button>}
@@ -176,6 +188,7 @@ export default function PCRReports() {
               <div className="flex flex-wrap justify-end gap-2">
                 {canReview && selected.status === 'Submitted' && <button onClick={() => updateStatus(selected, 'Verified')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
                 {canReview && selected.status === 'Submitted' && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Reject</button>}
+                {selected.dispatchId && <button onClick={() => openDispatch(selected)} className="flex items-center gap-1 rounded-lg bg-cyan-600 px-3 py-2 text-xs text-white"><FileText size={14} />Dispatch</button>}
                 {canCreate && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
                 <button onClick={() => doWord(selected)} className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-xs text-white"><Download size={14} />Word</button>
                 <button onClick={() => doPdf(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Download size={14} />PDF</button>

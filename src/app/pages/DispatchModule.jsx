@@ -1,7 +1,19 @@
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, Save, Download, Plus, Trash2, FileText, Radio, Clock, Users, Phone, MapPin, CheckCircle2
+  ArrowLeft, Save, Download, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
 } from "lucide-react";
+import { toast } from "sonner";
+import {
+  DISPATCH_EDIT_KEY,
+  DISPATCH_STATUSES,
+  findLinkedPCR,
+  generateResponseNumber,
+  loadDispatchRecords,
+  RESPONDING_TEAMS,
+  saveDispatchForm,
+  sendDispatchToRespondingTeam,
+} from "../utils/dispatchWorkflow";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
@@ -67,9 +79,9 @@ function newDispatch() {
   return {
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
-    status: "Draft",
+    status: DISPATCH_STATUSES.DRAFT,
     // Header
-    responseNumber: "",
+    responseNumber: generateResponseNumber(),
     numberOfPatients: "1",
     team: "",
     vehicle: "",
@@ -94,6 +106,7 @@ function newDispatch() {
     quantity: "",
     ifFall: "",
     placeOfIncident: "",
+    barangay: "",
     timeOfIncident: "",
     dateOfIncident: "",
     assistanceNeeded: [],
@@ -150,13 +163,13 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
       <div className="p-4 space-y-4">
         {/* Basic info */}
         <div className="grid md:grid-cols-4 gap-3">
-          <Field label="Name" wide>
+          <Field label="Patient Name" wide>
             <input className={input} value={patient.name} onChange={e => up("name", e.target.value)} />
           </Field>
           <Field label="Age">
             <input type="number" className={input} value={patient.age} onChange={e => up("age", e.target.value)} />
           </Field>
-          <Field label="Birthdate">
+          <Field label="Birthday">
             <input type="date" className={input} value={patient.birthdate} onChange={e => up("birthdate", e.target.value)} />
           </Field>
           <Field label="Gender">
@@ -165,7 +178,7 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
               {["Male", "Female", "Other"].map(x => <option key={x}>{x}</option>)}
             </select>
           </Field>
-          <Field label="Address" wide>
+          <Field label="Patient Address" wide>
             <input className={input} value={patient.address} onChange={e => up("address", e.target.value)} />
           </Field>
         </div>
@@ -250,17 +263,18 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
 }
 
 // ─── Nature toggle helper ────────────────────────────────────────────────────
-function useNatureToggle(form, update) {
-  return (type) => {
-    const current = form.natureTypes;
-    update("natureTypes", current.includes(type) ? current.filter(x => x !== type) : [...current, type]);
-  };
-}
-
 // ─── Main Dispatch Module ────────────────────────────────────────────────────
 export default function DispatchModule({ onBack }) {
-  const [form, setForm] = useState(newDispatch);
-  const [saved, setSaved] = useState(false);
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [form, setForm] = useState(() => {
+    const id = params.get("edit") || sessionStorage.getItem(DISPATCH_EDIT_KEY);
+    const found = id ? loadDispatchRecords().find(item => item.id === id) : null;
+    sessionStorage.removeItem(DISPATCH_EDIT_KEY);
+    return found ? { ...newDispatch(), ...found, responseNumber: found.responseNumber || generateResponseNumber(), patients: found.patients?.length ? found.patients : [newPatient()] } : newDispatch();
+  });
+  const [saved, setSaved] = useState("");
+  const linkedPCR = useMemo(() => findLinkedPCR(form), [form]);
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
   const toggleNature = (type) => {
@@ -283,14 +297,23 @@ export default function DispatchModule({ onBack }) {
   };
 
   const handleSave = () => {
-    // Save to localStorage under dispatch records
-    const existing = JSON.parse(localStorage.getItem("dispatches") || "[]");
-    const idx = existing.findIndex(d => d.id === form.id);
-    if (idx >= 0) existing[idx] = form;
-    else existing.unshift(form);
-    localStorage.setItem("dispatches", JSON.stringify(existing));
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2500);
+    const next = saveDispatchForm(form);
+    setForm(next);
+    setSaved("Dispatch form saved and incident record synced.");
+    toast.success("Dispatch form saved.");
+    setTimeout(() => setSaved(""), 2500);
+  };
+
+  const handleSendToFieldOfficer = () => {
+    if (!form.team) {
+      toast.error("Please select a responding team before sending this dispatch.");
+      return;
+    }
+    const result = sendDispatchToRespondingTeam(form);
+    setForm(result.dispatch);
+    setSaved("Dispatch sent to the selected responding team.");
+    toast.success("Dispatch sent to responding team.");
+    setTimeout(() => setSaved(""), 3000);
   };
 
   const handlePrint = () => window.print();
@@ -305,6 +328,11 @@ export default function DispatchModule({ onBack }) {
           {onBack && (
             <button onClick={onBack} className="text-xs text-blue-400 mb-2 flex items-center gap-1">
               <ArrowLeft size={13} /> Dispatch Records
+            </button>
+          )}
+          {!onBack && (
+            <button onClick={() => navigate("/admin/dispatch")} className="text-xs text-blue-400 mb-2 flex items-center gap-1">
+              <ArrowLeft size={13} /> Dispatch Form Records
             </button>
           )}
           <div className="flex items-center gap-3">
@@ -323,6 +351,9 @@ export default function DispatchModule({ onBack }) {
           <button onClick={handleSave} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center hover:bg-secondary/80">
             <Save size={15} /> Save Draft
           </button>
+          <button onClick={handleSendToFieldOfficer} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm flex gap-2 items-center hover:bg-green-500">
+            <Send size={15} /> Send to Responding Team
+          </button>
           <button onClick={handlePrint} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center hover:bg-blue-500">
             <Download size={15} /> Print / Export
           </button>
@@ -331,9 +362,30 @@ export default function DispatchModule({ onBack }) {
 
       {saved && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-green-500/10 border border-green-500/30 text-green-500 text-sm flex items-center gap-2">
-          <CheckCircle2 size={15} /> Dispatch form saved successfully.
+          <CheckCircle2 size={15} /> {saved}
         </div>
       )}
+
+      <div className="mb-4 grid gap-3 md:grid-cols-3">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Dispatch Status</div>
+          <div className="mt-2 text-sm font-bold text-foreground">{form.status || "Draft"}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Linked Incident</div>
+          <div className="mt-2 truncate text-sm font-bold text-foreground">{form.incidentId || "Not synced yet"}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Linked PCR</div>
+          {linkedPCR ? (
+            <button onClick={() => navigate(`/admin/pcr/new?edit=${linkedPCR.id}`)} className="mt-2 text-left text-sm font-bold text-blue-400 hover:text-blue-300">
+              {linkedPCR.responseNumber || linkedPCR.id} · {linkedPCR.status}
+            </button>
+          ) : (
+            <div className="mt-2 text-sm font-bold text-muted-foreground">PCR creates after team accepts</div>
+          )}
+        </div>
+      </div>
 
       <div className="space-y-4">
 
@@ -341,7 +393,7 @@ export default function DispatchModule({ onBack }) {
         <Section title="Response & Unit Details" icon={<Radio size={14} />}>
           <div className="grid md:grid-cols-3 gap-3">
             <Field label="Response No.">
-              <input className={input} value={form.responseNumber} onChange={e => update("responseNumber", e.target.value)} />
+              <input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly />
             </Field>
             <Field label="Number of Patients / Victims">
               <select className={input} value={form.numberOfPatients} onChange={e => update("numberOfPatients", e.target.value)}>
@@ -350,8 +402,11 @@ export default function DispatchModule({ onBack }) {
                 <option value="3">3</option>
               </select>
             </Field>
-            <Field label="Team">
-              <input className={input} value={form.team} onChange={e => update("team", e.target.value)} />
+            <Field label="Responding Team">
+              <select className={input} value={form.team} onChange={e => update("team", e.target.value)}>
+                <option value="">Select responding team</option>
+                {RESPONDING_TEAMS.map(team => <option key={team} value={team}>{team}</option>)}
+              </select>
             </Field>
             <Field label="Vehicle">
               <input className={input} value={form.vehicle} onChange={e => update("vehicle", e.target.value)} />
@@ -369,12 +424,12 @@ export default function DispatchModule({ onBack }) {
         </Section>
 
         {/* ── Caller Data ── */}
-        <Section title="Caller Data" icon={<Phone size={14} />}>
+        <Section title="Contact Person / Caller Data" icon={<Phone size={14} />}>
           <div className="grid md:grid-cols-3 gap-3">
-            <Field label="Name" wide>
+            <Field label="Contact Person">
               <input className={input} value={form.callerName} onChange={e => update("callerName", e.target.value)} />
             </Field>
-            <Field label="Address" wide>
+            <Field label="Contact Address">
               <input className={input} value={form.callerAddress} onChange={e => update("callerAddress", e.target.value)} />
             </Field>
             <Field label="Contact Number">
@@ -470,6 +525,9 @@ export default function DispatchModule({ onBack }) {
             <Field label="Place of Incident" wide>
               <input className={input} value={form.placeOfIncident} onChange={e => update("placeOfIncident", e.target.value)} />
             </Field>
+            <Field label="Barangay">
+              <input className={input} value={form.barangay || ""} onChange={e => update("barangay", e.target.value)} />
+            </Field>
             <Field label="Time of Incident">
               <input type="time" className={input} value={form.timeOfIncident} onChange={e => update("timeOfIncident", e.target.value)} />
             </Field>
@@ -548,6 +606,9 @@ export default function DispatchModule({ onBack }) {
       <div className="flex flex-wrap justify-end gap-2 mt-5">
         <button onClick={handleSave} className="px-4 py-2 bg-secondary rounded-lg flex gap-2 text-sm items-center hover:bg-secondary/80">
           <Save size={15} /> Save Draft
+        </button>
+        <button onClick={handleSendToFieldOfficer} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-green-500">
+          <Send size={15} /> Send to Responding Team
         </button>
         <button onClick={handlePrint} className="px-5 py-2 bg-blue-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-blue-500">
           <Download size={15} /> Print / Export PDF

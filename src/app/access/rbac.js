@@ -7,6 +7,7 @@ import {
   FileText,
   LayoutDashboard,
   Map,
+  Radio as RadioIcon,
   Settings,
   Users,
 } from 'lucide-react';
@@ -30,6 +31,7 @@ export const PERMISSIONS = {
   VIEW_PCR_RECORDS: 'pcr:view',
   CREATE_PCR: 'pcr:create',
   REVIEW_PCR: 'pcr:review',
+  VIEW_RECEIVED_DISPATCHES: 'dispatch:received',
   VIEW_ANALYTICS: 'analytics:view',
   MANAGE_ADVISORIES: 'advisories:manage',
   MANAGE_USERS: 'users:manage',
@@ -45,6 +47,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_MAP,
     PERMISSIONS.VIEW_PCR_RECORDS,
     PERMISSIONS.CREATE_PCR,
+    PERMISSIONS.VIEW_RECEIVED_DISPATCHES,
     PERMISSIONS.VIEW_SETTINGS,
   ],
   [ROLES.DISPATCHER]: [
@@ -54,10 +57,9 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_PCR_RECORDS,
     PERMISSIONS.REVIEW_PCR,
     PERMISSIONS.VIEW_ANALYTICS,
-    PERMISSIONS.MANAGE_ADVISORIES,
     PERMISSIONS.VIEW_SETTINGS,
     PERMISSIONS.VIEW_DISPATCH,
-    // PERMISSIONS.CREATE_DISPATCH,
+    PERMISSIONS.CREATE_DISPATCH,
   ],
   [ROLES.ADMINISTRATOR]: [
     PERMISSIONS.VIEW_DASHBOARD,
@@ -69,7 +71,8 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_ADVISORIES,
     PERMISSIONS.MANAGE_USERS,
     PERMISSIONS.VIEW_SETTINGS,
-    // PERMISSIONS.VIEW_DISPATCH,
+    PERMISSIONS.VIEW_DISPATCH,
+    PERMISSIONS.CREATE_DISPATCH,
   ],
 };
 
@@ -79,13 +82,13 @@ export const NAVIGATION_ITEMS = [
   { label: 'Map Monitor', icon: Map, path: '/admin/map', permission: PERMISSIONS.VIEW_MAP },
   { label: 'Advisories', icon: BellRing, path: '/admin/advisories', permission: PERMISSIONS.MANAGE_ADVISORIES },
   { label: 'Patient Care Records', icon: FileText, path: '/admin/pcr', permission: PERMISSIONS.VIEW_PCR_RECORDS, group: 'Patient Care' },
-  { label: 'Create PCR Report', icon: FilePlus2, path: '/admin/pcr/new', permission: PERMISSIONS.CREATE_PCR, group: 'Patient Care' },
+  { label: 'Received Dispatches', icon: RadioIcon, path: '/admin/dispatch/received', permission: PERMISSIONS.VIEW_RECEIVED_DISPATCHES, group: 'Patient Care' },
   { label: 'Analytics', icon: BarChart2, path: '/admin/analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
   { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
   { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS },
+  { label: 'Dispatch Form Records', icon: FileText, path: '/admin/dispatch', permission: PERMISSIONS.VIEW_DISPATCH, group: 'Dispatch' },
+  { label: 'Create Dispatch Form', icon: FilePlus2, path: '/admin/dispatch/new', permission: PERMISSIONS.CREATE_DISPATCH, group: 'Dispatch' },
   { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS },
-  { label: 'Dispatch', icon: FileText, path: '/admin/dispatch', permission: PERMISSIONS.VIEW_DISPATCH },
-  // { label: 'Create Dispatch', icon: FilePlus2, path: '/admin/dispatch/new', permission: PERMISSIONS.CREATE_DISPATCH },
 ];
 
 export function hasPermission(role, permission) {

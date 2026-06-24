@@ -7,6 +7,8 @@ import RegisterPage from './pages/RegisterPage'
 import Dashboard from './pages/Dashboard'
 import PCRModule from './pages/PCRModule'
 import DispatchModule from './pages/DispatchModule'
+import DispatchRecords from './pages/DispatchRecords'
+import ReceivedDispatches from './pages/ReceivedDispatches'
 import PCRReports from './pages/PCRReports'
 import IncidentList from './pages/IncidentList'
 import IncidentDetails from './pages/IncidentDetails'
@@ -46,7 +48,9 @@ export const router = createBrowserRouter([
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
       { path: 'access-denied', element: <AccessDenied /> },
-      { path: 'dispatch', element : protect(PERMISSIONS.VIEW_DISPATCH, <DispatchModule />) },
+      { path: 'dispatch', element: protect(PERMISSIONS.VIEW_DISPATCH, <DispatchRecords />) },
+      { path: 'dispatch/new', element: protect(PERMISSIONS.CREATE_DISPATCH, <DispatchModule />) },
+      { path: 'dispatch/received', element: protect(PERMISSIONS.VIEW_RECEIVED_DISPATCHES, <ReceivedDispatches />) },
     ],
   },
   {
