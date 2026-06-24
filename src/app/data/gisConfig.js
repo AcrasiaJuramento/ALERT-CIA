@@ -11,7 +11,7 @@ export const ECHAGUE_GIS = {
   },
   barangayBoundaryServiceUrl: import.meta.env.VITE_PSA_BARANGAY_LAYER4_URL || '',
   barangayBoundaryServiceWhere: import.meta.env.VITE_PSA_BARANGAY_LAYER4_QUERY || '',
-  barangayGeoJsonUrl: '/gis/echague/barangays.geojson',
+  barangayGeoJsonUrl: '/data/echague_barangays.geojson',
   municipalGeoJsonUrl: '/gis/echague/municipal-boundary.geojson',
   roadsGeoJsonUrl: '/gis/echague/roads.geojson',
   riversGeoJsonUrl: '/gis/echague/rivers.geojson',
@@ -102,21 +102,23 @@ export const ECHAGUE_BARANGAYS = [
 
 export function normalizeBarangayName(value = '') {
   return String(value)
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .replace(/\((poblacion|formerly atelan)\)/g, '')
     .replace(/brgy\.?|barangay|poblacion/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+    .replace(/[^a-z0-9]+/g, '');
 }
 
 export function getFeatureBarangayName(feature) {
   const properties = feature?.properties || {};
   return (
+    properties.NAME_3 ||
+    properties.name ||
+    properties.Barangay ||
     properties.BRGY_NAME ||
     properties.BARANGAY ||
     properties.Bgy_Name ||
     properties.brgy_name ||
-    properties.name ||
     properties.Name ||
     properties.NAME ||
     properties.ADM4_EN ||

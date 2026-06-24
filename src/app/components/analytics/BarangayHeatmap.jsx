@@ -1,8 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GeoJSON, MapContainer, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import { Activity, AlertTriangle, ChevronDown, ChevronUp, Flame, Layers3, MapPin, RefreshCw } from 'lucide-react';
 import {
   ECHAGUE_BARANGAYS,
   ECHAGUE_GIS,
+  matchBarangayName,
+  normalizeBarangayName,
 } from '../../data/gisConfig';
 import {
   filterIncidentsByRange,
@@ -26,54 +30,71 @@ const priorityColors = {
 };
 
 const heatColor = (count, max) => {
-  if (!count) return 'rgba(15, 23, 42, 0.22)';
+  if (!count) return '#86efac';
   const ratio = count / Math.max(max, 1);
   if (ratio >= 0.8) return '#b91c1c';
-  if (ratio >= 0.55) return '#ea580c';
-  if (ratio >= 0.3) return '#eab308';
-  return '#22c55e';
+  if (ratio >= 0.55) return '#ef4444';
+  if (ratio >= 0.3) return '#fb923c';
+  return '#f7e58f';
 };
 
-const rasterBarangayPoints = {
-  Aromin: { x: 25.1, y: 19.9 },
-  Annafunan: { x: 25.2, y: 25.1 },
-  'Soyung (Poblacion)': { x: 27.0, y: 29.6 },
-  'Silauan Norte (Poblacion)': { x: 24.8, y: 32.8 },
-  'Silauan Sur (Poblacion)': { x: 24.8, y: 37.6 },
-  'Taggappan (Poblacion)': { x: 28.9, y: 34.6 },
-  'Villa Victoria': { x: 37.2, y: 29.0 },
-  'Villa Rey': { x: 32.0, y: 27.5 },
-  'Villa Campo': { x: 35.4, y: 33.8 },
-  'Villa Fermin': { x: 37.4, y: 35.8 },
-  'Pag-asa': { x: 41.0, y: 41.4 },
-  Libertad: { x: 43.0, y: 36.0 },
-  'Pangal Norte': { x: 48.6, y: 37.7 },
-  Mabbayad: { x: 45.5, y: 42.6 },
-  Salvacion: { x: 49.9, y: 47.2 },
-  Babaran: { x: 55.4, y: 37.7 },
-  Diasan: { x: 58.7, y: 41.8 },
-  'Dammang West': { x: 66.5, y: 41.1 },
-  Gumbauan: { x: 73.5, y: 42.7 },
-  Dicaraoyan: { x: 78.8, y: 48.3 },
-  Gucab: { x: 73.2, y: 51.7 },
-  Malitao: { x: 57.5, y: 50.7 },
-  'San Antonio Ugad': { x: 66.7, y: 58.8 },
-  'San Antonio Minit': { x: 27.5, y: 66.2 },
-  'San Miguel': { x: 41.7, y: 58.1 },
-  'San Juan': { x: 34.2, y: 61.4 },
-  'San Fabian': { x: 41.7, y: 61.9 },
-  'San Carlos': { x: 48.0, y: 57.0 },
-  'Santa Ana': { x: 81.1, y: 54.9 },
-  'Santa Maria': { x: 80.2, y: 79.7 },
-  'San Manuel': { x: 14.9, y: 66.0 },
-  Buneg: { x: 15.6, y: 42.6 },
-  Bacradal: { x: 12.7, y: 46.4 },
-  Dammang: { x: 25.0, y: 49.0 },
-  'Dammang East': { x: 29.3, y: 51.8 },
-  Tuguegarao: { x: 25.8, y: 41.5 },
-  Carulay: { x: 25.5, y: 58.7 },
-  Fugu: { x: 30.5, y: 57.2 },
+const riskCategory = (count, max) => {
+  if (!count) return 'No recorded incidents';
+  const ratio = count / Math.max(max, 1);
+  if (ratio >= 0.8) return 'Critical risk';
+  if (ratio >= 0.55) return 'High risk';
+  if (ratio >= 0.3) return 'Moderate risk';
+  return 'Low risk';
 };
+
+const legendItems = [
+  { label: 'No incidents', color: '#86efac' },
+  { label: 'Low', color: '#f7e58f' },
+  { label: 'Medium', color: '#fb923c' },
+  { label: 'High', color: '#ef4444' },
+  { label: 'Critical', color: '#b91c1c' },
+];
+
+const getGeoJsonBarangayName = (feature) => {
+  const properties = feature?.properties || {};
+  return properties.NAME_3 || properties.name || 'Unknown Barangay';
+};
+
+const escapeHtml = (value) => String(value)
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#039;');
+
+function FitGeoJsonBounds({ data, zoomBoost = 0.75 }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!data) return;
+    const bounds = L.geoJSON(data).getBounds();
+    if (bounds.isValid()) {
+      let boosted = false;
+      const applyZoomBoost = () => {
+        if (boosted) return;
+        boosted = true;
+        map.setZoom(Math.min(map.getZoom() + zoomBoost, map.getMaxZoom()), { animate: false });
+      };
+
+      map.once('moveend', applyZoomBoost);
+      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 13 });
+      const fallbackTimer = window.setTimeout(applyZoomBoost, 250);
+
+      return () => {
+        window.clearTimeout(fallbackTimer);
+        map.off('moveend', applyZoomBoost);
+      };
+    }
+    return undefined;
+  }, [data, map, zoomBoost]);
+
+  return null;
+}
 
 function DashboardMetric({ label, value, icon: Icon, tone = 'text-blue-400' }) {
   return (
@@ -228,55 +249,218 @@ function RankingPanel({ rows, selectedName, onSelectName, initialVisible = 3 }) 
   );
 }
 
-function RasterMap({ stats, selectedName, onSelectName }) {
+function BarangayGeoJsonMap({ stats, selectedName, onSelectName }) {
+  const [geoJson, setGeoJson] = useState(null);
+  const [status, setStatus] = useState('loading');
+  const [error, setError] = useState('');
+  const layerRefs = useRef(new Map());
+  const selectedNameRef = useRef(selectedName);
   const maxCount = Math.max(...stats.map((item) => item.count), 1);
-  const plottedStats = stats.filter((item) => rasterBarangayPoints[item.name]);
+  const statsByNormalizedName = useMemo(() => Object.fromEntries(
+    stats.map((item) => [normalizeBarangayName(item.name), item])
+  ), [stats]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadGeoJson() {
+      setStatus('loading');
+      setError('');
+
+      try {
+        const response = await fetch(ECHAGUE_GIS.barangayGeoJsonUrl);
+        if (!response.ok) {
+          throw new Error(`GeoJSON request failed with ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (!active) return;
+
+        if (data?.type !== 'FeatureCollection' || !Array.isArray(data.features)) {
+          throw new Error('GeoJSON file is not a valid FeatureCollection.');
+        }
+
+        setGeoJson(data);
+        setStatus('ready');
+      } catch (loadError) {
+        if (!active) return;
+        setGeoJson(null);
+        setError(loadError.message || 'Unable to load barangay boundaries.');
+        setStatus('error');
+      }
+    }
+
+    loadGeoJson();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const getFeatureStats = useCallback((feature) => {
+    const featureName = getGeoJsonBarangayName(feature);
+    const matchedName = matchBarangayName(featureName, ECHAGUE_BARANGAYS);
+    return statsByNormalizedName[normalizeBarangayName(matchedName)]
+      || statsByNormalizedName[normalizeBarangayName(featureName)]
+      || {
+        name: featureName,
+        count: 0,
+        percent: 0,
+        priorities: [],
+        mostCommonIncidentType: 'No incidents',
+      };
+  }, [statsByNormalizedName]);
+
+  const getFeatureStyle = useCallback((feature) => {
+    const item = getFeatureStats(feature);
+    const active = normalizeBarangayName(selectedNameRef.current) === normalizeBarangayName(item.name);
+
+    return {
+      color: active ? '#1d4ed8' : '#64748b',
+      weight: active ? 3 : 1.2,
+      opacity: 0.95,
+      fillColor: heatColor(item.count, maxCount),
+      fillOpacity: item.count ? 0.76 : 0.68,
+    };
+  }, [getFeatureStats, maxCount]);
+
+  const createPopupHtml = (item) => `
+    <div class="gis-popup">
+      <div class="gis-popup-title">${escapeHtml(item.name)}</div>
+      <div class="gis-popup-source">Municipality: Echague</div>
+      <div class="gis-popup-source">Province: Isabela</div>
+      <div class="gis-popup-grid">
+        <div class="gis-popup-card"><span>Total incidents</span><strong>${item.count}</strong></div>
+        <div class="gis-popup-card"><span>Risk category</span><strong>${riskCategory(item.count, maxCount)}</strong></div>
+      </div>
+      <div class="gis-popup-most-common"><span>Most common incident type</span><strong>${escapeHtml(item.mostCommonIncidentType || 'No incidents')}</strong></div>
+    </div>
+  `;
+
+  const onEachFeature = (feature, layer) => {
+    const item = getFeatureStats(feature);
+    const selectFeature = () => {
+      onSelectName(item.name);
+      layer.openPopup();
+    };
+
+    layer.bindTooltip(item.name, {
+      className: 'echague-gis-tooltip',
+      direction: 'top',
+      sticky: true,
+    });
+    layer.bindPopup(createPopupHtml(item), {
+      className: 'echague-gis-popup',
+      maxWidth: 320,
+    });
+    layer.on({
+      click: selectFeature,
+      mouseover: (event) => {
+        event.target.setStyle({
+          color: '#0f172a',
+          weight: 3,
+          fillOpacity: 0.9,
+        });
+        event.target.bringToFront();
+      },
+      mouseout: (event) => {
+        event.target.setStyle(getFeatureStyle(feature));
+      },
+    });
+    layer.on('add', () => {
+      const element = layer.getElement();
+      if (!element) return;
+
+      layerRefs.current.set(normalizeBarangayName(item.name), { feature, layer });
+      element.setAttribute('role', 'button');
+      element.setAttribute('tabindex', '0');
+      element.setAttribute('aria-label', `${item.name}: ${item.count} incidents`);
+      element.style.cursor = 'pointer';
+      element.addEventListener('click', selectFeature);
+      element.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectFeature();
+        }
+      });
+    });
+  };
+
+  useEffect(() => {
+    selectedNameRef.current = selectedName;
+    layerRefs.current.forEach(({ feature, layer }) => {
+      layer.setStyle(getFeatureStyle(feature));
+    });
+  }, [selectedName, getFeatureStyle]);
 
   return (
-    <div className="relative h-full min-h-[520px] overflow-hidden bg-[#f7f2df]">
-      <img
-        src="/gis/echague/echague-map.jpeg"
-        alt="Municipality of Echague barangay map"
-        className="h-full min-h-[520px] w-full object-contain"
-      />
+    <div className="relative h-full min-h-[700px] bg-slate-100 p-4">
+      {status === 'loading' && (
+        <div className="absolute inset-0 z-[620] grid place-items-center bg-slate-50 text-sm font-semibold text-slate-700">
+          Loading Echague GIS map...
+        </div>
+      )}
 
-      <div className="absolute inset-0 bg-slate-950/5" />
+      {status === 'error' && (
+        <div className="absolute inset-0 z-[620] grid place-items-center bg-slate-50 p-6">
+          <div className="max-w-md rounded-lg border border-red-200 bg-red-50 p-4 text-center">
+            <div className="text-sm font-semibold text-red-700">Failed to load Echague GeoJSON map</div>
+            <div className="mt-2 text-xs text-red-600">
+              The barangay boundary file at {ECHAGUE_GIS.barangayGeoJsonUrl} could not be loaded. {error}
+            </div>
+          </div>
+        </div>
+      )}
 
-      {plottedStats.map((item) => {
-        const point = rasterBarangayPoints[item.name];
-        const intensity = item.count / maxCount;
-        const size = 18 + (intensity * 30);
-        const active = selectedName === item.name;
+      <div className="flex h-full min-h-[660px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.12)]">
+        <div className="border-b border-slate-200 bg-white px-4 py-3">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-emerald-600" />
+                <h3 className="text-sm font-bold text-slate-950">Incidents by Barangay GIS Dashboard</h3>
+              </div>
+              <p className="mt-1 text-xs text-slate-600">
+                Incident distribution across Echague barangays using the local GeoJSON boundary layer.
+              </p>
+            </div>
 
-        return (
-          <button
-            key={item.name}
-            type="button"
-            onClick={() => onSelectName(item.name)}
-            className={`absolute z-[510] -translate-x-1/2 -translate-y-1/2 rounded-full border text-[10px] font-bold text-white shadow-lg transition-transform hover:scale-110 ${
-              active ? 'border-white ring-2 ring-blue-500' : 'border-white/80'
-            }`}
-            style={{
-              left: `${point.x}%`,
-              top: `${point.y}%`,
-              width: `${size}px`,
-              height: `${size}px`,
-              background: heatColor(item.count, maxCount),
-            }}
-            title={`${item.name}: ${item.count} incidents`}
+            <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-600">
+              {legendItems.map((item) => (
+                <div key={item.label} className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1">
+                  <span className="h-2.5 w-4 rounded-sm border border-slate-900/15" style={{ backgroundColor: item.color }} />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="relative min-h-[610px] flex-1 bg-slate-50">
+          <MapContainer
+            center={ECHAGUE_GIS.center}
+            zoom={ECHAGUE_GIS.zoom}
+            minZoom={10}
+            zoomSnap={0.25}
+            zoomDelta={0.5}
+            zoomControl
+            scrollWheelZoom
+            attributionControl={false}
+            className="echague-boundary-map h-full min-h-[610px] w-full"
           >
-            {item.count || ''}
-          </button>
-        );
-      })}
-
-      <div className="absolute bottom-3 left-3 z-[520] flex items-center gap-2 rounded-lg border border-border bg-card/95 px-3 py-2 text-[10px] text-muted-foreground shadow-lg backdrop-blur">
-        <span>Low</span>
-        <span className="h-2 w-8 rounded-full bg-green-500/70" />
-        <span className="h-2 w-8 rounded-full bg-yellow-500/70" />
-        <span className="h-2 w-8 rounded-full bg-orange-500/70" />
-        <span className="h-2 w-8 rounded-full bg-red-600/80" />
-        <span>High</span>
+            {geoJson && (
+              <>
+                <FitGeoJsonBounds data={geoJson} />
+                <GeoJSON
+                  key={stats.map((item) => `${item.name}:${item.count}`).join('|')}
+                  data={geoJson}
+                  style={getFeatureStyle}
+                  onEachFeature={onEachFeature}
+                />
+              </>
+            )}
+          </MapContainer>
+        </div>
       </div>
     </div>
   );
@@ -332,7 +516,7 @@ export function BarangayHeatmap({
               <h2 className="truncate text-base font-bold text-foreground">{title}</h2>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {ECHAGUE_GIS.name}, {ECHAGUE_GIS.province} / raster barangay map with incident overlays
+              {ECHAGUE_GIS.name}, {ECHAGUE_GIS.province} / GeoJSON barangay boundary choropleth
             </p>
           </div>
 
@@ -345,12 +529,12 @@ export function BarangayHeatmap({
         </div>
       </div>
 
-      <div className={`grid min-h-0 ${compact ? 'xl:grid-cols-[minmax(0,1fr)_340px]' : 'xl:grid-cols-[minmax(0,1fr)_360px]'}`}>
-        <div className={`relative bg-slate-950 ${compact ? 'min-h-[640px]' : 'h-[calc(100vh-15rem)] min-h-[620px]'}`}>
-          <RasterMap stats={stats} selectedName={selected?.name || selectedName} onSelectName={setSelectedName} />
+      <div className={`grid min-h-0 ${compact ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : 'xl:grid-cols-[minmax(0,1fr)_330px]'}`}>
+        <div className={`relative bg-slate-100 ${compact ? 'min-h-[720px]' : 'min-h-[740px] xl:h-[calc(100vh-11rem)]'}`}>
+          <BarangayGeoJsonMap stats={stats} selectedName={selected?.name || selectedName} onSelectName={setSelectedName} />
         </div>
 
-        <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? 'xl:h-[640px]' : 'xl:h-[calc(100vh-15rem)] xl:min-h-[620px]'}`}>
+        <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? 'xl:h-[720px]' : 'xl:h-[calc(100vh-11rem)] xl:min-h-[740px]'}`}>
           <PriorityBreakdown items={prioritySummary} />
           <SelectedBarangayPanel selected={selected} periodBreakdown={selectedPeriodBreakdown} range={range} />
           <RankingPanel

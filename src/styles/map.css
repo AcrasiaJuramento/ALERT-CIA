@@ -3,6 +3,16 @@
   font-family: Inter, sans-serif;
 }
 
+.echague-boundary-map.leaflet-container {
+  background: #f8fafc;
+}
+
+.echague-boundary-map .leaflet-pane,
+.echague-boundary-map .leaflet-map-pane,
+.echague-boundary-map .leaflet-overlay-pane {
+  background: transparent;
+}
+
 .leaflet-control-attribution {
   font-size: 10px;
 }
@@ -25,9 +35,10 @@
 
 .echague-gis-popup .leaflet-popup-content-wrapper {
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.98);
-  color: #e2e8f0;
-  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.38);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(255, 255, 255, 0.98);
+  color: #0f172a;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.18);
 }
 
 .echague-gis-popup .leaflet-popup-content {
@@ -42,13 +53,13 @@
 .gis-popup-title {
   font-size: 14px;
   font-weight: 700;
-  color: #f8fafc;
+  color: #0f172a;
 }
 
 .gis-popup-source {
   margin-top: 2px;
   font-size: 10px;
-  color: #94a3b8;
+  color: #64748b;
 }
 
 .gis-popup-grid {
@@ -59,10 +70,10 @@
 }
 
 .gis-popup-card {
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 8px;
   padding: 8px 10px;
-  background: rgba(30, 41, 59, 0.85);
+  background: #f8fafc;
 }
 
 .gis-popup-card span,
@@ -71,7 +82,7 @@
 .gis-popup-range {
   display: block;
   font-size: 10px;
-  color: #94a3b8;
+  color: #64748b;
 }
 
 .gis-popup-card strong,
@@ -80,7 +91,7 @@
   display: block;
   margin-top: 4px;
   font-size: 13px;
-  color: #f8fafc;
+  color: #0f172a;
 }
 
 .gis-popup-periods {
@@ -94,7 +105,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.22);
   padding-bottom: 4px;
 }
 
@@ -105,7 +116,7 @@
 .gis-popup-most-common {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
 }
 
 .leaflet-incident-marker-shell {
