@@ -34,6 +34,8 @@ export const PERMISSIONS = {
   MANAGE_ADVISORIES: 'advisories:manage',
   MANAGE_USERS: 'users:manage',
   VIEW_SETTINGS: 'settings:view',
+  VIEW_DISPATCH: 'dispatch:view',
+  CREATE_DISPATCH: 'dispatch:create',
 };
 
 export const ROLE_PERMISSIONS = {
@@ -54,6 +56,8 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_ANALYTICS,
     PERMISSIONS.MANAGE_ADVISORIES,
     PERMISSIONS.VIEW_SETTINGS,
+    PERMISSIONS.VIEW_DISPATCH,
+    // PERMISSIONS.CREATE_DISPATCH,
   ],
   [ROLES.ADMINISTRATOR]: [
     PERMISSIONS.VIEW_DASHBOARD,
@@ -65,6 +69,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_ADVISORIES,
     PERMISSIONS.MANAGE_USERS,
     PERMISSIONS.VIEW_SETTINGS,
+    // PERMISSIONS.VIEW_DISPATCH,
   ],
 };
 
@@ -79,6 +84,8 @@ export const NAVIGATION_ITEMS = [
   { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
   { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS },
   { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS },
+  { label: 'Dispatch', icon: FileText, path: '/admin/dispatch', permission: PERMISSIONS.VIEW_DISPATCH },
+  // { label: 'Create Dispatch', icon: FilePlus2, path: '/admin/dispatch/new', permission: PERMISSIONS.CREATE_DISPATCH },
 ];
 
 export function hasPermission(role, permission) {
