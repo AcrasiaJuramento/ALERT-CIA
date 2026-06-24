@@ -14,6 +14,7 @@ import {
   Send,
   X,
 } from "lucide-react";
+import DispatchPreviewModal from "../components/DispatchWidgets";
 import { toast } from "sonner";
 import { PERMISSIONS } from "../access/rbac";
 import { useAuth } from "../contexts/AuthContext";
@@ -180,38 +181,15 @@ export default function DispatchRecords() {
         </>}
       </div>
 
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3">
-          <div className="w-full max-w-3xl rounded-2xl border border-border bg-card shadow-2xl">
-            <div className="flex items-center justify-between gap-3 border-b border-border p-4">
-              <div>
-                <h2 className="font-bold">{selected.responseNumber || "Dispatch Form"}</h2>
-                <p className="text-xs text-muted-foreground">{selected.status || "Draft"} · {selected.placeOfIncident || "No location entered"}</p>
-              </div>
-              <button onClick={() => setSelected(null)} className="rounded-lg p-2 hover:bg-secondary"><X size={18} /></button>
-            </div>
-            <div className="grid gap-3 p-4 text-sm md:grid-cols-2">
-              {[
-                ["Caller", selected.callerName || "-"],
-                ["Contact", selected.callerContact || "-"],
-                ["Patient", selected.patients?.[0]?.name || "-"],
-                ["Incident Type", [...(selected.natureTypes || []), selected.otherMedical, selected.otherTrauma].filter(Boolean).join(", ") || "-"],
-                ["Barangay", selected.barangay || "-"],
-                ["Incident Date / Time", `${selected.dateOfIncident || "-"} ${selected.timeOfIncident || ""}`],
-                ["Location", selected.placeOfIncident || selected.callerAddress || "-"],
-                ["Responding Team / Unit", `${selected.team || "-"} / ${selected.vehicle || "-"}`],
-                ["Group Leader", selected.groupLeader || "-"],
-                ["Linked PCR", findLinkedPCR(selected)?.responseNumber || "Not created"],
-              ].map(([label, value]) => <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3"><div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div><div className="mt-1 font-semibold text-foreground">{value}</div></div>)}
-            </div>
-            <div className="flex flex-wrap justify-end gap-2 border-t border-border p-4">
-              {canCreate && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit Dispatch</button>}
-              <button onClick={() => openPCR(selected)} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><FileText size={14} />Open Linked PCR</button>
-              {canCreate && selected.status !== DISPATCH_STATUSES.SENT && !findLinkedPCR(selected) && <button onClick={() => send(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Send size={14} />Send to Responding Team</button>}
-            </div>
-          </div>
-        </div>
-      )}
+      <DispatchPreviewModal
+      selected={selected}
+      setSelected={setSelected}
+      canCreate={canCreate}
+      edit={edit}
+      openPCR={openPCR}
+      send={send}
+      findLinkedPCR={findLinkedPCR}
+    />
     </div>
   );
 }
