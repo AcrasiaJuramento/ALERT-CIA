@@ -47,6 +47,26 @@ export function getIncidentLatLng(incident) {
   return percentToLatLng(incident?.coordinates);
 }
 
+export function getAdvisoryLatLng(advisory) {
+  if (Number.isFinite(advisory?.lat) && Number.isFinite(advisory?.lng)) {
+    return [advisory.lat, advisory.lng];
+  }
+
+  if (Number.isFinite(advisory?.latitude) && Number.isFinite(advisory?.longitude)) {
+    return [advisory.latitude, advisory.longitude];
+  }
+
+  if (Number.isFinite(advisory?.coordinates?.lat) && Number.isFinite(advisory?.coordinates?.lng)) {
+    return [advisory.coordinates.lat, advisory.coordinates.lng];
+  }
+
+  if (Number.isFinite(advisory?.coordinates?.x) && Number.isFinite(advisory?.coordinates?.y)) {
+    return percentToLatLng(advisory.coordinates);
+  }
+
+  return null;
+}
+
 export function getZoneLatLng(zone) {
   if (Number.isFinite(zone?.lat) && Number.isFinite(zone?.lng)) {
     return [zone.lat, zone.lng];

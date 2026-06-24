@@ -10,6 +10,7 @@ import PCRReports from './pages/PCRReports'
 import IncidentList from './pages/IncidentList'
 import IncidentDetails from './pages/IncidentDetails'
 import MapMonitoring from './pages/MapMonitoring'
+import AdvisoryModule from './pages/AdvisoryModule'
 import Analytics from './pages/Analytics'
 import ReportsAnalytics from './pages/ReportsAnalytics'
 import UserManagement from './pages/UserManagement'
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: 'incidents', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentList />) },
       { path: 'incidents/:id', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentDetails />) },
       { path: 'map', element: protect(PERMISSIONS.VIEW_MAP, <MapMonitoring />) },
+      { path: 'advisories', element: protect(PERMISSIONS.MANAGE_ADVISORIES, <AdvisoryModule />) },
       { path: 'pcr', element: protect(PERMISSIONS.VIEW_PCR_RECORDS, <PCRReports />) },
       { path: 'pcr/new', element: protect(PERMISSIONS.CREATE_PCR, <PCRModule />) },
       { path: 'pcr-verification', element: <Navigate to="/admin/pcr" replace /> },

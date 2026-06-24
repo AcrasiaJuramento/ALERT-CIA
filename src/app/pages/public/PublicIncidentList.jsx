@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Search, MapPin, Clock, Filter, Flame, Droplets, Car, Heart, AlertTriangle } from 'lucide-react';
 import { incidents } from '../../data/mockData';
+import { getIncidentStatusLabel, INCIDENT_STATUS } from '../../utils/incidentStatus';
 
 const typeIcons = {
   vehicular: Car,
@@ -25,7 +26,10 @@ const severityColors = {
   warning: { bg: 'bg-orange-100 dark:bg-orange-500/20', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
   moderate: { bg: 'bg-yellow-100 dark:bg-yellow-500/20', text: 'text-yellow-700 dark:text-yellow-400', dot: 'bg-yellow-500' },
   resolved: { bg: 'bg-green-100 dark:bg-green-500/20', text: 'text-green-700 dark:text-green-400', dot: 'bg-green-500' },
+  completed: { bg: 'bg-green-100 dark:bg-green-500/20', text: 'text-green-700 dark:text-green-400', dot: 'bg-green-500' },
 };
+
+const defaultSeverityColor = severityColors.moderate;
 
 export default function PublicIncidentList() {
   const [search, setSearch] = useState('');
@@ -125,7 +129,7 @@ export default function PublicIncidentList() {
         <div className="space-y-3">
           {filtered.map((incident) => {
             const TypeIcon = typeIcons[incident.type];
-            const sev = severityColors[incident.severity];
+            const sev = severityColors[incident.severity] || defaultSeverityColor;
             return (
               <div
                 key={incident.id}
@@ -170,19 +174,15 @@ export default function PublicIncidentList() {
                       )}
                     </div>
                   </div>
-
                   {/* Status */}
                   <div className="flex flex-col items-end gap-2">
-                    <span className={`text-xs font-semibold px-3 py-1.5 rounded-full capitalize ${
-                      incident.status === 'active' ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400' :
-                      incident.status === 'responding' ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400' :
-                      incident.status === 'pending' ? 'bg-yellow-100 dark:bg-yellow-500/20 text-yellow-700 dark:text-yellow-400' :
+                    <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${
+                      incident.status === INCIDENT_STATUS.ON_SCENE ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400' :
+                      incident.status === INCIDENT_STATUS.TRANSPORTING ? 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400' :
+                      incident.status === INCIDENT_STATUS.IN_ROUTE ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400' :
                       'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400'
                     }`}>
-                      {incident.status === 'active' ? '● Active' :
-                       incident.status === 'responding' ? '● Responding' :
-                       incident.status === 'pending' ? '◐ Pending' :
-                       '✓ Resolved'}
+                      {getIncidentStatusLabel(incident.status)}
                     </span>
                   </div>
                 </div>

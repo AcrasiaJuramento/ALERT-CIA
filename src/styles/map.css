@@ -148,3 +148,25 @@
   font-weight: 800;
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32), 0 0 0 6px rgba(37, 99, 235, 0.2);
 }
+
+.leaflet-advisory-marker-shell {
+  background: transparent;
+  border: 0;
+}
+
+.leaflet-advisory-marker {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: var(--advisory-marker-color, #f97316);
+  border: 2px solid white;
+  border-radius: 999px 999px 999px 4px;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32), 0 0 0 5px color-mix(in srgb, var(--advisory-marker-color, #f97316) 20%, transparent);
+  transform: rotate(-45deg);
+}
+
+.leaflet-advisory-marker svg {
+  transform: rotate(45deg);
+}

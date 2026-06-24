@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { incidents } from '../data/mockData';
+import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
@@ -15,10 +16,10 @@ const severityBadge = {
 };
 
 const statusColors = {
-  active: 'text-red-400',
-  responding: 'text-orange-400',
-  pending: 'text-yellow-400',
-  resolved: 'text-green-400',
+  in_route: 'text-blue-400',
+  on_scene: 'text-orange-400',
+  transporting: 'text-purple-400',
+  completed: 'text-green-400',
 };
 
 const typeIcons = {
@@ -37,7 +38,7 @@ export default function MapMonitoring() {
   const [activeLayer, setActiveLayer] = useState(null);
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
 
-  const activeIncidents = incidents.filter(i => i.status !== 'resolved');
+  const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = incidents.find(i => i.id === selectedIncident);
 
   return (
@@ -125,7 +126,7 @@ export default function MapMonitoring() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className={`text-xs font-semibold ${statusColors[selectedInc.status]}`}>
-                    ● {selectedInc.status.toUpperCase()}
+                    ● {getIncidentStatusLabel(selectedInc.status).toUpperCase()}
                   </span>
                   <span className="text-xs text-muted-foreground">{selectedInc.assignedTeam}</span>
                 </div>

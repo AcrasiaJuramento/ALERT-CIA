@@ -3,25 +3,28 @@ import { MapContainer, TileLayer, ZoomControl, useMap, useMapEvents } from 'reac
 import L from 'leaflet';
 import { LocateFixed, Layers, RefreshCw } from 'lucide-react';
 import { incidents as defaultIncidents, heatmapZones, dangerZones } from '../../data/mockData';
-import { ECHAGUE_CENTER, getBoundsForIncidents } from '../../utils/mapData';
+import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
+import { isIncidentCompleted } from '../../utils/incidentStatus';
+import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
 import { ClusteredIncidentMarkers } from './ClusteredIncidentMarkers';
 import { HazardZonesLayer } from './HazardZonesLayer';
 import { HeatmapLayer } from './HeatmapLayer';
 import { RouteLayer } from './RouteLayer';
 
-function FitMapToData({ incidents, selectedIncidentId }) {
+function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvisoryId }) {
   const map = useMap();
 
   useEffect(() => {
-    if (selectedIncidentId) return;
-    const bounds = getBoundsForIncidents(incidents);
+    if (selectedIncidentId || selectedAdvisoryId) return;
+    const advisoryPoints = advisories.map(getAdvisoryLatLng).filter(Boolean);
+    const bounds = [...(getBoundsForIncidents(incidents) || []), ...advisoryPoints];
     if (!bounds?.length) return;
 
     map.fitBounds(bounds, {
       padding: [36, 36],
       maxZoom: 14,
     });
-  }, [incidents, map, selectedIncidentId]);
+  }, [advisories, incidents, map, selectedAdvisoryId, selectedIncidentId]);
 
   return null;
 }
@@ -107,6 +110,9 @@ export function LeafletIncidentMap({
   showHeatmap = true,
   showDangerZones = true,
   showMarkers = true,
+  advisoryMarkers = [],
+  selectedAdvisoryId,
+  onAdvisoryClick,
   clusterMarkers = true,
   routes = [],
   compact = false,
@@ -117,13 +123,14 @@ export function LeafletIncidentMap({
     heatmap: showHeatmap,
     dangerZones: showDangerZones,
     incidents: showMarkers,
+    advisories: true,
     routes: true,
     locate: false,
   });
   const [followUser, setFollowUser] = useState(false);
 
   const activeIncidents = useMemo(
-    () => incidents.filter((incident) => incident.status !== 'resolved'),
+    () => incidents.filter((incident) => !isIncidentCompleted(incident.status)),
     [incidents]
   );
 
@@ -144,7 +151,14 @@ export function LeafletIncidentMap({
         />
         <MapClickHandler onMapClick={onMapClick} />
         <ZoomControl position="bottomright" />
-        {autoFit && <FitMapToData incidents={incidents} selectedIncidentId={selectedIncidentId} />}
+        {autoFit && (
+          <FitMapToData
+            incidents={incidents}
+            advisories={advisoryMarkers}
+            selectedIncidentId={selectedIncidentId}
+            selectedAdvisoryId={selectedAdvisoryId}
+          />
+        )}
         <ClusteredIncidentMarkers
           incidents={layers.incidents ? incidents : []}
           selectedIncidentId={selectedIncidentId}
@@ -159,6 +173,11 @@ export function LeafletIncidentMap({
             enabled={false}
           />
         )}
+        <AdvisoryMarkersLayer
+          advisories={layers.advisories ? advisoryMarkers : []}
+          selectedAdvisoryId={selectedAdvisoryId}
+          onAdvisoryClick={onAdvisoryClick}
+        />
         <HeatmapLayer points={heatmapZones} enabled={layers.heatmap} />
         <HazardZonesLayer zones={dangerZones} enabled={layers.dangerZones} />
         <RouteLayer routes={layers.routes ? routes : []} />
@@ -173,6 +192,7 @@ export function LeafletIncidentMap({
           </div>
           {[
             ['incidents', 'Incidents'],
+            ['advisories', 'Advisories'],
             ['heatmap', 'Heatmap'],
             ['dangerZones', 'Geofences'],
             ['routes', 'Routes'],

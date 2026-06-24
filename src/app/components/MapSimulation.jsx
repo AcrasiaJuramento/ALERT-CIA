@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { incidents, heatmapZones, dangerZones } from '../data/mockData';
 import { AlertTriangle, Flame, Droplets, Heart, Shield } from 'lucide-react';
+import { isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
 
 const severityColors = {
   critical: { fill: '#EF4444', stroke: '#DC2626', pulse: 'rgba(239,68,68,0.4)' },
@@ -45,7 +46,7 @@ export function MapSimulation({
     return () => clearInterval(interval);
   }, []);
 
-  const activeIncidents = incidents.filter((i) => i.status !== 'resolved');
+  const activeIncidents = incidents.filter((i) => !isIncidentCompleted(i.status));
   const visibleIncidents = isPublic ? incidents.slice(0, 8) : incidents;
 
   return (
@@ -217,7 +218,7 @@ export function MapSimulation({
             const colors = severityColors[incident.severity];
             const isSelected = selectedIncidentId === incident.id;
             const isHovered = hoveredMarker === incident.id;
-            const isActive = incident.status === 'active' || incident.status === 'responding';
+            const isActive = isAmbulanceAssigned(incident.status);
 
             return (
               <g

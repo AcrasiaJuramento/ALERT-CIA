@@ -5,6 +5,7 @@ import L from 'leaflet';
 import 'leaflet.markercluster';
 import { AlertTriangle, Flame, Droplets, Heart, MapPin, ShieldAlert } from 'lucide-react';
 import { getIncidentLatLng } from '../../utils/mapData';
+import { getIncidentStatusLabel } from '../../utils/incidentStatus';
 
 const severityColors = {
   critical: '#dc2626',
@@ -46,7 +47,7 @@ function PopupContent({ incident }) {
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>
       <div className="mt-2 flex items-center gap-2 text-[11px]">
         <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">{incident.severity}</span>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 capitalize">{incident.status}</span>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5">{getIncidentStatusLabel(incident.status)}</span>
       </div>
       {incident.description && (
         <p className="mt-2 text-xs leading-relaxed text-slate-600">{incident.description}</p>

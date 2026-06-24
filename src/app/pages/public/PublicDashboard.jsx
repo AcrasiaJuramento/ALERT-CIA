@@ -1,9 +1,12 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, CheckCircle2, MapPin, Clock, ChevronRight,
   Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2
 } from 'lucide-react';
-import { incidents, publicAnnouncements } from '../../data/mockData';
+import { incidents } from '../../data/mockData';
+import { ADVISORY_EVENT, formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
+import { isIncidentCompleted } from '../../utils/incidentStatus';
 
 const typeIcons = {
   vehicular: Car,
@@ -39,9 +42,20 @@ const announcementSeverity = {
 
 export default function PublicDashboard() {
   const navigate = useNavigate();
-  const activeIncidents = incidents.filter(i => i.status !== 'resolved');
-  const resolvedToday = incidents.filter(i => i.status === 'resolved').length;
+  const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
+  const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
+  const resolvedToday = incidents.filter(i => isIncidentCompleted(i.status)).length;
   const criticalCount = incidents.filter(i => i.severity === 'critical').length;
+
+  useEffect(() => {
+    const refreshAdvisories = () => setPublicAdvisories(loadPublishedAdvisories());
+    window.addEventListener('storage', refreshAdvisories);
+    window.addEventListener(ADVISORY_EVENT, refreshAdvisories);
+    return () => {
+      window.removeEventListener('storage', refreshAdvisories);
+      window.removeEventListener(ADVISORY_EVENT, refreshAdvisories);
+    };
+  }, []);
 
   return (
     <div className="bg-background min-h-screen transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -76,7 +90,7 @@ export default function PublicDashboard() {
             { label: 'Active Incidents', value: activeIncidents.length, icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10', border: 'border-red-100 dark:border-red-500/20' },
             { label: 'Critical Alerts', value: criticalCount, icon: Activity, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10', border: 'border-orange-100 dark:border-orange-500/20' },
             { label: 'Teams Responding', value: 5, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
-            { label: 'Resolved Today', value: resolvedToday, icon: CheckCircle2, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-100 dark:border-green-500/20' },
+            { label: 'Completed Today', value: resolvedToday, icon: CheckCircle2, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-100 dark:border-green-500/20' },
           ].map(({ label, value, icon: Icon, color, bg, border }) => (
             <div key={label} className={`p-4 rounded-2xl border ${bg} ${border} transition-colors duration-300`}>
               <div className={`w-9 h-9 ${bg} rounded-xl flex items-center justify-center mb-3`}>
@@ -102,7 +116,7 @@ export default function PublicDashboard() {
               </div>
             </div>
             <div className="space-y-3">
-              {publicAnnouncements.map((ann) => {
+              {publicAdvisories.map((ann) => {
                 const s = announcementSeverity[ann.severity];
                 return (
                   <div key={ann.id} className={`p-4 rounded-2xl border ${s.bg} ${s.border} transition-colors duration-300`}>
@@ -116,15 +130,26 @@ export default function PublicDashboard() {
                           </span>
                         </div>
                         <p className="text-sm text-muted-foreground leading-relaxed">{ann.message}</p>
-                        <div className="flex items-center gap-1 mt-2 text-xs text-muted-foreground opacity-70">
-                          <Clock className="w-3 h-3" />
-                          {ann.time}
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-xs text-muted-foreground opacity-70">
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {ann.area}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {ann.time || formatAdvisoryTime(ann)}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </div>
                 );
               })}
+              {publicAdvisories.length === 0 && (
+                <div className="p-4 rounded-2xl border border-border bg-card text-sm text-muted-foreground">
+                  No public advisories are posted right now.
+                </div>
+              )}
             </div>
           </div>
 
