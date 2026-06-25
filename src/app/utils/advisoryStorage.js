@@ -1,4 +1,5 @@
 import { publicAnnouncements } from '../data/mockData';
+import { cachedJsonStorage, setCachedJsonStorage } from './cache';
 
 export const ADVISORY_STORAGE_KEY = 'alert-cia-advisories';
 export const ADVISORY_EVENT = 'alert-cia-advisories-updated';
@@ -54,7 +55,7 @@ const normalizeAdvisory = (advisory) => ({
 
 export function loadAdvisories() {
   try {
-    const stored = JSON.parse(localStorage.getItem(ADVISORY_STORAGE_KEY) || '[]');
+    const stored = cachedJsonStorage(ADVISORY_STORAGE_KEY, []);
     return (stored.length ? stored : defaultAdvisories).map(normalizeAdvisory);
   } catch {
     return defaultAdvisories;
@@ -78,14 +79,14 @@ export function saveAdvisory(advisory) {
   const index = records.findIndex((item) => item.id === next.id);
   if (index >= 0) records[index] = next;
   else records.unshift(next);
-  localStorage.setItem(ADVISORY_STORAGE_KEY, JSON.stringify(records));
+  setCachedJsonStorage(ADVISORY_STORAGE_KEY, records);
   window.dispatchEvent(new Event(ADVISORY_EVENT));
   return next;
 }
 
 export function deleteAdvisory(id) {
   const records = loadAdvisories().filter((item) => item.id !== id);
-  localStorage.setItem(ADVISORY_STORAGE_KEY, JSON.stringify(records));
+  setCachedJsonStorage(ADVISORY_STORAGE_KEY, records);
   window.dispatchEvent(new Event(ADVISORY_EVENT));
 }
 

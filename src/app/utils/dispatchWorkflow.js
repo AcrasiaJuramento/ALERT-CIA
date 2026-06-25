@@ -1,3 +1,5 @@
+import { cachedJsonStorage, setCachedJsonStorage } from "./cache";
+
 export const DISPATCH_STORAGE_KEY = "dispatches";
 export const INCIDENT_STORAGE_KEY = "alert-cia-incident-records";
 export const DISPATCH_EDIT_KEY = "alert-cia-dispatch-edit-id";
@@ -173,39 +175,27 @@ export const DISPATCH_STATUSES = {
 };
 
 export function loadDispatchRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(DISPATCH_STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
+  return cachedJsonStorage(DISPATCH_STORAGE_KEY, []);
 }
 
 export function setDispatchRecords(records) {
-  localStorage.setItem(DISPATCH_STORAGE_KEY, JSON.stringify(records));
+  setCachedJsonStorage(DISPATCH_STORAGE_KEY, records);
 }
 
 export function loadIncidentRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(INCIDENT_STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
+  return cachedJsonStorage(INCIDENT_STORAGE_KEY, []);
 }
 
 export function setIncidentRecords(records) {
-  localStorage.setItem(INCIDENT_STORAGE_KEY, JSON.stringify(records));
+  setCachedJsonStorage(INCIDENT_STORAGE_KEY, records);
 }
 
 function loadPCRRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(PCR_STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
+  return cachedJsonStorage(PCR_STORAGE_KEY, []);
 }
 
 function setPCRRecords(records) {
-  localStorage.setItem(PCR_STORAGE_KEY, JSON.stringify(records));
+  setCachedJsonStorage(PCR_STORAGE_KEY, records);
 }
 
 export function generateResponseNumber() {

@@ -13,6 +13,7 @@ import {
   getBarangayStats,
   summarizeBy,
 } from '../../data/analyticsModule';
+import { CACHE_TTL, getCache, setCache } from '../../utils/cache';
 
 const rangeLabels = {
   today: 'Today',
@@ -268,6 +269,14 @@ function BarangayGeoJsonMap({ stats, selectedName, onSelectName, zoomBoost = 0.7
       setError('');
 
       try {
+        const cacheKey = `geojson:${ECHAGUE_GIS.barangayGeoJsonUrl}`;
+        const cached = getCache(cacheKey);
+        if (cached) {
+          setGeoJson(cached);
+          setStatus('ready');
+          return;
+        }
+
         const response = await fetch(ECHAGUE_GIS.barangayGeoJsonUrl);
         if (!response.ok) {
           throw new Error(`GeoJSON request failed with ${response.status}`);
@@ -280,6 +289,7 @@ function BarangayGeoJsonMap({ stats, selectedName, onSelectName, zoomBoost = 0.7
           throw new Error('GeoJSON file is not a valid FeatureCollection.');
         }
 
+        setCache(cacheKey, data, CACHE_TTL.GEOJSON);
         setGeoJson(data);
         setStatus('ready');
       } catch (loadError) {

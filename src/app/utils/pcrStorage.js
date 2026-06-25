@@ -1,4 +1,5 @@
 import { syncIncidentFromPCR } from "./dispatchWorkflow";
+import { cachedJsonStorage, setCachedJsonStorage } from "./cache";
 
 export const PCR_STORAGE_KEY = "alert-cia-pcr-records";
 export const PCR_EDIT_KEY = "alert-cia-pcr-edit-id";
@@ -42,7 +43,7 @@ export const createPCR = () => ({
 
 export function loadPCRs() {
   try {
-    return JSON.parse(localStorage.getItem(PCR_STORAGE_KEY) || "[]").map(record => synchronizePCR({
+    return cachedJsonStorage(PCR_STORAGE_KEY, []).map(record => synchronizePCR({
       ...record,
       createdBy: record.createdBy || CURRENT_USER.id,
       updatedBy: record.updatedBy || record.createdBy || CURRENT_USER.id,
@@ -52,7 +53,7 @@ export function loadPCRs() {
 
 export function loadAuditLogs(reportId) {
   try {
-    const logs = JSON.parse(localStorage.getItem(PCR_AUDIT_KEY) || "[]");
+    const logs = cachedJsonStorage(PCR_AUDIT_KEY, []);
     return reportId ? logs.filter(log => log.reportId === reportId) : logs;
   } catch { return []; }
 }
@@ -60,7 +61,7 @@ export function loadAuditLogs(reportId) {
 export function addAuditLog(reportId, actionType, previousValue, newValue) {
   const logs = loadAuditLogs();
   logs.unshift({ id: crypto.randomUUID(), reportId, userId: CURRENT_USER.id, actionType, previousValue, newValue, timestamp: new Date().toISOString() });
-  localStorage.setItem(PCR_AUDIT_KEY, JSON.stringify(logs));
+  setCachedJsonStorage(PCR_AUDIT_KEY, logs);
 }
 
 export function synchronizePCR(record) {
@@ -139,7 +140,7 @@ export function savePCR(record) {
   const next = syncIncidentFromPCR({ ...synchronizePCR(record), createdBy: record.createdBy || CURRENT_USER.id, updatedBy: CURRENT_USER.id, updatedAt: new Date().toISOString() });
   const index = records.findIndex(item => item.id === next.id);
   if (index >= 0) records[index] = next; else records.unshift(next);
-  localStorage.setItem(PCR_STORAGE_KEY, JSON.stringify(records));
+  setCachedJsonStorage(PCR_STORAGE_KEY, records);
   if (!previous) addAuditLog(next.id, "REPORT_CREATED", null, { status: next.status });
   else {
     if (previous.status !== next.status) addAuditLog(next.id, "STATUS_CHANGED", previous.status, next.status);
@@ -154,7 +155,7 @@ export function savePCR(record) {
   return next;
 }
 
-export function setPCRs(records) { localStorage.setItem(PCR_STORAGE_KEY, JSON.stringify(records)); }
+export function setPCRs(records) { setCachedJsonStorage(PCR_STORAGE_KEY, records); }
 
 export async function exportPCRToPdf(record) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
