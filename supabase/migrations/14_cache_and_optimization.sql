@@ -17,6 +17,11 @@ create policy admin_all_app_cache on public.app_cache for all to authenticated
 using (public.is_admin()) with check (public.is_admin());
 create policy staff_read_fresh_app_cache on public.app_cache for select to authenticated
 using (auth.uid() is not null and expires_at > now());
+create policy staff_write_short_lived_app_cache on public.app_cache for insert to authenticated
+with check (auth.uid() is not null and expires_at <= now() + interval '1 day');
+create policy staff_update_short_lived_app_cache on public.app_cache for update to authenticated
+using (auth.uid() is not null)
+with check (auth.uid() is not null and expires_at <= now() + interval '1 day');
 
 create materialized view if not exists public.mv_barangay_incident_counts as
 select

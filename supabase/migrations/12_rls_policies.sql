@@ -193,6 +193,14 @@ grant insert, update on
   public.data_exports
 to authenticated;
 
+grant delete on
+  public.dispatch_patients,
+  public.pcr_vital_signs,
+  public.pcr_medications,
+  public.pcr_interventions,
+  public.pcr_attachments
+to authenticated;
+
 grant execute on function
   public.has_role(public.app_role),
   public.is_admin(),
