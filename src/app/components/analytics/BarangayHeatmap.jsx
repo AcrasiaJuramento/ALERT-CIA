@@ -475,6 +475,7 @@ export function BarangayHeatmap({
   compact = false,
   mapZoomBoost = 0.75,
   mapMinZoom = 10,
+  showDetailsPanel = true,
 }) {
   const [selectedName, setSelectedName] = useState('');
 
@@ -531,7 +532,7 @@ export function BarangayHeatmap({
         </div>
       </div>
 
-      <div className={`grid min-h-0 ${compact ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : 'xl:grid-cols-[minmax(0,1fr)_330px]'}`}>
+      <div className={`grid min-h-0 ${showDetailsPanel ? (compact ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : 'xl:grid-cols-[minmax(0,1fr)_330px]') : 'grid-cols-1'}`}>
         <div className={`relative bg-slate-100 ${compact ? 'min-h-[720px]' : 'min-h-[740px] xl:h-[calc(100vh-11rem)]'}`}>
           <BarangayGeoJsonMap
             stats={stats}
@@ -542,15 +543,17 @@ export function BarangayHeatmap({
           />
         </div>
 
-        <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? 'xl:h-[720px]' : 'xl:h-[calc(100vh-11rem)] xl:min-h-[740px]'}`}>
-          <PriorityBreakdown items={prioritySummary} />
-          <SelectedBarangayPanel selected={selected} periodBreakdown={selectedPeriodBreakdown} range={range} />
-          <RankingPanel
-            rows={rankedStats}
-            selectedName={selected?.name || selectedName}
-            onSelectName={setSelectedName}
-          />
-        </aside>
+        {showDetailsPanel && (
+          <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? 'xl:h-[720px]' : 'xl:h-[calc(100vh-11rem)] xl:min-h-[740px]'}`}>
+            <PriorityBreakdown items={prioritySummary} />
+            <SelectedBarangayPanel selected={selected} periodBreakdown={selectedPeriodBreakdown} range={range} />
+            <RankingPanel
+              rows={rankedStats}
+              selectedName={selected?.name || selectedName}
+              onSelectName={setSelectedName}
+            />
+          </aside>
+        )}
       </div>
     </section>
   );

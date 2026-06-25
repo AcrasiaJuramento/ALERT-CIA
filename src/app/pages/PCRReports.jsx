@@ -8,8 +8,7 @@ import { toast } from 'sonner';
 import { PERMISSIONS, ROLES } from '../access/rbac';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
-import { DISPATCH_EDIT_KEY, loadDispatchRecords } from '../utils/dispatchWorkflow';
-import { CURRENT_USER, exportPCRToDocx, exportPCRToPdf, loadAuditLogs, loadPCRs, PCR_EDIT_KEY, setPCRs } from '../utils/pcrStorage';
+import { CURRENT_USER, exportPCRToPdf, loadAuditLogs, loadPCRs, PCR_EDIT_KEY, setPCRs } from '../utils/pcrStorage';
 
 export default function PCRReports() {
   const { user, can } = useAuth();
@@ -53,15 +52,6 @@ export default function PCRReports() {
     sessionStorage.setItem(PCR_EDIT_KEY, record.id);
     navigate(`/admin/pcr/new?edit=${record.id}`);
   };
-  const openDispatch = record => {
-    const dispatch = loadDispatchRecords().find(item => item.id === record.dispatchId || item.incidentId === record.incidentId);
-    if (!dispatch) {
-      toast.error('No linked Dispatch Form found for this PCR.');
-      return;
-    }
-    sessionStorage.setItem(DISPATCH_EDIT_KEY, dispatch.id);
-    navigate(`/admin/dispatch/new?edit=${dispatch.id}`);
-  };
   const archive = record => {
     const nextRecord = { ...record, archived: !record.archived, updatedAt: new Date().toISOString() };
     setRecords(current => current.map(item => item.id === record.id ? nextRecord : item));
@@ -78,14 +68,6 @@ export default function PCRReports() {
       toast.error('Unable to generate the PDF. Please try again.');
     } finally {
       setExportingRecord(null);
-    }
-  };
-  const doWord = async record => {
-    try {
-      await exportPCRToDocx(record);
-      toast.success('Word document downloaded.');
-    } catch {
-      toast.error('Word export failed.');
     }
   };
   const updateStatus = (record, nextStatus, reason = '') => {
@@ -164,8 +146,6 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(record)} title="View" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><Eye size={15} /></button>
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
                 <button onClick={() => doPdf(record)} title="Download PDF" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><Download size={15} /></button>
-                <button onClick={() => doWord(record)} title="Export Word" className="p-2 hover:bg-violet-500/10 text-violet-400 rounded"><Download size={15} /></button>
-                {record.dispatchId && <button onClick={() => openDispatch(record)} title="Open Dispatch Form" className="p-2 hover:bg-cyan-500/10 text-cyan-400 rounded"><FileText size={15} /></button>}
                 {canReview && record.status === 'Submitted' && <button onClick={() => updateStatus(record, 'Verified')} title="Accept" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {canReview && record.status === 'Submitted' && <button onClick={() => setRejectingRecord(record)} title="Reject" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {canCreate && <button onClick={() => archive(record)} title={record.archived ? 'Restore' : 'Archive'} className="p-2 hover:bg-red-500/10 text-red-400 rounded">{record.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}</button>}
@@ -188,9 +168,7 @@ export default function PCRReports() {
               <div className="flex flex-wrap justify-end gap-2">
                 {canReview && selected.status === 'Submitted' && <button onClick={() => updateStatus(selected, 'Verified')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
                 {canReview && selected.status === 'Submitted' && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Reject</button>}
-                {selected.dispatchId && <button onClick={() => openDispatch(selected)} className="flex items-center gap-1 rounded-lg bg-cyan-600 px-3 py-2 text-xs text-white"><FileText size={14} />Dispatch</button>}
                 {canCreate && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
-                <button onClick={() => doWord(selected)} className="flex items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-xs text-white"><Download size={14} />Word</button>
                 <button onClick={() => doPdf(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Download size={14} />PDF</button>
                 <button onClick={() => setSelected(null)} className="rounded-lg p-2 hover:bg-secondary"><X size={18} /></button>
               </div>

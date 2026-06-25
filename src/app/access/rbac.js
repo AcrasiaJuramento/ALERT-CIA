@@ -48,13 +48,13 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_PCR_RECORDS,
     PERMISSIONS.CREATE_PCR,
     PERMISSIONS.VIEW_RECEIVED_DISPATCHES,
+    PERMISSIONS.VIEW_ANALYTICS,
     PERMISSIONS.VIEW_SETTINGS,
   ],
   [ROLES.DISPATCHER]: [
     PERMISSIONS.VIEW_DASHBOARD,
     PERMISSIONS.VIEW_INCIDENTS,
     PERMISSIONS.VIEW_MAP,
-    PERMISSIONS.VIEW_PCR_RECORDS,
     PERMISSIONS.REVIEW_PCR,
     PERMISSIONS.VIEW_ANALYTICS,
     PERMISSIONS.VIEW_SETTINGS,
@@ -72,7 +72,6 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_USERS,
     PERMISSIONS.VIEW_SETTINGS,
     PERMISSIONS.VIEW_DISPATCH,
-    PERMISSIONS.CREATE_DISPATCH,
   ],
 };
 
@@ -81,13 +80,13 @@ export const NAVIGATION_ITEMS = [
   { label: 'Incidents', icon: AlertTriangle, path: '/admin/incidents', permission: PERMISSIONS.VIEW_INCIDENTS },
   { label: 'Map Monitor', icon: Map, path: '/admin/map', permission: PERMISSIONS.VIEW_MAP },
   { label: 'Advisories', icon: BellRing, path: '/admin/advisories', permission: PERMISSIONS.MANAGE_ADVISORIES },
-  { label: 'Patient Care Records', icon: FileText, path: '/admin/pcr', permission: PERMISSIONS.VIEW_PCR_RECORDS, group: 'Patient Care' },
-  { label: 'Received Dispatches', icon: RadioIcon, path: '/admin/dispatch/received', permission: PERMISSIONS.VIEW_RECEIVED_DISPATCHES, group: 'Patient Care' },
-  { label: 'Analytics', icon: BarChart2, path: '/admin/analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
-  { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS },
+  { label: 'Create Dispatch Form', icon: FilePlus2, path: '/admin/dispatch/new', permission: PERMISSIONS.CREATE_DISPATCH, group: 'DISPATCH' },
+  { label: 'Dispatch Form Records', icon: FileText, path: '/admin/dispatch', permission: PERMISSIONS.VIEW_DISPATCH, group: 'DISPATCH' },
+  { label: 'Received Dispatches', icon: RadioIcon, path: '/admin/dispatch/received', permission: PERMISSIONS.VIEW_RECEIVED_DISPATCHES, group: 'PCR' },
+  { label: 'Patient Care Records', icon: FileText, path: '/admin/pcr', permission: PERMISSIONS.VIEW_PCR_RECORDS, group: 'PCR' },
+  { label: 'Analytics', icon: BarChart2, path: '/admin/analytics', permission: PERMISSIONS.VIEW_ANALYTICS, group: 'REPORTS' },
+  { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS, group: 'REPORTS' },
   { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS },
-  { label: 'Dispatch Form Records', icon: FileText, path: '/admin/dispatch', permission: PERMISSIONS.VIEW_DISPATCH, group: 'Dispatch' },
-  { label: 'Create Dispatch Form', icon: FilePlus2, path: '/admin/dispatch/new', permission: PERMISSIONS.CREATE_DISPATCH, group: 'Dispatch' },
   { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS },
 ];
 
@@ -96,7 +95,22 @@ export function hasPermission(role, permission) {
 }
 
 export function getAuthorizedNavigation(role) {
-  return NAVIGATION_ITEMS.filter(item => hasPermission(role, item.permission));
+  const items = NAVIGATION_ITEMS.filter(item => hasPermission(role, item.permission));
+  if (role !== ROLES.DISPATCHER) return items;
+
+  const dispatcherOrder = [
+    '/admin',
+    '/admin/incidents',
+    '/admin/map',
+    '/admin/dispatch/new',
+    '/admin/dispatch',
+    '/admin/analytics',
+    '/admin/reports-analytics',
+    '/admin/settings',
+  ];
+  return items
+    .filter(item => dispatcherOrder.includes(item.path))
+    .sort((first, second) => dispatcherOrder.indexOf(first.path) - dispatcherOrder.indexOf(second.path))
 }
 
 export function isNavigationItemActive(pathname, itemPath) {

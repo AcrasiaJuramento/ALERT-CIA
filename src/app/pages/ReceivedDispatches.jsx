@@ -8,6 +8,7 @@ import {
   DISPATCH_STATUSES,
   findLinkedPCR,
   loadDispatchRecords,
+  markDispatchBackToBase,
 } from "../utils/dispatchWorkflow";
 
 const inputClass = "w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500";
@@ -53,6 +54,16 @@ export default function ReceivedDispatches() {
     navigate(`/admin/pcr/new?edit=${pcr.id}`);
   };
 
+  const completeResponse = record => {
+    try {
+      const result = markDispatchBackToBase(record);
+      setRecords(current => current.map(item => item.id === result.dispatch.id ? result.dispatch : item));
+      toast.success("Response marked resolved. Back to base time was added to the PCR report.");
+    } catch (error) {
+      toast.error(error.message || "Unable to mark this dispatch as resolved.");
+    }
+  };
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -73,6 +84,7 @@ export default function ReceivedDispatches() {
       <div className="grid gap-4">
         {received.map(record => {
           const pcr = findLinkedPCR(record);
+          const isResolved = record.status === DISPATCH_STATUSES.PCR_COMPLETED || Boolean(record.resolvedAt);
           const incidentType = [...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified";
           return (
             <article key={record.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -88,9 +100,18 @@ export default function ReceivedDispatches() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {pcr ? (
-                    <button onClick={() => openPCR(record)} className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500">
-                      <FileText size={15} />Open PCR
-                    </button>
+                    <>
+                      <button onClick={() => openPCR(record)} className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500">
+                        <FileText size={15} />Open PCR
+                      </button>
+                      <button
+                        onClick={() => completeResponse(record)}
+                        disabled={isResolved}
+                        className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white ${isResolved ? "cursor-not-allowed bg-slate-500 opacity-70" : "bg-blue-600 hover:bg-blue-500"}`}
+                      >
+                        <CheckCircle2 size={15} />{isResolved ? "Resolved" : "Back to Base"}
+                      </button>
+                    </>
                   ) : (
                     <button onClick={() => accept(record)} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
                       <CheckCircle2 size={15} />Accept Dispatch
@@ -108,6 +129,7 @@ export default function ReceivedDispatches() {
                   ["Date / Time", `${record.dateOfIncident || "-"} ${record.timeOfIncident || ""}`],
                   ["Patient", record.patients?.[0]?.name || "-"],
                   ["Unit", record.vehicle || "-"],
+                  ["Back to Base", record.backToBase || "-"],
                   ["Linked PCR", pcr?.responseNumber || "Not created"],
                 ].map(([label, value]) => (
                   <div key={label} className="rounded-lg border border-border bg-secondary/30 p-3">

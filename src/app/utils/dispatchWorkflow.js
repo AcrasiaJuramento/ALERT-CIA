@@ -498,6 +498,51 @@ export function acceptDispatch(form, teamId = form.team || "") {
   return { dispatch: finalDispatch, pcr: nextPCR, incident: linkedIncident };
 }
 
+export function markDispatchBackToBase(form) {
+  const backToBaseTime = new Date().toTimeString().slice(0, 5);
+  const completedAt = nowIso();
+  const pcrs = loadPCRRecords();
+  const pcrIndex = pcrs.findIndex(item => item.id === form?.pcrId || item.dispatchId === form?.id || item.incidentId === form?.incidentId);
+
+  if (pcrIndex < 0) {
+    throw new Error("No linked PCR report found for this dispatch.");
+  }
+
+  const currentPCR = normalizePCRRecord(pcrs[pcrIndex]);
+  const nextPCR = normalizePCRRecord({
+    ...currentPCR,
+    backToBase: backToBaseTime,
+    completedAt,
+    status: "Completed",
+    updatedAt: completedAt,
+    timeline: {
+      ...(currentPCR.timeline || {}),
+      backToBase: backToBaseTime,
+    },
+  });
+  pcrs[pcrIndex] = nextPCR;
+  setPCRRecords(pcrs);
+
+  const incident = saveIncidentRecord({
+    ...deriveIncidentFromDispatch(form),
+    id: form.incidentId,
+    pcrId: nextPCR.id,
+    status: DISPATCH_STATUSES.PCR_COMPLETED,
+  });
+
+  const dispatches = loadDispatchRecords();
+  const nextDispatch = {
+    ...applyIncidentToDispatch({ ...form, pcrId: nextPCR.id }, incident),
+    status: DISPATCH_STATUSES.PCR_COMPLETED,
+    backToBase: backToBaseTime,
+    resolvedAt: completedAt,
+    updatedAt: completedAt,
+  };
+  setDispatchRecords(dispatches.map(item => item.id === nextDispatch.id ? nextDispatch : item));
+
+  return { dispatch: nextDispatch, pcr: nextPCR, incident };
+}
+
 export function syncIncidentFromPCR(record = {}) {
   if (!record.incidentId && !record.dispatchId) return record;
 

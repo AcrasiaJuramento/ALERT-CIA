@@ -208,7 +208,7 @@ export default function Dashboard() {
             allIncidents={analyticsIncidents}
             compact
             range="today"
-            mapZoomBoost={4}
+            mapZoomBoost={0}
             mapMinZoom={8}
           />
         </div>
