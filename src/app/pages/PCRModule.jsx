@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Activity, ArrowLeft, ArrowRight, Camera, CheckCircle2, ClipboardList, Download, FileText, Maximize2, MapPin, Minus, Plus, RotateCcw, Save, Shield, Trash2, User, X } from "lucide-react";
 import { AnatomyEditor, AnatomyFigure, PrintablePCR, SignaturePad } from "../components/PCRWidgets";
-import { DISPATCH_EDIT_KEY, loadDispatchRecords, pcrPatchFromIncident, deriveIncidentFromDispatch } from "../utils/dispatchWorkflow";
-import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, loadPCRs, newVital, PCR_EDIT_KEY, savePCR, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
+import { DISPATCH_EDIT_KEY } from "../utils/dispatchWorkflow";
+import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newVital, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
+import { getDispatchRecord, getPCRReport, replacePCRVitals, savePCRReport, submitPCRReport } from "../services/supabase";
 import { toast } from "sonner";
 
 const steps = [["Response & Patient", <Shield key="shield"/>], ["Assessment", <Activity key="activity"/>], ["Clinical Details", <User key="user"/>], ["Treatment & Handover", <ClipboardList key="clipboard"/>], ["Review & Export", <FileText key="file"/>]];
@@ -87,7 +88,38 @@ function DetailedPCRReview({ record, onClose }) {
 }
 
 export default function PCRModule() {
-  const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const [form, setForm] = useState(() => { const id = params.get("edit") || sessionStorage.getItem(PCR_EDIT_KEY); const dispatchId = params.get("dispatch"); const found = id ? loadPCRs().find(x => x.id === id) : null; const dispatch = !found && dispatchId ? loadDispatchRecords().find(x => x.id === dispatchId) : null; sessionStorage.removeItem(PCR_EDIT_KEY); return synchronizePCR(found ? { ...createPCR(), ...found, timeline: found.timeline || {} } : dispatch ? { ...createPCR(), ...pcrPatchFromIncident(deriveIncidentFromDispatch(dispatch)) } : createPCR()); }); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState("");
+  const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const editId = params.get("edit") || sessionStorage.getItem(PCR_EDIT_KEY); const dispatchId = params.get("dispatch"); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState("");
+  useEffect(() => {
+    sessionStorage.removeItem(PCR_EDIT_KEY);
+    let mounted = true;
+    async function loadPCR() {
+      if (!editId && !dispatchId) return;
+      setLoading(true);
+      try {
+        if (editId) {
+          const record = await getPCRReport(editId);
+          if (mounted && record) {
+            setForm(synchronizePCR({ ...createPCR(), ...record, timeline: record.timeline || {} }));
+            if (record.dispatchId) setLinkedDispatch(await getDispatchRecord(record.dispatchId));
+          }
+        } else if (dispatchId) {
+          const dispatch = await getDispatchRecord(dispatchId);
+          if (mounted && dispatch) {
+            setLinkedDispatch(dispatch);
+            setForm(synchronizePCR({ ...createPCR(), ...dispatch, dispatchId: dispatch.id, responseId: dispatch.responseId }));
+          }
+        }
+      } catch (error) {
+        toast.error(error.message || "Unable to load PCR report.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadPCR();
+    return () => {
+      mounted = false;
+    };
+  }, [dispatchId, editId]);
   const update = (key, value) => setForm(f => synchronizePCR({ ...f, [key]: value }));
   const updateTimeline = (key, value) => setForm(f => synchronizePCR({ ...f, [key]: value, timeline: { ...(f.timeline || {}), [key]: value } }));
   const updateHospitalArrival = value => setForm(f => synchronizePCR({
@@ -104,11 +136,19 @@ export default function PCRModule() {
   const chronologyError = useMemo(() => validateChronology(form), [form]);
   const hospitalTravel = travelDuration(form.departureScene, form.arrivalHospital);
   const returnTravel = travelDuration(form.departureHospital, form.backToBase);
-  const linkedDispatch = useMemo(() => form.dispatchId ? loadDispatchRecords().find(item => item.id === form.dispatchId) : null, [form.dispatchId]);
   const hasDispatchSource = Boolean(params.get("edit") || params.get("dispatch") || form.dispatchId);
-  const store = status => {
+  const store = async status => {
     if (chronologyError) { setMessage(chronologyError); return; }
-    const saved = savePCR({ ...form, status }); setForm(saved); setMessage(status === "Draft" ? "Draft saved." : "PCR submitted successfully."); if (status !== "Draft") setTimeout(() => navigate("/admin/pcr"), 800);
+    try {
+      const savedDraft = await savePCRReport(form.id, { ...form, status });
+      await replacePCRVitals(savedDraft.id, form.vitals || []);
+      const saved = status === "Draft" ? savedDraft : await submitPCRReport(savedDraft.id);
+      setForm(synchronizePCR({ ...form, ...saved }));
+      setMessage(status === "Draft" ? "Draft saved." : "PCR submitted successfully.");
+      if (status !== "Draft") setTimeout(() => navigate("/admin/pcr"), 800);
+    } catch (error) {
+      setMessage(error.message || "Unable to save PCR report.");
+    }
   };
   const downloadPdf = async () => {
     try {
@@ -138,6 +178,7 @@ export default function PCRModule() {
   }
 
   return <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
+    {loading && <div className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">Loading PCR report...</div>}
     <div className="flex flex-wrap items-center justify-between gap-3 mb-5"><div><button onClick={() => navigate("/admin/pcr")} className="text-xs text-blue-400 mb-2 flex items-center gap-1"><ArrowLeft size={13}/>Patient Care Records</button><h1 className="text-xl font-bold flex items-center gap-2"><FileText className="text-blue-500"/>Create PCR Report</h1><p className="text-xs text-muted-foreground">Create and submit a new Patient Care Report.</p></div><div className="flex gap-2"><button onClick={() => store("Draft")} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center"><Save size={15}/>Save Draft</button><button onClick={downloadPdf} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center"><Download size={15}/>Download PDF</button></div></div>
     {linkedDispatch && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm"><div><div className="font-semibold text-blue-300">Linked Dispatch Form</div><div className="text-xs text-muted-foreground">{linkedDispatch.responseNumber || linkedDispatch.id} · {linkedDispatch.placeOfIncident || "No location entered"}</div></div><button onClick={() => { sessionStorage.setItem(DISPATCH_EDIT_KEY, linkedDispatch.id); navigate(`/admin/dispatch/new?edit=${linkedDispatch.id}`); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Open Dispatch</button></div>}
     {message && <div className={`mb-4 px-4 py-3 rounded-lg border text-sm ${chronologyError ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-green-500/10 border-green-500/30 text-green-500"}`}>{message}</div>}

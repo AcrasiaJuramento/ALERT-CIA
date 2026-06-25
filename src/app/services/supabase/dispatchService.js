@@ -12,7 +12,7 @@ const DISPATCH_SELECT = `
   response:responses(
     *,
     barangay:barangays(id, name, normalized_name),
-    responding_team:responding_teams(id, name),
+    responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
     assigned_unit:ambulance_units(id, call_sign, plate_number)
   ),
   dispatch_patients(*)

@@ -1,4 +1,3 @@
-import { publicAnnouncements } from '../data/mockData';
 import { cachedJsonStorage, setCachedJsonStorage } from './cache';
 
 export const ADVISORY_STORAGE_KEY = 'alert-cia-advisories';
@@ -6,39 +5,13 @@ export const ADVISORY_EVENT = 'alert-cia-advisories-updated';
 
 const nowIso = () => new Date().toISOString();
 
-const seedCoordinates = [
-  { lat: 16.6558, lng: 121.6516 },
-  { lat: 16.7154, lng: 121.6519 },
-  { lat: 16.7049, lng: 121.6763 },
-  { lat: 16.6616, lng: 121.6529 },
-];
-
-const getSeedCoordinate = (id) => {
-  const match = String(id || '').match(/^ADV-SEED-(\d+)$/);
-  if (!match) return null;
-  return seedCoordinates[Number(match[1]) - 1] || null;
-};
-
 const getNormalizedCoordinates = (advisory) => {
   if (Number.isFinite(advisory.coordinates?.lat) && Number.isFinite(advisory.coordinates?.lng)) {
     return { lat: advisory.coordinates.lat, lng: advisory.coordinates.lng };
   }
 
-  return getSeedCoordinate(advisory.id);
+  return null;
 };
-
-const defaultAdvisories = publicAnnouncements.map((item, index) => ({
-  id: `ADV-SEED-${index + 1}`,
-  title: item.title,
-  message: item.message,
-  severity: item.severity,
-  category: item.title.toLowerCase().includes('road') ? 'road_closure' : item.title.toLowerCase().includes('flood') ? 'flood' : 'general',
-  area: 'Echague, Isabela',
-  coordinates: seedCoordinates[index] || null,
-  status: 'published',
-  createdAt: nowIso(),
-  updatedAt: nowIso(),
-}));
 
 const normalizeAdvisory = (advisory) => ({
   id: advisory.id || crypto.randomUUID(),
@@ -56,9 +29,9 @@ const normalizeAdvisory = (advisory) => ({
 export function loadAdvisories() {
   try {
     const stored = cachedJsonStorage(ADVISORY_STORAGE_KEY, []);
-    return (stored.length ? stored : defaultAdvisories).map(normalizeAdvisory);
+    return stored.map(normalizeAdvisory);
   } catch {
-    return defaultAdvisories;
+    return [];
   }
 }
 

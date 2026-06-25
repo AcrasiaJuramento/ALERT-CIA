@@ -1,72 +1,30 @@
-import { createElement, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, Ambulance, Users, CheckCircle2, Clock, TrendingUp,
-  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2
+  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2, Save, X
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { incidents, recentActivity } from '../data/mockData';
-import { analyticsIncidents, filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/analyticsModule';
+import { filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/analyticsModule';
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { getIncidentStatusLabel, isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
-
-const statCards = [
-  {
-    label: 'Total Incidents Today',
-    value: '12',
-    change: '+3 from yesterday',
-    icon: AlertTriangle,
-    color: 'text-red-400',
-    bg: 'bg-red-500/10',
-    border: 'border-red-500/20',
-    trend: 'up',
-  },
-  {
-    label: 'Active Emergencies',
-    value: '8',
-    change: 'In route, on scene, transporting',
-    icon: Activity,
-    color: 'text-orange-400',
-    bg: 'bg-orange-500/10',
-    border: 'border-orange-500/20',
-    trend: 'up',
-  },
-  {
-    label: 'Teams Deployed',
-    value: '5',
-    change: 'Alpha, Bravo, Charlie, Delta, Echo',
-    icon: Users,
-    color: 'text-blue-400',
-    bg: 'bg-blue-500/10',
-    border: 'border-blue-500/20',
-    trend: 'neutral',
-  },
-  {
-    label: 'Resolved Today',
-    value: '4',
-    change: '33% resolution rate',
-    icon: CheckCircle2,
-    color: 'text-green-400',
-    bg: 'bg-green-500/10',
-    border: 'border-green-500/20',
-    trend: 'down',
-  },
-  {
-    label: 'Avg Response Time',
-    value: '7.4m',
-    change: '-1.2m from last week',
-    icon: Clock,
-    color: 'text-purple-400',
-    bg: 'bg-purple-500/10',
-    border: 'border-purple-500/20',
-    trend: 'down',
-  },
-];
+import {
+  AMBULANCE_STATUSES,
+  createAmbulanceUnit,
+  getAmbulanceStatus,
+  listAmbulanceUnits,
+  listDispatchRecords,
+  listIncidents,
+  listNotifications,
+  listRespondingTeams,
+  supabase,
+  updateAmbulanceUnitAvailability,
+} from '../services/supabase';
 
 const typeColors = {
   vehicular: 'text-red-400 bg-red-500/10',
@@ -117,7 +75,20 @@ const priorityColors = {
   Low: '#22c55e',
 };
 
-const AMBULANCE_TOTAL = 10;
+const ambulanceStatusStyles = {
+  available: 'bg-green-500/20 text-green-400',
+  busy: 'bg-blue-500/20 text-blue-400',
+  unavailable: 'bg-red-500/20 text-red-400',
+  maintenance: 'bg-yellow-500/20 text-yellow-400',
+};
+
+const initialAmbulanceForm = {
+  callSign: '',
+  plateNumber: '',
+  description: '',
+  respondingTeamId: '',
+  status: 'available',
+};
 
 const AnalyticsTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -139,25 +110,206 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [rankingView, setRankingView] = useState('bar');
-  const activeResponses = incidents.filter(i => isAmbulanceAssigned(i.status));
-  const availableAmbulances = Math.max(AMBULANCE_TOTAL - activeResponses.length, 0);
+  const [incidents, setIncidents] = useState([]);
+  const [dispatches, setDispatches] = useState([]);
+  const [ambulanceUnits, setAmbulanceUnits] = useState([]);
+  const [ambulancePanelOpen, setAmbulancePanelOpen] = useState(false);
+  const [registerFormOpen, setRegisterFormOpen] = useState(false);
+  const [ambulanceForm, setAmbulanceForm] = useState(initialAmbulanceForm);
+  const [ambulanceSaving, setAmbulanceSaving] = useState(false);
+  const [respondingTeams, setRespondingTeams] = useState([]);
+  const [recentActivity, setRecentActivity] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const canManageAmbulances = can(PERMISSIONS.MANAGE_AMBULANCES);
+
+  const refreshAmbulanceUnits = async () => {
+    const rows = await listAmbulanceUnits({ activeOnly: false });
+    setAmbulanceUnits(rows);
+    return rows;
+  };
+
+  const loadDashboard = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [incidentRows, dispatchRows, notificationRows, ambulanceRows, teamRows] = await Promise.all([
+        listIncidents({ limit: 500 }),
+        listDispatchRecords({ limit: 100 }),
+        listNotifications({ limit: 20 }),
+        listAmbulanceUnits({ activeOnly: false }),
+        listRespondingTeams({ activeOnly: true }),
+      ]);
+      setIncidents(incidentRows);
+      setDispatches(dispatchRows);
+      setAmbulanceUnits(ambulanceRows);
+      setRespondingTeams(teamRows);
+      setRecentActivity(notificationRows.map(item => ({
+        id: item.id,
+        type: item.type === 'pcr_created' ? 'report' : item.type === 'response_completed' ? 'resolved' : 'info',
+        message: item.title || item.message,
+        time: item.timestamp ? new Date(item.timestamp).toLocaleString() : '',
+      })));
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to load dashboard data.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDashboard();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+
+    const channel = supabase
+      .channel('dashboard-ambulance-units')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'ambulance_units' },
+        () => {
+          refreshAmbulanceUnits().catch((requestError) => {
+            setError(requestError.message || 'Unable to refresh ambulance availability.');
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const activeResponses = useMemo(() => incidents.filter(i => isAmbulanceAssigned(i.status)), [incidents]);
+  const availableAmbulances = ambulanceUnits.filter(unit => getAmbulanceStatus(unit) === 'available').length;
+  const ambulanceTotal = ambulanceUnits.length;
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status)).slice(0, 6);
-  const todayAnalytics = useMemo(() => filterIncidentsByRange(analyticsIncidents, 'today'), []);
+  const analyticsIncidents = useMemo(() => incidents.map(incident => ({
+    ...incident,
+    barangay: incident.barangay,
+    classification: String(incident.classification || incident.type || 'Other').toUpperCase(),
+    priority: incident.priority ? `${incident.priority[0].toUpperCase()}${incident.priority.slice(1)}` : 'Medium',
+    date: incident.date,
+    time: incident.time,
+  })), [incidents]);
+  const todayAnalytics = useMemo(() => filterIncidentsByRange(analyticsIncidents, 'today'), [analyticsIncidents]);
   const barangayRanking = useMemo(() => getBarangayStats(todayAnalytics).filter((item) => item.count > 0), [todayAnalytics]);
   const priorityData = useMemo(() => summarizeBy(todayAnalytics, 'priority'), [todayAnalytics]);
   const dashboardStats = useMemo(() => [
-    ...statCards,
+    {
+      label: 'Total Incidents Today',
+      value: String(todayAnalytics.length),
+      change: 'From approved database records',
+      icon: AlertTriangle,
+      color: 'text-red-400',
+      bg: 'bg-red-500/10',
+      border: 'border-red-500/20',
+      trend: 'neutral',
+    },
+    {
+      label: 'Active Emergencies',
+      value: String(activeIncidents.length),
+      change: 'Not yet completed',
+      icon: Activity,
+      color: 'text-orange-400',
+      bg: 'bg-orange-500/10',
+      border: 'border-orange-500/20',
+      trend: 'neutral',
+    },
+    {
+      label: 'Teams Deployed',
+      value: String(new Set(activeResponses.map(item => item.assignedTeam).filter(Boolean)).size),
+      change: 'Assigned active responses',
+      icon: Users,
+      color: 'text-blue-400',
+      bg: 'bg-blue-500/10',
+      border: 'border-blue-500/20',
+      trend: 'neutral',
+    },
+    {
+      label: 'Resolved Today',
+      value: String(todayAnalytics.filter(item => isIncidentCompleted(item.status)).length),
+      change: 'Completed incident records',
+      icon: CheckCircle2,
+      color: 'text-green-400',
+      bg: 'bg-green-500/10',
+      border: 'border-green-500/20',
+      trend: 'neutral',
+    },
+    {
+      label: 'Avg Response Time',
+      value: '-',
+      change: 'Awaiting dispatch timing data',
+      icon: Clock,
+      color: 'text-purple-400',
+      bg: 'bg-purple-500/10',
+      border: 'border-purple-500/20',
+      trend: 'neutral',
+    },
     {
       label: 'Ambulances Available',
-      value: `${availableAmbulances} / ${AMBULANCE_TOTAL}`,
-      change: `${activeResponses.length} active response${activeResponses.length === 1 ? '' : 's'} assigned`,
+      value: `${availableAmbulances} / ${ambulanceTotal}`,
+      change: 'Live Supabase unit status',
       icon: Ambulance,
       color: availableAmbulances <= 2 ? 'text-red-400' : 'text-purple-400',
       bg: availableAmbulances <= 2 ? 'bg-red-500/10' : 'bg-purple-500/10',
       border: availableAmbulances <= 2 ? 'border-red-500/20' : 'border-purple-500/20',
       trend: availableAmbulances <= 2 ? 'up' : 'neutral',
     },
-  ], [activeResponses.length, availableAmbulances]);
+  ], [activeIncidents.length, activeResponses, ambulanceTotal, availableAmbulances, todayAnalytics]);
+
+  const openAmbulancePanel = () => {
+    setAmbulancePanelOpen(true);
+  };
+
+  const updateUnitStatus = async (unitId, nextStatus) => {
+    const previousUnits = ambulanceUnits;
+    setError('');
+    setAmbulanceUnits(current => current.map(unit => (
+      unit.id === unitId ? { ...unit, status: nextStatus, active: nextStatus === 'available' } : unit
+    )));
+
+    try {
+      const savedUnit = await updateAmbulanceUnitAvailability(unitId, nextStatus);
+      setAmbulanceUnits(current => current.map(unit => (unit.id === unitId ? savedUnit : unit)));
+    } catch (requestError) {
+      setAmbulanceUnits(previousUnits);
+      setError(requestError.message || 'Unable to update ambulance availability.');
+    }
+  };
+
+  const registerAmbulance = async (event) => {
+    event.preventDefault();
+    if (!ambulanceForm.callSign.trim()) {
+      setError('Ambulance unit name or number is required.');
+      return;
+    }
+
+    setAmbulanceSaving(true);
+    setError('');
+    try {
+      const unit = await createAmbulanceUnit({
+        callSign: ambulanceForm.callSign.trim(),
+        plateNumber: ambulanceForm.plateNumber.trim(),
+        description: ambulanceForm.description.trim(),
+        respondingTeamId: ambulanceForm.respondingTeamId || null,
+        status: ambulanceForm.status,
+      });
+      setAmbulanceUnits(current => (
+        current.some(existing => existing.id === unit.id)
+          ? current.map(existing => (existing.id === unit.id ? unit : existing))
+          : [...current, unit].sort((a, b) => a.call_sign.localeCompare(b.call_sign))
+      ));
+      setAmbulanceForm(initialAmbulanceForm);
+      setRegisterFormOpen(false);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to register ambulance unit.');
+    } finally {
+      setAmbulanceSaving(false);
+    }
+  };
 
   return (
     <div className="p-5 space-y-5 min-h-full bg-(--emergency-bg)" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -170,10 +322,17 @@ export default function Dashboard() {
           <p className="text-muted-foreground text-xs mt-0.5">Real-time emergency monitoring — Echague, Isabela</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="flex items-center gap-1.5 px-3 py-2 bg-secondary border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground transition-all">
+          <button onClick={loadDashboard} className="flex items-center gap-1.5 px-3 py-2 bg-secondary border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground transition-all">
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh
           </button>
+          {canManageAmbulances && <button
+            onClick={openAmbulancePanel}
+            className="flex items-center gap-1.5 px-3 py-2 bg-secondary border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground transition-all"
+          >
+            <Ambulance className="w-3.5 h-3.5" />
+            Update Ambulances
+          </button>}
           {can(PERMISSIONS.CREATE_PCR) && <button
             onClick={() => navigate('/admin/dispatch/received')}
             className="flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold transition-all"
@@ -183,6 +342,153 @@ export default function Dashboard() {
           </button>}
         </div>
       </div>
+
+      {ambulancePanelOpen && (
+        <div className="rounded-lg border border-border bg-card p-4">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-foreground">Ambulance Availability</h2>
+              <p className="text-xs text-muted-foreground">Changes are saved to Supabase and reflected live across dashboards.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {canManageAmbulances && <button
+                onClick={() => setRegisterFormOpen(current => !current)}
+                className="rounded-lg border border-border bg-secondary/50 px-3 py-2 text-xs font-semibold text-foreground hover:bg-secondary"
+              >
+                Register Unit
+              </button>}
+              <button onClick={() => setAmbulancePanelOpen(false)} className="rounded-lg border border-border bg-secondary/50 p-2 text-muted-foreground hover:text-foreground">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          {registerFormOpen && canManageAmbulances && (
+            <form onSubmit={registerAmbulance} className="mb-4 rounded-lg border border-border bg-background p-4">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                <label className="text-xs text-muted-foreground">
+                  Unit name or number
+                  <input
+                    value={ambulanceForm.callSign}
+                    onChange={(event) => setAmbulanceForm(current => ({ ...current, callSign: event.target.value }))}
+                    placeholder="Ambulance 01"
+                    className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="text-xs text-muted-foreground">
+                  Plate number
+                  <input
+                    value={ambulanceForm.plateNumber}
+                    onChange={(event) => setAmbulanceForm(current => ({ ...current, plateNumber: event.target.value }))}
+                    placeholder="ABC 1234"
+                    className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:border-blue-500"
+                  />
+                </label>
+                <label className="text-xs text-muted-foreground">
+                  Status
+                  <select
+                    value={ambulanceForm.status}
+                    onChange={(event) => setAmbulanceForm(current => ({ ...current, status: event.target.value }))}
+                    className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:border-blue-500"
+                  >
+                    {AMBULANCE_STATUSES.map((status) => (
+                      <option key={status} value={status}>{status}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs text-muted-foreground">
+                  Team assignment
+                  <select
+                    value={ambulanceForm.respondingTeamId}
+                    onChange={(event) => setAmbulanceForm(current => ({ ...current, respondingTeamId: event.target.value }))}
+                    className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:border-blue-500"
+                  >
+                    <option value="">Unassigned</option>
+                    {respondingTeams.map((team) => (
+                      <option key={team.id} value={team.id}>{team.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs text-muted-foreground">
+                  Description
+                  <input
+                    value={ambulanceForm.description}
+                    onChange={(event) => setAmbulanceForm(current => ({ ...current, description: event.target.value }))}
+                    placeholder="Optional notes"
+                    className="mt-1 h-9 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:border-blue-500"
+                  />
+                </label>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="submit"
+                  disabled={ambulanceSaving}
+                  className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Save className="h-3.5 w-3.5" />
+                  {ambulanceSaving ? 'Registering...' : 'Register Ambulance'}
+                </button>
+              </div>
+            </form>
+          )}
+          {!ambulanceUnits.length && (
+            <div className="rounded-lg border border-border bg-background p-4 text-sm text-muted-foreground">
+              <div>No ambulance units are registered in Supabase yet.</div>
+              {canManageAmbulances && (
+                <button
+                  onClick={() => setRegisterFormOpen(true)}
+                  className="mt-3 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+                >
+                  Register First Unit
+                </button>
+              )}
+            </div>
+          )}
+          {!!ambulanceUnits.length && (
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {ambulanceUnits.map((unit) => (
+                <div
+                  key={unit.id}
+                  className={`rounded-lg border p-3 transition-all ${
+                    getAmbulanceStatus(unit) === 'available'
+                      ? 'border-green-500/30 bg-green-500/10'
+                      : 'border-border bg-background'
+                  }`}
+                >
+                  <div className="mb-3 flex items-start justify-between gap-3">
+                    <span>
+                      <span className="block text-sm font-semibold text-foreground">{unit.call_sign}</span>
+                      <span className="block text-xs text-muted-foreground">{unit.plate_number || unit.description || 'No plate number'}</span>
+                      {unit.responding_team?.name && <span className="mt-1 block text-[10px] text-muted-foreground">Team: {unit.responding_team.name}</span>}
+                    </span>
+                    <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase ${ambulanceStatusStyles[getAmbulanceStatus(unit)]}`}>
+                      {getAmbulanceStatus(unit)}
+                    </span>
+                  </div>
+                  {canManageAmbulances ? (
+                    <select
+                      value={getAmbulanceStatus(unit)}
+                      onChange={(event) => updateUnitStatus(unit.id, event.target.value)}
+                      className="h-9 w-full rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:border-blue-500"
+                    >
+                      {AMBULANCE_STATUSES.map((status) => (
+                        <option key={status} value={status}>{status}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">Live status from Supabase</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs text-muted-foreground">
+              Available units: <span className="font-semibold text-foreground">{availableAmbulances}</span>
+            </div>
+            <div className="text-xs text-muted-foreground">Total units: <span className="font-semibold text-foreground">{ambulanceTotal}</span></div>
+          </div>
+        </div>
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
@@ -339,7 +645,9 @@ export default function Dashboard() {
               <span className="text-[10px] text-muted-foreground px-2 py-0.5 bg-secondary rounded-full">Live</span>
             </div>
             <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
-              {recentActivity.map((item) => (
+              {loading && <div className="px-4 py-8 text-center text-xs text-muted-foreground">Loading activity...</div>}
+              {!loading && error && <div className="px-4 py-8 text-center text-xs text-red-400">{error}</div>}
+              {!loading && !error && recentActivity.map((item) => (
                 <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 border-b border-border hover:bg-secondary/50 transition-all">
                   <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${activityColor[item.type]}`} />
                   <div className="flex-1 min-w-0">
@@ -348,6 +656,7 @@ export default function Dashboard() {
                   </div>
                 </div>
               ))}
+              {!loading && !error && !recentActivity.length && <div className="px-4 py-8 text-center text-xs text-muted-foreground">No recent activity is available.</div>}
             </div>
           </div>
 
@@ -360,23 +669,18 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="p-3 space-y-2">
-              {[
-                { team: 'Alpha Team', location: 'Bridge Maragat', status: 'On scene', color: 'text-orange-400' },
-                { team: 'Bravo Team', location: 'Brgy. Poblacion', status: 'In route', color: 'text-blue-400' },
-                { team: 'Charlie Team', location: 'Brgy. San Miguel', status: 'Transporting', color: 'text-purple-400' },
-                { team: 'Delta Team', location: 'Brgy. Pandan', status: 'On scene', color: 'text-orange-400' },
-                { team: 'Echo Team', location: 'Brgy. Concepcion', status: 'Transporting', color: 'text-purple-400' },
-              ].map(({ team, location, status, color }) => (
-                <div key={team} className="flex items-center justify-between px-3 py-2 bg-secondary/50 rounded-lg">
+              {dispatches.slice(0, 5).map(({ id, team, placeOfIncident, barangay, status }) => (
+                <div key={id} className="flex items-center justify-between px-3 py-2 bg-secondary/50 rounded-lg">
                   <div>
-                    <div className="text-xs font-medium text-foreground">{team}</div>
+                    <div className="text-xs font-medium text-foreground">{team || 'Unassigned'}</div>
                     <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                      <MapPin className="w-2.5 h-2.5" /> {location}
+                      <MapPin className="w-2.5 h-2.5" /> {placeOfIncident || barangay || 'No location'}
                     </div>
                   </div>
-                  <span className={`text-[10px] font-semibold ${color}`}>{status}</span>
+                  <span className="text-[10px] font-semibold text-blue-400">{status}</span>
                 </div>
               ))}
+              {!dispatches.length && <div className="px-3 py-6 text-center text-xs text-muted-foreground">No dispatch records are available.</div>}
             </div>
           </div>
         </div>

@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
   RefreshCw, ChevronRight, MapPin, Zap
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { incidents } from '../data/mockData';
+import { listIncidents, listOfficerScrapedMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 
 const severityBadge = {
@@ -37,9 +37,79 @@ export default function MapMonitoring() {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [activeLayer, setActiveLayer] = useState(null);
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
+  const [incidents, setIncidents] = useState([]);
+  const [scrapedIncidents, setScrapedIncidents] = useState([]);
+  const [scraperError, setScraperError] = useState('');
+  const [scraperMessage, setScraperMessage] = useState('');
+  const [scraperRefreshing, setScraperRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
-  const selectedInc = incidents.find(i => i.id === selectedIncident);
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadMapData() {
+      setLoading(true);
+      try {
+        const [officialRecords, scrapedRecords] = await Promise.all([
+          listIncidents({ limit: 500 }),
+          listOfficerScrapedMapIncidents(),
+        ]);
+        if (mounted) {
+          setIncidents(officialRecords);
+          setScrapedIncidents(scrapedRecords);
+          setScraperError('');
+        }
+      } catch (error) {
+        if (mounted) setScraperError(error.message || 'Unable to load map records.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    loadMapData();
+    return () => {
+      mounted = false;
+    };
+  }, [reloadKey]);
+
+  useEffect(() => {
+    if (!supabase) return undefined;
+
+    const channel = supabase
+      .channel('map-monitoring-scraper-records')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'scraper_records' },
+        () => setReloadKey(key => key + 1),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const refreshScraperData = async () => {
+    setScraperRefreshing(true);
+    setScraperError('');
+    setScraperMessage('');
+    try {
+      const result = await triggerScraperRefresh({ type: 'all' });
+      const inserted = result.totals?.inserted ?? 0;
+      const duplicates = result.totals?.duplicates ?? 0;
+      setScraperMessage(`Scraper updated: ${inserted} new, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
+      setReloadKey(key => key + 1);
+    } catch (error) {
+      setScraperError(error.message || 'Unable to refresh scraper data.');
+    } finally {
+      setScraperRefreshing(false);
+    }
+  };
+
+  const mapIncidents = useMemo(() => [...incidents, ...scrapedIncidents], [scrapedIncidents]);
+  const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
+  const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
 
   return (
     <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
@@ -47,6 +117,7 @@ export default function MapMonitoring() {
       <div className="flex-1 relative overflow-hidden">
         <LeafletIncidentMap
           height="100%"
+          incidents={mapIncidents}
           showControls={true}
           showHeatmap={true}
           showDangerZones={true}
@@ -62,11 +133,19 @@ export default function MapMonitoring() {
             <span className="text-[10px] text-muted-foreground">— Echague, Isabela</span>
           </div>
           <button
-            onClick={() => {}}
+            onClick={() => setReloadKey(key => key + 1)}
             className="flex items-center gap-1.5 bg-card/95 border border-border rounded-xl px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-all shadow-lg"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             Refresh
+          </button>
+          <button
+            onClick={refreshScraperData}
+            disabled={scraperRefreshing}
+            className="flex items-center gap-1.5 bg-blue-600/95 border border-blue-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${scraperRefreshing ? 'animate-spin' : ''}`} />
+            {scraperRefreshing ? 'Fetching...' : 'Fetch latest incidents'}
           </button>
         </div>
 
@@ -114,6 +193,11 @@ export default function MapMonitoring() {
                     </span>
                   </div>
                   <p className="text-xs text-foreground/80">{selectedInc.location}</p>
+                  {selectedInc.sourceKind && (
+                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-blue-400">
+                      {selectedInc.sourceKind.replaceAll('_', ' ')} • {selectedInc.sourceLabel}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => setSelectedIncident(null)}
@@ -131,10 +215,15 @@ export default function MapMonitoring() {
                   <span className="text-xs text-muted-foreground">{selectedInc.assignedTeam}</span>
                 </div>
                 <button
-                  onClick={() => navigate(`/admin/incidents/${selectedInc.id}`)}
+                  onClick={() => {
+                    if (!selectedInc.sourceKind || selectedInc.sourceKind === 'promoted_scraped') {
+                      navigate(`/admin/incidents/${selectedInc.id}`);
+                    }
+                  }}
+                  disabled={selectedInc.sourceKind && selectedInc.sourceKind !== 'promoted_scraped'}
                   className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all"
                 >
-                  Details <ChevronRight className="w-3 h-3" />
+                  {selectedInc.sourceKind && selectedInc.sourceKind !== 'promoted_scraped' ? 'External' : 'Details'} <ChevronRight className="w-3 h-3" />
                 </button>
               </div>
             </div>
@@ -163,6 +252,9 @@ export default function MapMonitoring() {
                 <span className="text-sm font-semibold text-foreground">Active Incidents</span>
               </div>
               <p className="text-[10px] text-muted-foreground">{activeIncidents.length} ongoing</p>
+              {loading && <p className="mt-1 text-[10px] text-muted-foreground">Loading map records...</p>}
+              {scraperMessage && <p className="mt-1 text-[10px] text-green-400">{scraperMessage}</p>}
+              {scraperError && <p className="mt-1 text-[10px] text-orange-400">{scraperError}</p>}
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -195,6 +287,11 @@ export default function MapMonitoring() {
                         </div>
                         <p className="text-xs text-foreground truncate capitalize">{inc.type} Incident</p>
                         <p className="text-[10px] text-muted-foreground truncate">{inc.location}</p>
+                        {inc.sourceKind && (
+                          <p className="text-[9px] font-semibold uppercase tracking-wide text-blue-400 truncate">
+                            {inc.sourceKind.replaceAll('_', ' ')}
+                          </p>
+                        )}
                         <div className="flex items-center gap-1 mt-1">
                           <Shield className="w-2.5 h-2.5 text-muted-foreground" />
                           <span className="text-[9px] text-muted-foreground">{inc.assignedTeam}</span>
@@ -204,6 +301,11 @@ export default function MapMonitoring() {
                   </button>
                 );
               })}
+              {!loading && !activeIncidents.length && (
+                <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                  No active incidents are available for your role.
+                </div>
+              )}
             </div>
           </>
         )}

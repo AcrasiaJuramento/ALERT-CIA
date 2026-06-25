@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Save, Download, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
@@ -7,13 +7,9 @@ import { toast } from "sonner";
 import {
   DISPATCH_EDIT_KEY,
   DISPATCH_STATUSES,
-  findLinkedPCR,
   generateResponseNumber,
-  loadDispatchRecords,
-  RESPONDING_TEAMS,
-  saveDispatchForm,
-  sendDispatchToRespondingTeam,
 } from "../utils/dispatchWorkflow";
+import { createDispatchRecord, getDispatchRecord, getPCRReportByResponse, listRespondingTeams, sendDispatchToRespondingTeam, updateDispatchRecord } from "../services/supabase";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
@@ -267,14 +263,49 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
 export default function DispatchModule({ onBack }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [form, setForm] = useState(() => {
-    const id = params.get("edit") || sessionStorage.getItem(DISPATCH_EDIT_KEY);
-    const found = id ? loadDispatchRecords().find(item => item.id === id) : null;
-    sessionStorage.removeItem(DISPATCH_EDIT_KEY);
-    return found ? { ...newDispatch(), ...found, responseNumber: found.responseNumber || generateResponseNumber(), patients: found.patients?.length ? found.patients : [newPatient()] } : newDispatch();
-  });
+  const editId = params.get("edit") || sessionStorage.getItem(DISPATCH_EDIT_KEY);
+  const [form, setForm] = useState(() => newDispatch());
   const [saved, setSaved] = useState("");
-  const linkedPCR = useMemo(() => findLinkedPCR(form), [form]);
+  const [linkedPCR, setLinkedPCR] = useState(null);
+  const [loading, setLoading] = useState(Boolean(editId));
+  const [teamOptions, setTeamOptions] = useState([]);
+
+  useEffect(() => {
+    let mounted = true;
+    listRespondingTeams()
+      .then(rows => {
+        if (mounted) setTeamOptions(rows);
+      })
+      .catch(error => toast.error(error.message || "Unable to load responding teams."));
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    sessionStorage.removeItem(DISPATCH_EDIT_KEY);
+    let mounted = true;
+    async function loadExisting() {
+      if (!editId) return;
+      setLoading(true);
+      try {
+        const found = await getDispatchRecord(editId);
+        if (mounted && found) {
+          setForm({ ...newDispatch(), ...found, responseNumber: found.responseNumber || generateResponseNumber(), patients: found.patients?.length ? found.patients : [newPatient()] });
+          const pcr = await getPCRReportByResponse(found.responseId);
+          if (mounted) setLinkedPCR(pcr);
+        }
+      } catch (error) {
+        toast.error(error.message || "Unable to load dispatch form.");
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadExisting();
+    return () => {
+      mounted = false;
+    };
+  }, [editId]);
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
   const toggleNature = (type) => {
@@ -296,24 +327,35 @@ export default function DispatchModule({ onBack }) {
     update("patients", form.patients.map(p => p.id === id ? updated : p));
   };
 
-  const handleSave = () => {
-    const next = saveDispatchForm(form);
-    setForm(next);
-    setSaved("Dispatch form saved and incident record synced.");
-    toast.success("Dispatch form saved.");
-    setTimeout(() => setSaved(""), 2500);
+  const handleSave = async () => {
+    try {
+      const next = form.dispatchId || editId
+        ? await updateDispatchRecord(form.dispatchId || editId, form)
+        : await createDispatchRecord(form);
+      setForm({ ...newDispatch(), ...next, patients: next.patients?.length ? next.patients : [newPatient()] });
+      setSaved("Dispatch form saved to Supabase.");
+      toast.success("Dispatch form saved.");
+      setTimeout(() => setSaved(""), 2500);
+    } catch (error) {
+      toast.error(error.message || "Unable to save dispatch form.");
+    }
   };
 
-  const handleSendToFieldOfficer = () => {
+  const handleSendToFieldOfficer = async () => {
     if (!form.team) {
       toast.error("Please select a responding team before sending this dispatch.");
       return;
     }
-    const result = sendDispatchToRespondingTeam(form);
-    setForm(result.dispatch);
-    setSaved("Dispatch sent to the selected responding team.");
-    toast.success("Dispatch sent to responding team.");
-    setTimeout(() => setSaved(""), 3000);
+    try {
+      const savedDispatch = form.dispatchId || editId ? form : await createDispatchRecord(form);
+      const result = await sendDispatchToRespondingTeam(savedDispatch.dispatchId || savedDispatch.id);
+      setForm({ ...newDispatch(), ...result, patients: result.patients?.length ? result.patients : [newPatient()] });
+      setSaved("Dispatch sent to the selected responding team.");
+      toast.success("Dispatch sent to responding team.");
+      setTimeout(() => setSaved(""), 3000);
+    } catch (error) {
+      toast.error(error.message || "Unable to send dispatch.");
+    }
   };
 
   const handlePrint = () => window.print();
@@ -322,6 +364,7 @@ export default function DispatchModule({ onBack }) {
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
+      {loading && <div className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">Loading dispatch form...</div>}
       {/* ── Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <div>
@@ -405,7 +448,7 @@ export default function DispatchModule({ onBack }) {
             <Field label="Responding Team">
               <select className={input} value={form.team} onChange={e => update("team", e.target.value)}>
                 <option value="">Select responding team</option>
-                {RESPONDING_TEAMS.map(team => <option key={team} value={team}>{team}</option>)}
+                {teamOptions.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}
               </select>
             </Field>
             <Field label="Vehicle">

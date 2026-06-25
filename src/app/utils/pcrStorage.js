@@ -1,17 +1,11 @@
-import { syncIncidentFromPCR } from "./dispatchWorkflow";
-import { cachedJsonStorage, setCachedJsonStorage } from "./cache";
-
-export const PCR_STORAGE_KEY = "alert-cia-pcr-records";
 export const PCR_EDIT_KEY = "alert-cia-pcr-edit-id";
-export const PCR_AUDIT_KEY = "alert-cia-pcr-audit-log";
-export const CURRENT_USER = { id: "officer-roberto-aquino", name: "Cpl. Roberto Aquino", role: "officer" };
 
 export const newVital = () => ({ id: crypto.randomUUID(), time: "", bp: "", pulse: "", respiratory: "", temperature: "", oxygen: "" });
 
 export const createPCR = () => ({
   dispatchId: null,
   id: crypto.randomUUID(), responseNumber: `PCR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
-  status: "Draft", archived: false, createdBy: CURRENT_USER.id, updatedBy: CURRENT_USER.id, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  status: "Draft", archived: false, createdBy: null, updatedBy: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   respondingTeam: "", vehicle: "", driver: "", mainAider: "", assistantAider: "", natureOfCall: "Emergency",
   dateOfIncident: new Date().toISOString().slice(0, 10), timeOfIncident: "", placeOfIncident: "",
   dispatchTime: "", arrivalScene: "", departureScene: "", arrivalHospital: "", departureHospital: "", backToBase: "",
@@ -40,29 +34,6 @@ export const createPCR = () => ({
   signatureNames: { consent: "", patient: "", witness1: "", witness2: "", resident: "", receiver: "" },
   signatureDates: { patient: "", witness1: "", witness2: "" }, annotation: "", attachments: [], notes: ""
 });
-
-export function loadPCRs() {
-  try {
-    return cachedJsonStorage(PCR_STORAGE_KEY, []).map(record => synchronizePCR({
-      ...record,
-      createdBy: record.createdBy || CURRENT_USER.id,
-      updatedBy: record.updatedBy || record.createdBy || CURRENT_USER.id,
-    }));
-  } catch { return []; }
-}
-
-export function loadAuditLogs(reportId) {
-  try {
-    const logs = cachedJsonStorage(PCR_AUDIT_KEY, []);
-    return reportId ? logs.filter(log => log.reportId === reportId) : logs;
-  } catch { return []; }
-}
-
-export function addAuditLog(reportId, actionType, previousValue, newValue) {
-  const logs = loadAuditLogs();
-  logs.unshift({ id: crypto.randomUUID(), reportId, userId: CURRENT_USER.id, actionType, previousValue, newValue, timestamp: new Date().toISOString() });
-  setCachedJsonStorage(PCR_AUDIT_KEY, logs);
-}
 
 export function synchronizePCR(record) {
   const template = createPCR();
@@ -133,29 +104,6 @@ export function travelDuration(start, end) {
   const minutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
-
-export function savePCR(record) {
-  const records = loadPCRs();
-  const previous = records.find(item => item.id === record.id);
-  const next = syncIncidentFromPCR({ ...synchronizePCR(record), createdBy: record.createdBy || CURRENT_USER.id, updatedBy: CURRENT_USER.id, updatedAt: new Date().toISOString() });
-  const index = records.findIndex(item => item.id === next.id);
-  if (index >= 0) records[index] = next; else records.unshift(next);
-  setCachedJsonStorage(PCR_STORAGE_KEY, records);
-  if (!previous) addAuditLog(next.id, "REPORT_CREATED", null, { status: next.status });
-  else {
-    if (previous.status !== next.status) addAuditLog(next.id, "STATUS_CHANGED", previous.status, next.status);
-    ["arrivalHospital", "departureHospital", "backToBase"].forEach(key => {
-      if (previous[key] !== next[key]) addAuditLog(next.id, "TIMESTAMP_MODIFIED", { field: key, value: previous[key] }, { field: key, value: next[key] });
-    });
-    if (previous.endorsedTo !== next.endorsedTo || previous.receivedBy !== next.receivedBy) {
-      addAuditLog(next.id, "HOSPITAL_ENDORSEMENT_UPDATED", { endorsedTo: previous.endorsedTo, receivedBy: previous.receivedBy }, { endorsedTo: next.endorsedTo, receivedBy: next.receivedBy });
-    }
-    addAuditLog(next.id, "REPORT_EDITED", { updatedAt: previous.updatedAt }, { updatedAt: next.updatedAt });
-  }
-  return next;
-}
-
-export function setPCRs(records) { setCachedJsonStorage(PCR_STORAGE_KEY, records); }
 
 export async function exportPCRToPdf(record) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));

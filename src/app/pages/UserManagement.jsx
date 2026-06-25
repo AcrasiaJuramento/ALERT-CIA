@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Search, Plus, Edit2, Trash2, Shield, X, Check, UserCog } from 'lucide-react';
-import { users } from '../data/mockData';
+import { useEffect, useMemo, useState } from 'react';
+import { Search, Edit2, Trash2, Shield, UserCog } from 'lucide-react';
+import { deactivateProfile, listProfiles, upsertProfile } from '../services/supabase';
 
 const roleBadge = {
   administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -12,47 +12,71 @@ const statusBadge = {
   active: 'bg-green-500/20 text-green-400',
   inactive: 'bg-slate-500/20 text-slate-400',
   on_duty: 'bg-orange-500/20 text-orange-400',
+  pending: 'bg-yellow-500/20 text-yellow-400',
 };
 
 const statusDot = {
   active: 'bg-green-400',
   inactive: 'bg-slate-500',
   on_duty: 'bg-orange-400 animate-pulse',
+  pending: 'bg-yellow-400',
 };
 
-const inputClass = 'w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-none focus:border-blue-500 transition-all';
-const labelClass = 'block text-xs font-medium text-slate-400 mb-1.5';
+function profileToRow(profile = {}) {
+  const name = profile.display_name || profile.email || 'Unnamed user';
+  return {
+    id: profile.id,
+    name,
+    email: profile.email || '',
+    contact: profile.contact_number || '',
+    position: profile.position_title || '',
+    agency: profile.station?.name || '',
+    role: profile.roles?.[0]?.role || 'field_responder',
+    status: profile.account_status || 'pending',
+    avatar: name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase(),
+    lastLogin: '-',
+    raw: profile,
+  };
+}
 
 export default function UserManagement() {
-  const [userList, setUserList] = useState(users);
+  const [userList, setUserList] = useState([]);
   const [search, setSearch] = useState('');
   const [filterRole, setFilterRole] = useState('all');
-  const [showModal, setShowModal] = useState(false);
-  const [newUser, setNewUser] = useState({
-    name: '', position: '', agency: '', contact: '', email: '',
-    role: 'field_responder', status: 'active',
-  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filtered = userList.filter(u => {
+  const loadUsers = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const rows = await listProfiles();
+      setUserList(rows.map(profileToRow));
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to load user profiles.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  const filtered = useMemo(() => userList.filter(u => {
     const matchSearch = !search || u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase());
     const matchRole = filterRole === 'all' || u.role === filterRole;
     return matchSearch && matchRole;
-  });
+  }), [filterRole, search, userList]);
 
-  const handleAddUser = () => {
-    const user = {
-      id: `USR-00${userList.length + 1}`,
-      ...newUser,
-      avatar: newUser.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase(),
-      lastLogin: 'Never',
-    };
-    setUserList([user, ...userList]);
-    setShowModal(false);
-    setNewUser({ name: '', position: '', agency: '', contact: '', email: '', role: 'field_responder', status: 'active' });
+  const setStatus = async (row, accountStatus) => {
+    await upsertProfile({ id: row.id, account_status: accountStatus });
+    await loadUsers();
   };
 
-  const handleDelete = id => {
-    setUserList(prev => prev.filter(u => u.id !== id));
+  const handleDelete = async id => {
+    await deactivateProfile(id);
+    await loadUsers();
   };
 
   const roleCounts = {
@@ -72,13 +96,7 @@ export default function UserManagement() {
           </h1>
           <p className="text-muted-foreground text-xs mt-0.5">{userList.length} registered personnel</p>
         </div>
-        <button
-          onClick={() => setShowModal(true)}
-          className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add User
-        </button>
+        <button onClick={loadUsers} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all">Refresh</button>
       </div>
 
       {/* Role Filter Cards */}
@@ -171,7 +189,7 @@ export default function UserManagement() {
                   <td className="px-3 py-3.5 text-muted-foreground text-[10px]">{user.lastLogin}</td>
                   <td className="px-3 py-3.5">
                     <div className="flex items-center justify-center gap-1">
-                      <button className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-all" title="Edit">
+                      <button onClick={() => setStatus(user, user.status === 'active' ? 'inactive' : 'active')} className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-all" title="Toggle active status">
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button className="p-1.5 rounded-lg text-purple-400 hover:bg-purple-500/10 transition-all" title="Assign Role">
@@ -192,7 +210,15 @@ export default function UserManagement() {
           </table>
         </div>
 
-        {filtered.length === 0 && (
+        {loading && (
+          <div className="py-12 text-center text-sm text-muted-foreground">Loading user profiles...</div>
+        )}
+
+        {!loading && error && (
+          <div className="py-12 text-center text-sm text-red-400">{error}</div>
+        )}
+
+        {!loading && !error && filtered.length === 0 && (
           <div className="py-12 text-center">
             <Shield className="w-10 h-10 text-muted-foreground opacity-30 mx-auto mb-3" />
             <p className="text-muted-foreground text-sm">No users found</p>
@@ -200,92 +226,6 @@ export default function UserManagement() {
         )}
       </div>
 
-      {/* Add User Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-card border border-border rounded-2xl p-6 w-full max-w-lg shadow-2xl transition-colors duration-300">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="text-base font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-                Add New User
-              </h3>
-              <button onClick={() => setShowModal(false)} className="text-muted-foreground hover:text-foreground transition-colors">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {/* Role */}
-              <div>
-                <label className={labelClass}>User Role</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[
-                    { value: 'administrator', label: 'Administrator' },
-                    { value: 'dispatcher', label: 'Dispatcher' },
-                    { value: 'field_responder', label: 'Field Officer' },
-                  ].map(({ value, label }) => (
-                    <label
-                      key={value}
-                      className={`flex items-center justify-center py-2.5 rounded-xl border cursor-pointer transition-all text-xs font-medium ${
-                        newUser.role === value
-                          ? 'bg-blue-600/20 border-blue-500/50 text-blue-400'
-                          : 'bg-secondary/50 border-border text-muted-foreground hover:border-blue-500/30'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="newRole"
-                        value={value}
-                        checked={newUser.role === value}
-                        onChange={e => setNewUser(u => ({ ...u, role: e.target.value}))}
-                        className="sr-only"
-                      />
-                      {label}
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={labelClass}>Full Name *</label>
-                  <input value={newUser.name} onChange={e => setNewUser(u => ({ ...u, name: e.target.value }))} placeholder="Full name" className={inputClass} />
-                </div>
-                <div>
-                  <label className={labelClass}>Position *</label>
-                  <input value={newUser.position} onChange={e => setNewUser(u => ({ ...u, position: e.target.value }))} placeholder="Position/rank" className={inputClass} />
-                </div>
-                <div>
-                  <label className={labelClass}>Agency / Team</label>
-                  <input value={newUser.agency} onChange={e => setNewUser(u => ({ ...u, agency: e.target.value }))} placeholder="Agency or team" className={inputClass} />
-                </div>
-                <div>
-                  <label className={labelClass}>Contact</label>
-                  <input value={newUser.contact} onChange={e => setNewUser(u => ({ ...u, contact: e.target.value }))} placeholder="09XXXXXXXXX" className={inputClass} />
-                </div>
-                <div className="col-span-2">
-                  <label className={labelClass}>Email *</label>
-                  <input value={newUser.email} onChange={e => setNewUser(u => ({ ...u, email: e.target.value }))} placeholder="email@mdrrmo.gov.ph" className={inputClass} />
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="flex-1 px-4 py-2.5 bg-secondary hover:bg-secondary/80 text-foreground rounded-xl text-sm font-medium transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddUser}
-                  className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-semibold transition-all"
-                >
-                  Add User
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Archive, ArchiveRestore, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
+  Archive, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
   FilePlus2, FileText, Filter, Search, X, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { PERMISSIONS, ROLES } from '../access/rbac';
+import { PERMISSIONS } from '../access/rbac';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
-import { CURRENT_USER, exportPCRToPdf, loadAuditLogs, loadPCRs, PCR_EDIT_KEY, setPCRs } from '../utils/pcrStorage';
+import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
+import { archivePCRReport, listPCRReports, savePCRReport } from '../services/supabase';
 
 export default function PCRReports() {
-  const { user, can } = useAuth();
+  const { can } = useAuth();
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -27,16 +28,21 @@ export default function PCRReports() {
   const canCreate = can(PERMISSIONS.CREATE_PCR);
   const canReview = can(PERMISSIONS.REVIEW_PCR);
 
-  useEffect(() => {
+  const loadReports = async () => {
+    setLoading(true);
     try {
-      const allRecords = loadPCRs();
-      setRecords(user.role === ROLES.FIELD_OFFICER ? allRecords.filter(record => record.createdBy === CURRENT_USER.id) : allRecords);
-    } catch {
-      toast.error('Unable to load Patient Care Records.');
+      const allRecords = await listPCRReports({ limit: 300 });
+      setRecords(allRecords.map(record => ({ ...record, archived: false })));
+    } catch (error) {
+      toast.error(error.message || 'Unable to load Patient Care Records.');
     } finally {
       setLoading(false);
     }
-  }, [user.role]);
+  };
+
+  useEffect(() => {
+    loadReports();
+  }, []);
 
   const filtered = useMemo(() => records.filter(record =>
     (archiveView === 'Archived' ? record.archived : !record.archived)
@@ -52,12 +58,15 @@ export default function PCRReports() {
     sessionStorage.setItem(PCR_EDIT_KEY, record.id);
     navigate(`/admin/pcr/new?edit=${record.id}`);
   };
-  const archive = record => {
-    const nextRecord = { ...record, archived: !record.archived, updatedAt: new Date().toISOString() };
-    setRecords(current => current.map(item => item.id === record.id ? nextRecord : item));
-    setPCRs(loadPCRs().map(item => item.id === record.id ? nextRecord : item));
-    setSelected(null);
-    toast.success(nextRecord.archived ? 'Patient Care Record archived.' : 'Patient Care Record restored.');
+  const archive = async record => {
+    try {
+      await archivePCRReport(record.id);
+      setRecords(current => current.filter(item => item.id !== record.id));
+      setSelected(null);
+      toast.success('Patient Care Record archived.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to archive Patient Care Record.');
+    }
   };
   const doPdf = async record => {
     setExportingRecord(record);
@@ -70,19 +79,21 @@ export default function PCRReports() {
       setExportingRecord(null);
     }
   };
-  const updateStatus = (record, nextStatus, reason = '') => {
-    const nextRecord = {
-      ...record,
-      status: nextStatus,
-      rejectionReason: reason,
-      reviewedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    const nextRecords = loadPCRs().map(item => item.id === record.id ? nextRecord : item);
-    setPCRs(nextRecords);
-    setRecords(current => current.map(item => item.id === record.id ? nextRecord : item));
-    setSelected(current => current?.id === record.id ? nextRecord : current);
-    toast.success(nextStatus === 'Verified' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.');
+  const updateStatus = async (record, nextStatus, reason = '') => {
+    try {
+      const nextRecord = await savePCRReport(record.id, {
+        ...record,
+        status: nextStatus,
+        rejectionReason: reason,
+        reviewedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+      setRecords(current => current.map(item => item.id === record.id ? nextRecord : item));
+      setSelected(current => current?.id === record.id ? nextRecord : current);
+      toast.success(nextStatus === 'Verified' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to update Patient Care Record.');
+    }
   };
   const rejectRecord = () => {
     if (!rejectionReason.trim()) {
@@ -104,7 +115,7 @@ export default function PCRReports() {
       <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
         <div>
           <h1 className="text-xl font-bold flex gap-2 items-center"><FileText className="text-blue-500" />Patient Care Records</h1>
-          <p className="text-xs text-muted-foreground">{user.role === ROLES.FIELD_OFFICER ? `Reports submitted by ${CURRENT_USER.name}` : 'Unified records, review, verification, exports, and archival for Patient Care Reports.'}</p>
+          <p className="text-xs text-muted-foreground">Unified records, review, verification, exports, and archival for Patient Care Reports.</p>
         </div>
         {canCreate && <button onClick={() => navigate('/admin/dispatch/received')} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Accept Dispatch for PCR</button>}
       </div>
@@ -148,7 +159,7 @@ export default function PCRReports() {
                 <button onClick={() => doPdf(record)} title="Download PDF" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><Download size={15} /></button>
                 {canReview && record.status === 'Submitted' && <button onClick={() => updateStatus(record, 'Verified')} title="Accept" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {canReview && record.status === 'Submitted' && <button onClick={() => setRejectingRecord(record)} title="Reject" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {canCreate && <button onClick={() => archive(record)} title={record.archived ? 'Restore' : 'Archive'} className="p-2 hover:bg-red-500/10 text-red-400 rounded">{record.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}</button>}
+                {canCreate && <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>}
               </div></td>
             </tr>)}</tbody>
           </table></div>
@@ -163,7 +174,7 @@ export default function PCRReports() {
             <div className="flex items-center justify-between gap-3 border-b border-border p-3">
               <div>
                 <h2 className="font-bold">{selected.responseNumber}</h2>
-                <p className="text-xs text-muted-foreground">{selected.patientName || 'Unnamed patient'} · {loadAuditLogs(selected.id).length} audit events</p>
+                <p className="text-xs text-muted-foreground">{selected.patientName || 'Unnamed patient'}</p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
                 {canReview && selected.status === 'Submitted' && <button onClick={() => updateStatus(selected, 'Verified')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}

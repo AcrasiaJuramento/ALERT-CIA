@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Filter, Plus, Eye, Edit2, Users, ChevronDown,
   AlertTriangle, Flame, Droplets, Car, Heart, Download
 } from 'lucide-react';
-import { incidents } from '../data/mockData';
+import { listIncidents } from '../services/supabase';
 import { getIncidentStatusLabel, INCIDENT_STATUS_OPTIONS, isIncidentCompleted } from '../utils/incidentStatus';
 
 const severityBadge = {
@@ -47,18 +47,41 @@ export default function IncidentList() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [sortBy, setSortBy] = useState('date');
   const [sortDir, setSortDir] = useState('desc');
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filtered = incidents.filter(inc => {
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const rows = await listIncidents({ limit: 500 });
+        if (mounted) setIncidents(rows);
+      } catch (requestError) {
+        if (mounted) setError(requestError.message || 'Unable to load incidents.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const filtered = useMemo(() => incidents.filter(inc => {
     const matchSearch =
       !search ||
       inc.id.toLowerCase().includes(search.toLowerCase()) ||
-      inc.location.toLowerCase().includes(search.toLowerCase()) ||
-      inc.assignedTeam.toLowerCase().includes(search.toLowerCase());
+      (inc.location || '').toLowerCase().includes(search.toLowerCase()) ||
+      (inc.assignedTeam || '').toLowerCase().includes(search.toLowerCase());
     const matchSeverity = filterSeverity === 'all' || inc.severity === filterSeverity;
     const matchType = filterType === 'all' || inc.type === filterType;
     const matchStatus = filterStatus === 'all' || inc.status === filterStatus;
     return matchSearch && matchSeverity && matchType && matchStatus;
-  });
+  }), [filterSeverity, filterStatus, filterType, incidents, search]);
 
   const stats = {
     total: incidents.length,
@@ -175,7 +198,7 @@ export default function IncidentList() {
             </thead>
             <tbody>
               {filtered.map((incident) => {
-                const TypeIcon = typeIcons[incident.type];
+                const TypeIcon = typeIcons[incident.type] || AlertTriangle;
                 return (
                   <tr
                     key={incident.id}
@@ -245,7 +268,19 @@ export default function IncidentList() {
           </table>
         </div>
 
-        {filtered.length === 0 && (
+        {loading && (
+          <div className="py-16 text-center">
+            <p className="text-muted-foreground text-sm">Loading incidents...</p>
+          </div>
+        )}
+
+        {!loading && error && (
+          <div className="py-16 text-center">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+        )}
+
+        {!loading && !error && filtered.length === 0 && (
           <div className="py-16 text-center">
             <AlertTriangle className="w-10 h-10 text-muted-foreground opacity-30 mx-auto mb-3" />
             <p className="text-muted-foreground text-sm">No incidents match your filters</p>

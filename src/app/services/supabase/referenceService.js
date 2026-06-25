@@ -1,6 +1,13 @@
 import { runSupabaseRequest } from "./errors";
 import { normalizeName } from "./mappers";
 
+export const AMBULANCE_STATUSES = ["available", "busy", "unavailable", "maintenance"];
+
+export function getAmbulanceStatus(unit) {
+  if (AMBULANCE_STATUSES.includes(unit?.status)) return unit.status;
+  return unit?.active ? "available" : "unavailable";
+}
+
 export async function listBarangays({ activeOnly = true } = {}) {
   return runSupabaseRequest(client => {
     let query = client.from("barangays").select("*").order("name", { ascending: true });
@@ -36,10 +43,46 @@ export async function findRespondingTeamByName(name) {
 
 export async function listAmbulanceUnits({ activeOnly = true } = {}) {
   return runSupabaseRequest(client => {
-    let query = client.from("ambulance_units").select("*").order("call_sign", { ascending: true });
-    if (activeOnly) query = query.eq("active", true);
+    let query = client
+      .from("ambulance_units")
+      .select("*, responding_team:responding_teams(id, name)")
+      .order("call_sign", { ascending: true });
+    if (activeOnly) query = query.eq("status", "available");
     return query;
   }, "Unable to load ambulance units.");
+}
+
+export async function createAmbulanceUnit({ callSign, plateNumber, description, status = "available", respondingTeamId = null }) {
+  return runSupabaseRequest(client =>
+    client
+      .from("ambulance_units")
+      .insert({
+        call_sign: callSign,
+        plate_number: plateNumber || null,
+        description: description || null,
+        status,
+        active: status === "available",
+        responding_team_id: respondingTeamId || null,
+      })
+      .select("*, responding_team:responding_teams(id, name)")
+      .single(),
+  "Unable to register ambulance unit.");
+}
+
+export async function updateAmbulanceUnitAvailability(unitId, status) {
+  const normalizedStatus = AMBULANCE_STATUSES.includes(status) ? status : "unavailable";
+  return runSupabaseRequest(client =>
+    client
+      .from("ambulance_units")
+      .update({
+        status: normalizedStatus,
+        active: normalizedStatus === "available",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", unitId)
+      .select("*, responding_team:responding_teams(id, name)")
+      .single(),
+  "Unable to update ambulance availability.");
 }
 
 export async function findAmbulanceUnitByCallSign(callSign) {

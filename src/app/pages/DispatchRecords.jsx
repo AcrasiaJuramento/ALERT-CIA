@@ -21,10 +21,8 @@ import { useAuth } from "../contexts/AuthContext";
 import {
   DISPATCH_EDIT_KEY,
   DISPATCH_STATUSES,
-  findLinkedPCR,
-  loadDispatchRecords,
-  sendDispatchToRespondingTeam,
 } from "../utils/dispatchWorkflow";
+import { getPCRReportByResponse, listDispatchRecords, sendDispatchToRespondingTeam } from "../services/supabase";
 
 const statusClass = (status = "Draft") => {
   if (status.includes("PCR")) return "bg-green-500/15 text-green-500";
@@ -43,7 +41,9 @@ export default function DispatchRecords() {
   const navigate = useNavigate();
   const { can } = useAuth();
   const [records, setRecords] = useState([]);
+  const [linkedPCRs, setLinkedPCRs] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("All");
   const [selected, setSelected] = useState(null);
@@ -51,16 +51,31 @@ export default function DispatchRecords() {
   const pageSize = 10;
   const canCreate = can(PERMISSIONS.CREATE_DISPATCH);
 
-  const refresh = () => setRecords(loadDispatchRecords());
-
-  useEffect(() => {
+  const refresh = async () => {
+    setLoading(true);
+    setError("");
     try {
-      refresh();
-    } catch {
-      toast.error("Unable to load Dispatch Form Records.");
+      const rows = await listDispatchRecords({ limit: 200 });
+      setRecords(rows);
+      const pairs = await Promise.all(rows.map(async record => {
+        try {
+          const pcr = await getPCRReportByResponse(record.responseId);
+          return [record.responseId, pcr];
+        } catch {
+          return [record.responseId, null];
+        }
+      }));
+      setLinkedPCRs(Object.fromEntries(pairs));
+    } catch (requestError) {
+      setError(requestError.message || "Unable to load Dispatch Form Records.");
+      toast.error(requestError.message || "Unable to load Dispatch Form Records.");
     } finally {
       setLoading(false);
     }
+  };
+
+  useEffect(() => {
+    refresh();
   }, []);
 
   const filtered = useMemo(() => records.filter(record => {
@@ -87,7 +102,7 @@ export default function DispatchRecords() {
   };
 
   const openPCR = record => {
-    const pcr = findLinkedPCR(record);
+    const pcr = linkedPCRs[record.responseId];
     if (!pcr) {
       toast.error("No linked PCR found. The responding team must accept this dispatch first.");
       return;
@@ -95,21 +110,25 @@ export default function DispatchRecords() {
     navigate(`/admin/pcr/new?edit=${pcr.id}`);
   };
 
-  const send = record => {
+  const send = async record => {
     if (!record.team) {
       toast.error("Please select a responding team before sending this dispatch.");
       return;
     }
-    const { dispatch } = sendDispatchToRespondingTeam(record);
-    setRecords(current => current.map(item => item.id === dispatch.id ? dispatch : item));
-    setSelected(current => current?.id === dispatch.id ? dispatch : current);
-    toast.success("Dispatch sent to responding team.");
+    try {
+      const dispatch = await sendDispatchToRespondingTeam(record.dispatchId || record.id);
+      setRecords(current => current.map(item => item.id === dispatch.id ? dispatch : item));
+      setSelected(current => current?.id === dispatch.id ? dispatch : current);
+      toast.success("Dispatch sent to responding team.");
+    } catch (requestError) {
+      toast.error(requestError.message || "Unable to send dispatch to responding team.");
+    }
   };
 
   const counts = {
     draft: records.filter(record => record.status === "Draft").length,
     sent: records.filter(record => record.status?.includes("Sent") || record.status?.includes("Accepted") || record.status?.includes("Progress")).length,
-    linked: records.filter(record => findLinkedPCR(record)).length,
+    linked: records.filter(record => linkedPCRs[record.responseId]).length,
   };
 
   return (
@@ -146,7 +165,7 @@ export default function DispatchRecords() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {loading ? <div className="py-16 text-center text-sm text-muted-foreground">Loading Dispatch Form Records...</div> : <>
+        {loading ? <div className="py-16 text-center text-sm text-muted-foreground">Loading Dispatch Form Records...</div> : error ? <div className="py-16 text-center text-sm text-red-400">{error}</div> : <>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-secondary text-xs uppercase text-muted-foreground">
@@ -154,7 +173,7 @@ export default function DispatchRecords() {
               </thead>
               <tbody>
                 {visibleRecords.map(record => {
-                  const pcr = findLinkedPCR(record);
+                  const pcr = linkedPCRs[record.responseId];
                   return (
                     <tr key={record.id} onClick={() => setSelected(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
                       <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber || "Unnumbered"}</td>
@@ -188,7 +207,7 @@ export default function DispatchRecords() {
       edit={edit}
       openPCR={openPCR}
       send={send}
-      findLinkedPCR={findLinkedPCR}
+      findLinkedPCR={record => linkedPCRs[record.responseId]}
     />
     </div>
   );

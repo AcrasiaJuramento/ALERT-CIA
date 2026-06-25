@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import { incidents, heatmapZones, dangerZones } from '../data/mockData';
+const incidents = [];
+const heatmapZones = [];
+const dangerZones = [];
 import { AlertTriangle, Flame, Droplets, Heart, Shield } from 'lucide-react';
 import { isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
 

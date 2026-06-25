@@ -1,23 +1,52 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, FileText, MapPin, Radio, Search } from "lucide-react";
 import { toast } from "sonner";
-import { useAuth } from "../contexts/AuthContext";
 import {
-  acceptDispatch,
   DISPATCH_STATUSES,
-  findLinkedPCR,
-  loadDispatchRecords,
-  markDispatchBackToBase,
 } from "../utils/dispatchWorkflow";
+import {
+  acceptDispatchByResponse,
+  getPCRReportByResponse,
+  listDispatchRecords,
+  markResponseBackToBase,
+} from "../services/supabase";
 
 const inputClass = "w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500";
 
 export default function ReceivedDispatches() {
   const navigate = useNavigate();
-  const { user } = useAuth();
-  const [records, setRecords] = useState(() => loadDispatchRecords());
+  const [records, setRecords] = useState([]);
+  const [linkedPCRs, setLinkedPCRs] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+
+  const loadRecords = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const rows = await listDispatchRecords({ limit: 200 });
+      setRecords(rows);
+      const pairs = await Promise.all(rows.map(async record => {
+        try {
+          const pcr = await getPCRReportByResponse(record.responseId);
+          return [record.responseId, pcr];
+        } catch {
+          return [record.responseId, null];
+        }
+      }));
+      setLinkedPCRs(Object.fromEntries(pairs));
+    } catch (requestError) {
+      setError(requestError.message || "Unable to load received dispatches.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadRecords();
+  }, []);
 
   const received = useMemo(() => records.filter(record => {
     const isReceived = [
@@ -38,15 +67,19 @@ export default function ReceivedDispatches() {
     return isReceived && text.includes(query.toLowerCase());
   }), [records, query]);
 
-  const accept = record => {
-    const result = acceptDispatch(record, record.team || user.id);
-    setRecords(current => current.map(item => item.id === result.dispatch.id ? result.dispatch : item));
-    toast.success("Dispatch accepted. Opening linked PCR report.");
-    navigate(`/admin/pcr/new?edit=${result.pcr.id}`);
+  const accept = async record => {
+    try {
+      const pcrId = await acceptDispatchByResponse(record.responseId);
+      toast.success("Dispatch accepted. Opening linked PCR report.");
+      await loadRecords();
+      navigate(`/admin/pcr/new?edit=${pcrId}`);
+    } catch (requestError) {
+      toast.error(requestError.message || "Unable to accept dispatch.");
+    }
   };
 
   const openPCR = record => {
-    const pcr = findLinkedPCR(record);
+    const pcr = linkedPCRs[record.responseId];
     if (!pcr) {
       accept(record);
       return;
@@ -54,10 +87,10 @@ export default function ReceivedDispatches() {
     navigate(`/admin/pcr/new?edit=${pcr.id}`);
   };
 
-  const completeResponse = record => {
+  const completeResponse = async record => {
     try {
-      const result = markDispatchBackToBase(record);
-      setRecords(current => current.map(item => item.id === result.dispatch.id ? result.dispatch : item));
+      await markResponseBackToBase(record.responseId);
+      await loadRecords();
       toast.success("Response marked resolved. Back to base time was added to the PCR report.");
     } catch (error) {
       toast.error(error.message || "Unable to mark this dispatch as resolved.");
@@ -82,8 +115,10 @@ export default function ReceivedDispatches() {
       </label>
 
       <div className="grid gap-4">
-        {received.map(record => {
-          const pcr = findLinkedPCR(record);
+        {loading && <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-muted-foreground">Loading received dispatches...</div>}
+        {!loading && error && <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-red-400">{error}</div>}
+        {!loading && !error && received.map(record => {
+          const pcr = linkedPCRs[record.responseId];
           const isResolved = record.status === DISPATCH_STATUSES.PCR_COMPLETED || Boolean(record.resolvedAt);
           const incidentType = [...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified";
           return (
@@ -143,7 +178,7 @@ export default function ReceivedDispatches() {
         })}
       </div>
 
-      {!received.length && (
+      {!loading && !error && !received.length && (
         <div className="rounded-xl border border-border bg-card py-16 text-center">
           <Radio size={36} className="mx-auto mb-3 text-muted-foreground/30" />
           <p className="font-semibold">No dispatches received</p>

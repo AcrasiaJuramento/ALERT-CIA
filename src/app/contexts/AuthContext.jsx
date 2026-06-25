@@ -1,14 +1,9 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { ROLES, ROLE_LABELS, hasPermission } from '../access/rbac';
+import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 
 const AUTH_STORAGE_KEY = 'alert-cia-auth-user';
 const AuthContext = createContext(null);
-
-const DEMO_USERS = {
-  'admin@mdrrmo.gov.ph': { name: 'Maria Santos', role: ROLES.ADMINISTRATOR },
-  'dispatch@mdrrmo.gov.ph': { name: 'Juan dela Cruz', role: ROLES.DISPATCHER },
-  'field@mdrrmo.gov.ph': { name: 'Roberto Aquino', role: ROLES.FIELD_OFFICER },
-};
 
 function readStoredUser() {
   try {
@@ -18,29 +13,114 @@ function readStoredUser() {
   }
 }
 
+function profileToUser(profile) {
+  const role = profile?.roles?.[0]?.role || ROLES.FIELD_OFFICER;
+  return {
+    id: profile.id,
+    email: profile.email,
+    name: profile.display_name,
+    role,
+    status: profile.account_status,
+  };
+}
+
+async function loadSupabaseProfile(userId) {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*, roles:profile_roles!profile_roles_profile_id_fkey(role)')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(readStoredUser);
+  const [authLoading, setAuthLoading] = useState(Boolean(isSupabaseConfigured));
 
-  const login = email => {
-    const demoUser = DEMO_USERS[email.toLowerCase()] ?? DEMO_USERS['field@mdrrmo.gov.ph'];
-    const nextUser = { id: email.toLowerCase(), email: email.toLowerCase(), ...demoUser };
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
-    setUser(nextUser);
-    return nextUser;
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let mounted = true;
+
+    async function restoreSession() {
+      try {
+        const { data } = await supabase.auth.getSession();
+        const sessionUser = data.session?.user;
+        if (!sessionUser) {
+          if (mounted) setUser(null);
+          return;
+        }
+
+        const profile = await loadSupabaseProfile(sessionUser.id);
+        if (profile?.account_status === 'active') {
+          const nextUser = profileToUser(profile);
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
+          if (mounted) setUser(nextUser);
+        } else {
+          await supabase.auth.signOut();
+          localStorage.removeItem(AUTH_STORAGE_KEY);
+          if (mounted) setUser(null);
+        }
+      } finally {
+        if (mounted) setAuthLoading(false);
+      }
+    }
+
+    restoreSession();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+        setUser(null);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  const login = async (email, password) => {
+    if (isSupabaseConfigured) {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+
+      const profile = await loadSupabaseProfile(data.user.id);
+      if (!profile) {
+        await supabase.auth.signOut();
+        throw new Error('No officer profile is connected to this account.');
+      }
+      if (profile.account_status !== 'active') {
+        await supabase.auth.signOut();
+        throw new Error('Your account is pending administrator approval.');
+      }
+
+      const nextUser = profileToUser(profile);
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
+      setUser(nextUser);
+      return nextUser;
+    }
+
+    throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY before signing in.');
   };
 
-  const logout = () => {
+  const logout = async () => {
+    if (isSupabaseConfigured) await supabase.auth.signOut();
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setUser(null);
   };
 
   const value = useMemo(() => ({
     user,
+    authLoading,
     login,
     logout,
     roleLabel: user ? ROLE_LABELS[user.role] : '',
     can: permission => hasPermission(user?.role, permission),
-  }), [user]);
+  }), [user, authLoading]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

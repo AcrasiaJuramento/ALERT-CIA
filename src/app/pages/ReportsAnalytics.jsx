@@ -1,6 +1,34 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Download, FileText, Printer, Search } from 'lucide-react';
-import { months, reportRows, totalReportRows } from '../data/analyticsModule';
+import { listIncidents } from '../services/supabase';
+
+const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const quarters = ['Q1', 'Q2', 'Q3', 'Q4'];
+const annualPeriods = ['Annual'];
+
+function normalizeCategory(value) {
+  const category = String(value || 'other').trim().toLowerCase();
+  if (category === 'mvc' || category === 'vehicular') return 'Motor Vehicle Crash Type';
+  return category
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function getPeriodLabels(summary) {
+  if (summary === 'quarterly') return quarters;
+  if (summary === 'annual') return annualPeriods;
+  return months;
+}
+
+function getPeriodIndex(dateValue, summary) {
+  const date = dateValue ? new Date(dateValue) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+  if (summary === 'annual') return 0;
+  const month = date.getMonth();
+  return summary === 'quarterly' ? Math.floor(month / 3) : month;
+}
 
 function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
@@ -104,8 +132,8 @@ function columnName(index) {
   return name;
 }
 
-function exportExcel(rows) {
-  const header = ['Category', ...months, 'Total'];
+function exportExcel(rows, labels, summary) {
+  const header = ['Category', ...labels, 'Total'];
   const tableRows = [header, ...rows.map((row) => [row.category, ...row.values, row.total])];
   const sheetData = tableRows.map((row, rowIndex) => (
     `<row r="${rowIndex + 1}">${row.map((cell, columnIndex) => {
@@ -138,18 +166,19 @@ function exportExcel(rows) {
       content: `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetData}</sheetData></worksheet>`,
     },
   ];
-  downloadBlob('spreadsheets-report.xlsx', new Blob([createZip(files)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  downloadBlob(`spreadsheets-report-${summary}.xlsx`, new Blob([createZip(files)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
 }
 
-function exportPdf(rows) {
+function exportPdf(rows, labels, summary) {
   import('jspdf').then(({ jsPDF }) => {
     const pdf = new jsPDF({ orientation: 'landscape' });
     pdf.setFontSize(14);
-    pdf.text('Spreadsheets Report', 14, 14);
+    pdf.text(`Spreadsheets Report - ${summary.charAt(0).toUpperCase() + summary.slice(1)}`, 14, 14);
     pdf.setFontSize(8);
     let y = 24;
     rows.slice(0, 26).forEach((row) => {
-      pdf.text(`${row.category}: ${row.values.join(' | ')} | Total ${row.total}`, 14, y);
+      const values = labels.map((label, index) => `${label}: ${row.values[index] || 0}`).join(' | ');
+      pdf.text(`${row.category}: ${values} | Total ${row.total}`, 14, y);
       y += 6;
       if (y > 190) {
         pdf.addPage();
@@ -172,21 +201,79 @@ function StatCard({ label, value }) {
 export default function ReportsAnalytics() {
   const [search, setSearch] = useState('');
   const [summary, setSummary] = useState('monthly');
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const periodLabels = useMemo(() => getPeriodLabels(summary), [summary]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const rows = await listIncidents({ limit: 1000 });
+        if (mounted) setIncidents(rows);
+      } catch (requestError) {
+        if (mounted) setError(requestError.message || 'Unable to load report data.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const reportRows = useMemo(() => {
+    const byCategory = incidents.reduce((acc, incident) => {
+      const label = normalizeCategory(incident.classification || incident.type);
+      if (!acc[label]) acc[label] = Array(periodLabels.length).fill(0);
+      const index = getPeriodIndex(incident.date, summary);
+      if (index !== null && index >= 0 && index < periodLabels.length) acc[label][index] += 1;
+      return acc;
+    }, {});
+
+    return Object.entries(byCategory)
+      .map(([category, values]) => ({ category, values, total: values.reduce((sum, value) => sum + value, 0) }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+  }, [incidents, periodLabels.length, summary]);
+
+  const totalReportRows = rows => rows.reduce((sum, row) => sum + row.total, 0);
 
   const filteredRows = useMemo(() => {
     const term = search.trim().toLowerCase();
     return term ? reportRows.filter((row) => row.category.toLowerCase().includes(term)) : reportRows;
-  }, [search]);
+  }, [reportRows, search]);
 
   const medicalTotal = reportRows.find((row) => row.category === 'Medical')?.total || 0;
   const traumaTotal = reportRows.find((row) => row.category === 'Trauma')?.total || 0;
   const mvcTotal = reportRows.find((row) => row.category === 'Motor Vehicle Crash Type')?.total || 0;
   const grandTotal = totalReportRows(reportRows);
-  const monthlyTotals = months.map((month, index) => ({
-    month: month.slice(0, 3),
+  const getIncidentBarangay = (incident) => incident.barangay || incident.location_barangay || incident.address_barangay;
+  const barangaysAffected = new Set(incidents.map(getIncidentBarangay).filter(Boolean)).size;
+  const categoryTotals = reportRows
+    .map((row) => ({ name: row.category, count: row.total }))
+    .filter((row) => row.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const commonType = categoryTotals[0]?.name || 'No records';
+  const barangayTotals = Object.entries(incidents.reduce((acc, incident) => {
+    const barangay = getIncidentBarangay(incident);
+    if (barangay) acc[barangay] = (acc[barangay] || 0) + 1;
+    return acc;
+  }, {}))
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const topBarangay = barangayTotals[0]?.name || 'No records';
+  const periodTotals = periodLabels.map((label, index) => ({
+    label,
     count: reportRows.reduce((sum, row) => sum + row.values[index], 0),
   }));
-  const peakMonth = monthlyTotals.reduce((top, item) => (item.count > top.count ? item : top), monthlyTotals[0]);
+  const peakPeriod = periodTotals.reduce((top, item) => (item.count > top.count ? item : top), periodTotals[0] || { label: 'No records', count: 0 });
+  const peakPeriodLabel = peakPeriod.count > 0 ? peakPeriod.label : 'No records';
+  const peakLabel = summary === 'monthly' ? 'Peak Month' : summary === 'quarterly' ? 'Peak Quarter' : 'Annual Total';
+  const peakValue = summary === 'annual' ? grandTotal : peakPeriodLabel;
 
   return (
     <div className="min-h-full space-y-5 bg-background p-5" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -209,10 +296,10 @@ export default function ReportsAnalytics() {
               </button>
             ))}
           </div>
-          <button onClick={() => exportExcel(filteredRows)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
+          <button onClick={() => exportExcel(filteredRows, periodLabels, summary)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
             <Download className="h-3.5 w-3.5" /> Excel
           </button>
-          <button onClick={() => exportPdf(filteredRows)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
+          <button onClick={() => exportPdf(filteredRows, periodLabels, summary)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
             <FileText className="h-3.5 w-3.5" /> PDF
           </button>
           <button onClick={() => window.print()} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
@@ -226,17 +313,19 @@ export default function ReportsAnalytics() {
         <StatCard label="Medical Cases" value={medicalTotal} />
         <StatCard label="Trauma Cases" value={traumaTotal} />
         <StatCard label="MVC Cases" value={mvcTotal} />
-        <StatCard label="Barangays Affected" value="14" />
-        <StatCard label="Common Type" value="Medical" />
-        <StatCard label="Top Barangay" value="Poblacion Norte" />
-        <StatCard label="Peak Month" value={peakMonth.month} />
+        <StatCard label="Barangays Affected" value={barangaysAffected} />
+        <StatCard label="Common Type" value={commonType} />
+        <StatCard label="Top Barangay" value={topBarangay} />
+        <StatCard label={peakLabel} value={peakValue} />
       </div>
+      {loading && <div className="rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Loading report data...</div>}
+      {error && <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
 
       <div className="rounded-lg border border-border bg-card">
         <div className="flex flex-col justify-between gap-3 border-b border-border p-4 lg:flex-row lg:items-center">
           <div>
             <h2 className="text-sm font-semibold text-foreground">Interactive Statistical Table</h2>
-            <p className="text-xs text-muted-foreground">Auto-computed monthly totals, row totals, and grand totals</p>
+            <p className="text-xs text-muted-foreground">Auto-computed {summary} totals, row totals, and grand totals</p>
           </div>
           <div className="relative w-full lg:w-72">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
@@ -253,7 +342,7 @@ export default function ReportsAnalytics() {
             <thead>
               <tr className="border-b border-border bg-secondary/40 text-muted-foreground">
                 <th className="sticky left-0 z-10 bg-secondary px-4 py-3 text-left font-medium">Category</th>
-                {months.map((month) => <th key={month} className="px-3 py-3 text-right font-medium">{month}</th>)}
+                {periodLabels.map((label) => <th key={label} className="px-3 py-3 text-right font-medium">{label}</th>)}
                 <th className="px-4 py-3 text-right font-semibold text-foreground">Total</th>
               </tr>
             </thead>
@@ -261,7 +350,7 @@ export default function ReportsAnalytics() {
               {filteredRows.map((row) => (
                 <tr key={row.category} className="border-b border-border/60 hover:bg-secondary/30">
                   <td className="sticky left-0 bg-card px-4 py-2 font-medium text-foreground">{row.category}</td>
-                  {row.values.map((value, index) => <td key={months[index]} className="px-3 py-2 text-right text-muted-foreground">{value}</td>)}
+                  {row.values.map((value, index) => <td key={periodLabels[index]} className="px-3 py-2 text-right text-muted-foreground">{value}</td>)}
                   <td className="px-4 py-2 text-right font-semibold text-foreground">{row.total}</td>
                 </tr>
               ))}
@@ -269,8 +358,8 @@ export default function ReportsAnalytics() {
             <tfoot>
               <tr className="bg-secondary/60 font-semibold text-foreground">
                 <td className="sticky left-0 bg-secondary px-4 py-3">Grand Total</td>
-                {months.map((month, index) => (
-                  <td key={month} className="px-3 py-3 text-right">{filteredRows.reduce((sum, row) => sum + row.values[index], 0)}</td>
+                {periodLabels.map((label, index) => (
+                  <td key={label} className="px-3 py-3 text-right">{filteredRows.reduce((sum, row) => sum + row.values[index], 0)}</td>
                 ))}
                 <td className="px-4 py-3 text-right">{totalReportRows(filteredRows)}</td>
               </tr>

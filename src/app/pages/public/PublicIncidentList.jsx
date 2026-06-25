@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Search, MapPin, Clock, Filter, Flame, Droplets, Car, Heart, AlertTriangle } from 'lucide-react';
-import { incidents } from '../../data/mockData';
+import { listIncidents, listPublicScrapedMapIncidents } from '../../services/supabase';
 import { getIncidentStatusLabel, INCIDENT_STATUS } from '../../utils/incidentStatus';
 
 const typeIcons = {
@@ -35,17 +35,43 @@ export default function PublicIncidentList() {
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [filterSeverity, setFilterSeverity] = useState('all');
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filtered = incidents.filter(inc => {
+  useEffect(() => {
+    let mounted = true;
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const [official, scraped] = await Promise.all([
+          listIncidents({ publicOnly: true, limit: 300 }),
+          listPublicScrapedMapIncidents({ limit: 100 }),
+        ]);
+        if (mounted) setIncidents([...official, ...scraped]);
+      } catch (requestError) {
+        if (mounted) setError(requestError.message || 'Unable to load public incidents.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    load();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const filtered = useMemo(() => incidents.filter(inc => {
     const matchSearch =
       !search ||
-      inc.location.toLowerCase().includes(search.toLowerCase()) ||
-      inc.type.toLowerCase().includes(search.toLowerCase()) ||
-      inc.id.toLowerCase().includes(search.toLowerCase());
+      (inc.location || '').toLowerCase().includes(search.toLowerCase()) ||
+      (inc.type || '').toLowerCase().includes(search.toLowerCase()) ||
+      String(inc.id || '').toLowerCase().includes(search.toLowerCase());
     const matchType = filterType === 'all' || inc.type === filterType;
     const matchSeverity = filterSeverity === 'all' || inc.severity === filterSeverity;
     return matchSearch && matchType && matchSeverity;
-  });
+  }), [filterSeverity, filterType, incidents, search]);
 
   const typeCounts = {
     all: incidents.length,
@@ -128,7 +154,7 @@ export default function PublicIncidentList() {
         {/* Incident Cards */}
         <div className="space-y-3">
           {filtered.map((incident) => {
-            const TypeIcon = typeIcons[incident.type];
+            const TypeIcon = typeIcons[incident.type] || AlertTriangle;
             const sev = severityColors[incident.severity] || defaultSeverityColor;
             return (
               <div
@@ -191,7 +217,15 @@ export default function PublicIncidentList() {
           })}
         </div>
 
-        {filtered.length === 0 && (
+        {loading && (
+          <div className="py-20 text-center text-sm text-muted-foreground">Loading public incidents...</div>
+        )}
+
+        {!loading && error && (
+          <div className="py-20 text-center text-sm text-red-500">{error}</div>
+        )}
+
+        {!loading && !error && filtered.length === 0 && (
           <div className="py-20 text-center">
             <div className="w-16 h-16 bg-secondary rounded-full flex items-center justify-center mx-auto mb-4">
               <AlertTriangle className="w-8 h-8 text-muted-foreground opacity-40" />

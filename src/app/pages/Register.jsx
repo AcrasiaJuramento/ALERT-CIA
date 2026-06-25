@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Shield, Eye, EyeOff, ArrowRight, ArrowLeft, CheckCircle, User, Building, Phone, Mail, Lock } from "lucide-react";
 
-const roles = ["Admin", "Dispatcher", "Field Officer"];
+const roles = ["Dispatcher", "Field Officer"];
 const agencies = ["MDRRMO Davao City", "BFP Davao City", "PNP Davao City", "DOH Davao Region", "Other"];
 const positions = ["MDRRMO Head", "Dispatcher", "Field Officer / EMT", "Rescue Team Leader", "Medical Officer", "Other"];
 
@@ -200,7 +200,7 @@ export default function Register() {
 
                 <div>
                   <label className="block text-slate-300 text-sm font-medium mb-2">Requested Role</label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     {roles.map((role) => (
                       <button
                         key={role}

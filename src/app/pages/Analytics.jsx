@@ -1,4 +1,4 @@
-import { createElement, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, BarChart2, Calendar, Car, FilePlus2, FileText, HeartPulse, MapPinned, Radio, ShieldCheck, TrendingDown, TrendingUp,
@@ -8,9 +8,11 @@ import {
 } from 'recharts';
 import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import {
-  analyticsIncidents, filterIncidentsByRange, filterOptions, getBarangayStats, months, reportRows, summarizeBy,
+  filterIncidentsByRange, filterOptions, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
-import { findLinkedPCR, loadDispatchRecords } from '../utils/dispatchWorkflow';
+import { listDispatchRecords, listIncidents } from '../services/supabase';
+import { ROLES } from '../access/rbac';
+import { useAuth } from '../contexts/AuthContext';
 
 const colors = ['#2563eb', '#dc2626', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#64748b'];
 
@@ -20,6 +22,8 @@ const priorityColors = {
   Medium: '#eab308',
   Low: '#22c55e',
 };
+
+const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -132,7 +136,7 @@ function SectionHeader({ title, subtitle }) {
 function DispatcherWorkflowCard({ dispatches, onRecords, onCreate }) {
   const draft = dispatches.filter((record) => record.status === 'Draft').length;
   const sent = dispatches.filter((record) => record.status?.includes('Sent') || record.status?.includes('Progress')).length;
-  const linked = dispatches.filter((record) => findLinkedPCR(record)).length;
+  const linked = dispatches.filter((record) => record.status?.includes('PCR')).length;
 
   return (
     <div className="mb-5 rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -314,11 +318,60 @@ function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
 
 export default function Analytics() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [range, setRange] = useState('today');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
   const [rankingView, setRankingView] = useState('bar');
+  const [incidents, setIncidents] = useState([]);
+  const [dispatches, setDispatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
-  const filtered = useMemo(() => filterIncidentsByRange(analyticsIncidents, range, customRange), [range, customRange]);
+  useEffect(() => {
+    let mounted = true;
+    async function loadAnalytics() {
+      setLoading(true);
+      setError('');
+      try {
+        const [incidentRows, dispatchRows] = await Promise.all([
+          listIncidents({ limit: 1000 }),
+          listDispatchRecords({ limit: 1000 }),
+        ]);
+        if (mounted) {
+          setIncidents(incidentRows);
+          setDispatches(dispatchRows);
+        }
+      } catch (requestError) {
+        if (mounted) setError(requestError.message || 'Unable to load analytics data.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadAnalytics();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const analyticsIncidents = useMemo(() => incidents.map(incident => ({
+    ...incident,
+    classification: String(incident.classification || incident.type || 'Other').toUpperCase(),
+    priority: incident.priority ? `${incident.priority[0].toUpperCase()}${incident.priority.slice(1)}` : 'Medium',
+    barangay: incident.barangay,
+    date: incident.date,
+    time: incident.time,
+    month: incident.date ? new Date(incident.date).getMonth() : 0,
+    mvc: incident.classification === 'mvc' || incident.type === 'vehicular' ? {
+      vehicleType: incident.subtype || 'Unspecified',
+      personInvolved: 'Unspecified',
+      engineSize: 'Unspecified',
+      licenseStatus: 'Unspecified',
+      helmetUsage: 'Unspecified',
+      alcoholInvolvement: 'Unspecified',
+    } : null,
+  })), [incidents]);
+
+  const filtered = useMemo(() => filterIncidentsByRange(analyticsIncidents, range, customRange), [analyticsIncidents, range, customRange]);
   const barangays = useMemo(() => getBarangayStats(filtered).filter((item) => item.count > 0), [filtered]);
   const priority = useMemo(() => summarizeBy(filtered, 'priority'), [filtered]);
   const vehicleType = useMemo(() => summarizeBy(filtered.filter((item) => item.mvc), (item) => item.mvc.vehicleType), [filtered]);
@@ -332,22 +385,12 @@ export default function Analytics() {
   const mvcCount = filtered.filter((item) => item.classification === 'MVC').length;
   const monthlyTotals = useMemo(() => months.map((month, index) => ({
     month: month.slice(0, 3),
-    count: reportRows.reduce((sum, row) => sum + row.values[index], 0),
-  })), []);
-  const categoryComparison = useMemo(() => ['Medical', 'Trauma', 'Motor Vehicle Crash Type', 'Conduction', 'Dialysis'].map((category) => {
-    const row = reportRows.find((item) => item.category === category);
-    return { name: category === 'Motor Vehicle Crash Type' ? 'MVC' : category, count: row?.total || 0 };
-  }), []);
-  const reportTraumaStats = useMemo(() => reportRows
-    .filter((row) => ['Fall', 'Electrocution', 'Domestic Violence', 'Fire Rescue Incident'].includes(row.category))
-    .map((row) => ({ name: row.category, count: row.total })), []);
-  const reportMedicalStats = useMemo(() => reportRows
-    .filter((row) => ['Pediatric', 'Psychiatric', 'Surgical', 'Obstetrical'].includes(row.category))
-    .map((row) => ({ name: row.category, count: row.total })), []);
-  const reportMvcStats = useMemo(() => reportRows
-    .filter((row) => ['Collision', 'Self-Accident'].includes(row.category))
-    .map((row) => ({ name: row.category, count: row.total })), []);
-  const dispatches = useMemo(() => loadDispatchRecords(), []);
+    count: analyticsIncidents.filter(item => item.month === index).length,
+  })), [analyticsIncidents]);
+  const categoryComparison = useMemo(() => summarizeBy(analyticsIncidents, 'classification').map(item => ({ name: item.name, count: item.count })), [analyticsIncidents]);
+  const reportTraumaStats = useMemo(() => summarizeBy(analyticsIncidents.filter(item => item.classification === 'TRAUMA'), 'subtype').map(item => ({ name: item.name || 'Unspecified', count: item.count })), [analyticsIncidents]);
+  const reportMedicalStats = useMemo(() => summarizeBy(analyticsIncidents.filter(item => item.classification === 'MEDICAL'), 'subtype').map(item => ({ name: item.name || 'Unspecified', count: item.count })), [analyticsIncidents]);
+  const reportMvcStats = useMemo(() => summarizeBy(analyticsIncidents.filter(item => item.mvc), 'subtype').map(item => ({ name: item.name || 'Unspecified', count: item.count })), [analyticsIncidents]);
 
   return (
     <div className="min-h-full bg-background p-5" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -368,12 +411,16 @@ export default function Analytics() {
           <DateFilters range={range} setRange={setRange} customRange={customRange} setCustomRange={setCustomRange} />
         </div>
       </div>
+      {loading && <div className="mb-5 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Loading analytics data...</div>}
+      {error && <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
 
-      <DispatcherWorkflowCard
-        dispatches={dispatches}
-        onRecords={() => navigate('/admin/dispatch')}
-        onCreate={() => navigate('/admin/dispatch/new')}
-      />
+      {user?.role === ROLES.DISPATCHER && (
+        <DispatcherWorkflowCard
+          dispatches={dispatches}
+          onRecords={() => navigate('/admin/dispatch')}
+          onCreate={() => navigate('/admin/dispatch/new')}
+        />
+      )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <MetricCard label="Total Incidents" value={filtered.length} helper="Filtered emergency records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />

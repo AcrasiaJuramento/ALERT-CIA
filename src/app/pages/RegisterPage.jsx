@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Siren, Eye, EyeOff, CheckCircle2, ArrowLeft, User, Building, Phone, Mail, Lock, Briefcase } from 'lucide-react';
+import { isSupabaseConfigured } from '../lib/supabaseClient';
+import { getRegistrationErrorMessage, registerOfficerAccount } from '../services/supabase';
 
 const roles = [
-  { value: 'administrator', label: 'Administrator', desc: 'Full system access and management' },
   { value: 'dispatcher', label: 'Dispatch Officer', desc: 'Incident dispatch and coordination' },
   { value: 'field_responder', label: 'Field Officer', desc: 'PCR reports and field operations' },
 ];
+
+const allowedPublicRoles = new Set(roles.map(role => role.value));
 
 export default function RegisterPage() {
   const navigate = useNavigate();
@@ -17,17 +20,41 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (form.password !== form.confirmPassword) {
-      alert("Passwords do not match");
+    setError('');
+
+    if (!allowedPublicRoles.has(form.role)) {
+      setError('Public registration is only available for Dispatcher and Field Officer accounts.');
       return;
     }
+
+    if (form.password !== form.confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
+
+    if (form.password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (!isSupabaseConfigured) {
+      setError("Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY before registering accounts.");
+      return;
+    }
+
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1500));
-    setLoading(false);
-    setSubmitted(true);
+    try {
+      await registerOfficerAccount(form);
+      setSubmitted(true);
+    } catch (requestError) {
+      setError(getRegistrationErrorMessage(requestError));
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (submitted) {
@@ -89,11 +116,17 @@ export default function RegisterPage() {
             Submit your registration request to gain access to the ALERT-CIA system.
           </p>
 
+          {error && (
+            <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {error}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Role Selection */}
             <div>
               <label className="block text-xs font-medium text-slate-400 mb-3">User Role</label>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {roles.map(({ value, label, desc }) => (
                   <label
                     key={value}

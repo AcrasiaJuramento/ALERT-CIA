@@ -28,6 +28,49 @@ alter table public.notification_preferences enable row level security;
 alter table public.audit_logs enable row level security;
 alter table public.data_exports enable row level security;
 
+drop policy if exists profiles_self_or_admin_read on public.profiles;
+drop policy if exists profiles_admin_write on public.profiles;
+drop policy if exists admin_all_organizations on public.organizations;
+drop policy if exists admin_all_stations on public.stations;
+drop policy if exists admin_all_profile_roles on public.profile_roles;
+drop policy if exists profile_roles_self_read on public.profile_roles;
+drop policy if exists admin_all_barangays on public.barangays;
+drop policy if exists admin_all_gis_import_batches on public.gis_import_batches;
+drop policy if exists admin_all_responding_teams on public.responding_teams;
+drop policy if exists admin_all_team_members on public.team_members;
+drop policy if exists admin_all_ambulance_units on public.ambulance_units;
+drop policy if exists lookup_staff_read on public.barangays;
+drop policy if exists stations_staff_read on public.stations;
+drop policy if exists teams_staff_read on public.responding_teams;
+drop policy if exists vehicles_staff_read on public.ambulance_units;
+drop policy if exists team_members_staff_read on public.team_members;
+drop policy if exists admin_all_responses on public.responses;
+drop policy if exists dispatcher_manage_responses on public.responses;
+drop policy if exists field_read_assigned_responses on public.responses;
+drop policy if exists field_update_assigned_responses on public.responses;
+drop policy if exists admin_all_dispatch_forms on public.dispatch_forms;
+drop policy if exists dispatcher_manage_dispatch_forms on public.dispatch_forms;
+drop policy if exists field_read_assigned_dispatch_forms on public.dispatch_forms;
+drop policy if exists dispatch_patients_read_via_dispatch on public.dispatch_patients;
+drop policy if exists dispatch_patients_dispatcher_write on public.dispatch_patients;
+drop policy if exists admin_all_pcr_reports on public.pcr_reports;
+drop policy if exists field_manage_team_pcr_reports on public.pcr_reports;
+drop policy if exists pcr_child_access on public.pcr_vital_signs;
+drop policy if exists pcr_medications_access on public.pcr_medications;
+drop policy if exists pcr_interventions_access on public.pcr_interventions;
+drop policy if exists pcr_attachments_access on public.pcr_attachments;
+drop policy if exists incidents_staff_read on public.incidents;
+drop policy if exists incidents_admin_dispatch_write on public.incidents;
+drop policy if exists incident_media_staff_read on public.incident_media;
+drop policy if exists incident_media_admin_dispatch_write on public.incident_media;
+drop policy if exists admin_all_notifications on public.notifications;
+drop policy if exists notifications_recipient_read on public.notifications;
+drop policy if exists notifications_recipient_update on public.notifications;
+drop policy if exists notification_preferences_self_or_admin on public.notification_preferences;
+drop policy if exists audit_admin_read on public.audit_logs;
+drop policy if exists exports_admin_read on public.data_exports;
+drop policy if exists exports_admin_write on public.data_exports;
+
 create policy profiles_self_or_admin_read on public.profiles for select to authenticated
 using (id = auth.uid() or public.is_admin());
 create policy profiles_admin_write on public.profiles for all to authenticated
@@ -39,6 +82,8 @@ create policy admin_all_stations on public.stations for all to authenticated
 using (public.is_admin()) with check (public.is_admin());
 create policy admin_all_profile_roles on public.profile_roles for all to authenticated
 using (public.is_admin()) with check (public.is_admin());
+create policy profile_roles_self_read on public.profile_roles for select to authenticated
+using (profile_id = auth.uid());
 create policy admin_all_barangays on public.barangays for all to authenticated
 using (public.is_admin()) with check (public.is_admin());
 create policy admin_all_gis_import_batches on public.gis_import_batches for all to authenticated

@@ -40,10 +40,17 @@ function MarkerGlyph({ incident }) {
 }
 
 function PopupContent({ incident }) {
+  const isExternal = incident.sourceKind && incident.sourceKind !== 'official';
+
   return (
     <div className="min-w-48 text-slate-900">
       <div className="font-mono text-xs font-bold text-blue-700 mb-1">{incident.id}</div>
       <div className="text-sm font-semibold capitalize">{incident.type} Incident</div>
+      {isExternal && (
+        <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+          {incident.sourceKind.replaceAll('_', ' ')}
+        </div>
+      )}
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>
       <div className="mt-2 flex items-center gap-2 text-[11px]">
         <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">{incident.severity}</span>
@@ -51,6 +58,9 @@ function PopupContent({ incident }) {
       </div>
       {incident.description && (
         <p className="mt-2 text-xs leading-relaxed text-slate-600">{incident.description}</p>
+      )}
+      {incident.sourceLabel && (
+        <p className="mt-2 text-[11px] text-slate-500">Source: {incident.sourceLabel}</p>
       )}
     </div>
   );

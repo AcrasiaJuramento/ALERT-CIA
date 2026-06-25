@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { LocateFixed, Layers, RefreshCw } from 'lucide-react';
-import { incidents as defaultIncidents, heatmapZones, dangerZones } from '../../data/mockData';
 import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
@@ -103,7 +102,7 @@ function UserLocationLayer({ enabled, followUser }) {
 
 export function LeafletIncidentMap({
   height = '100%',
-  incidents = defaultIncidents,
+  incidents = [],
   selectedIncidentId,
   onMarkerClick,
   showControls = true,
@@ -178,8 +177,8 @@ export function LeafletIncidentMap({
           selectedAdvisoryId={selectedAdvisoryId}
           onAdvisoryClick={onAdvisoryClick}
         />
-        <HeatmapLayer points={heatmapZones} enabled={layers.heatmap} />
-        <HazardZonesLayer zones={dangerZones} enabled={layers.dangerZones} />
+        <HeatmapLayer points={[]} enabled={layers.heatmap} />
+        <HazardZonesLayer zones={[]} enabled={layers.dangerZones} />
         <RouteLayer routes={layers.routes ? routes : []} />
         <UserLocationLayer enabled={layers.locate} followUser={followUser} />
       </MapContainer>

@@ -19,10 +19,14 @@ export default function LoginPage() {
       return;
     }
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1200));
-    setLoading(false);
-    login(form.email);
-    navigate('/admin');
+    try {
+      await login(form.email, form.password);
+      navigate('/admin');
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to sign in.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

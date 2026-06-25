@@ -4,7 +4,7 @@ import {
   AlertTriangle, Activity, CheckCircle2, MapPin, Clock, ChevronRight,
   Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2
 } from 'lucide-react';
-import { incidents } from '../../data/mockData';
+import { listIncidents, listPublicScrapedMapIncidents } from '../../services/supabase';
 import { ADVISORY_EVENT, formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 
@@ -43,15 +43,36 @@ const announcementSeverity = {
 export default function PublicDashboard() {
   const navigate = useNavigate();
   const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
+  const [incidents, setIncidents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
   const resolvedToday = incidents.filter(i => isIncidentCompleted(i.status)).length;
   const criticalCount = incidents.filter(i => i.severity === 'critical').length;
 
   useEffect(() => {
+    let mounted = true;
+    async function loadIncidents() {
+      setLoading(true);
+      setError('');
+      try {
+        const [official, scraped] = await Promise.all([
+          listIncidents({ publicOnly: true, limit: 200 }),
+          listPublicScrapedMapIncidents({ limit: 100 }),
+        ]);
+        if (mounted) setIncidents([...official, ...scraped]);
+      } catch (requestError) {
+        if (mounted) setError(requestError.message || 'Unable to load public incident data.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+    loadIncidents();
     const refreshAdvisories = () => setPublicAdvisories(loadPublishedAdvisories());
     window.addEventListener('storage', refreshAdvisories);
     window.addEventListener(ADVISORY_EVENT, refreshAdvisories);
     return () => {
+      mounted = false;
       window.removeEventListener('storage', refreshAdvisories);
       window.removeEventListener(ADVISORY_EVENT, refreshAdvisories);
     };
@@ -89,7 +110,7 @@ export default function PublicDashboard() {
           {[
             { label: 'Active Incidents', value: activeIncidents.length, icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10', border: 'border-red-100 dark:border-red-500/20' },
             { label: 'Critical Alerts', value: criticalCount, icon: Activity, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10', border: 'border-orange-100 dark:border-orange-500/20' },
-            { label: 'Teams Responding', value: 5, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
+            { label: 'Teams Responding', value: new Set(activeIncidents.map(item => item.assignedTeam).filter(Boolean)).size, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
             { label: 'Completed Today', value: resolvedToday, icon: CheckCircle2, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-100 dark:border-green-500/20' },
           ].map(({ label, value, icon: Icon, color, bg, border }) => (
             <div key={label} className={`p-4 rounded-2xl border ${bg} ${border} transition-colors duration-300`}>
@@ -240,7 +261,7 @@ export default function PublicDashboard() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {activeIncidents.slice(0, 6).map((incident) => {
-              const TypeIcon = typeIcons[incident.type];
+              const TypeIcon = typeIcons[incident.type] || AlertTriangle;
               return (
                 <div
                   key={incident.id}
@@ -272,6 +293,9 @@ export default function PublicDashboard() {
                 </div>
               );
             })}
+            {loading && <div className="col-span-full py-12 text-center text-sm text-muted-foreground">Loading public incidents...</div>}
+            {!loading && error && <div className="col-span-full py-12 text-center text-sm text-red-500">{error}</div>}
+            {!loading && !error && !activeIncidents.length && <div className="col-span-full py-12 text-center text-sm text-muted-foreground">No active public incidents are available.</div>}
           </div>
         </div>
       </div>
