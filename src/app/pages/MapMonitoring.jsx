@@ -192,7 +192,7 @@ export default function MapMonitoring() {
         </div>
 
         {/* Layer Control (top right) */}
-        <div className="absolute top-14 right-14 z-20">
+        <div className="absolute top-14 right-14 z-1001">
           <div className="bg-card/95 border border-border rounded-xl p-3 shadow-lg min-w-36">
             <div className="flex items-center gap-1.5 mb-2">
               <Layers className="w-3.5 h-3.5 text-blue-400" />
