@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Car, Clock, Crosshair, LocateFixed, MapPin,
-  Navigation, RefreshCw, Route, ShieldAlert, X
+  Navigation, RefreshCw, Route, Search, ShieldAlert, X
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
 import {
@@ -18,6 +18,7 @@ const quickDestinations = [
   { label: 'Echague Municipal Hall', latLng: [16.705, 121.676] },
   { label: 'Echague Public Market', latLng: [16.7042, 121.6781] },
   { label: 'MDRRMO Echague', latLng: [16.706, 121.6752] },
+  { label: 'Isabela State University Main Campus', latLng: [16.7138, 121.6823] },
   { label: 'Cagayan Valley Road', latLng: [16.7008, 121.6844] },
 ];
 
@@ -57,8 +58,8 @@ function distanceKm(from, to) {
   return radius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function parsePointInput(value = '') {
-  const quick = quickDestinations.find(item => item.label.toLowerCase() === value.trim().toLowerCase());
+function parsePointInput(value = '', searchOptions = quickDestinations) {
+  const quick = searchOptions.find(item => item.label.toLowerCase() === value.trim().toLowerCase());
   if (quick) return { label: quick.label, latLng: quick.latLng };
 
   const match = value.match(/(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/);
@@ -69,6 +70,36 @@ function parsePointInput(value = '') {
   return { label: value.trim(), latLng: [lat, lng] };
 }
 
+async function searchPlaceInput(value = '') {
+  const query = value.trim();
+  if (!query) return null;
+
+  const searchParams = new URLSearchParams({
+    format: 'jsonv2',
+    limit: '5',
+    countrycodes: 'ph',
+    q: `${query}, Echague, Isabela, Philippines`,
+  });
+  const response = await fetch(`https://nominatim.openstreetmap.org/search?${searchParams.toString()}`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error('Place search is unavailable.');
+
+  const results = await response.json();
+  const candidates = (Array.isArray(results) ? results : [])
+    .map(item => ({
+      label: item.name || item.display_name?.split(',')[0] || query,
+      latLng: [Number(item.lat), Number(item.lon)],
+      distance: distanceKm(ECHAGUE_CENTER, [Number(item.lat), Number(item.lon)]),
+    }))
+    .filter(item => item.latLng.every(Number.isFinite))
+    .sort((first, second) => first.distance - second.distance);
+
+  const best = candidates[0];
+  if (!best || best.distance > 25) return null;
+  return { label: best.label, latLng: best.latLng };
+}
+
 function nearestPointDistanceKm(point, routePoints = []) {
   if (!routePoints.length) return Infinity;
   return Math.min(...routePoints.map(routePoint => distanceKm(point, routePoint)));
@@ -77,6 +108,23 @@ function nearestPointDistanceKm(point, routePoints = []) {
 function formatDistance(km) {
   if (!Number.isFinite(km)) return '-';
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
+function describePinnedLocation(latLng, kind, searchOptions = []) {
+  const nearby = searchOptions
+    .map(item => ({ ...item, distance: distanceKm(latLng, item.latLng) }))
+    .filter(item => Number.isFinite(item.distance))
+    .sort((first, second) => first.distance - second.distance)[0];
+
+  if (nearby?.distance <= 0.35) {
+    return `${kind === 'start' ? 'Start' : 'Destination'} near ${nearby.label}`;
+  }
+
+  if (nearby?.distance <= 1.5) {
+    return `${kind === 'start' ? 'Start' : 'Destination'} around ${nearby.label}`;
+  }
+
+  return kind === 'start' ? 'Pinned start location' : 'Pinned destination';
 }
 
 function fallbackRoute(start, destination) {
@@ -260,6 +308,23 @@ export default function PublicMap() {
     () => buildRouteAlerts({ incidents: activeIncidents, hazardZones, routePoints, currentLocation }),
     [activeIncidents, currentLocation, hazardZones, routePoints]
   );
+  const searchableLocations = useMemo(() => {
+    const options = [
+      ...quickDestinations.map(item => ({ ...item, type: 'Place' })),
+      ...activeIncidents.map(item => ({
+        label: item.location ? `${item.title || item.type} - ${item.location}` : item.title || `${item.type || 'Incident'} alert`,
+        latLng: getIncidentLatLng(item),
+        type: 'Alert',
+      })),
+      ...hazardZones.map(zone => ({
+        label: zone.label || `${zone.type || 'Hazard'} zone`,
+        latLng: getZoneLatLng(zone),
+        type: 'Hazard',
+      })),
+    ].filter(item => item.label && item.latLng?.every(Number.isFinite));
+
+    return [...new Map(options.map(item => [item.label.toLowerCase(), item])).values()];
+  }, [activeIncidents, hazardZones]);
   const nearestRisks = useMemo(
     () => [...activeIncidents]
       .map(item => ({ ...item, distance: distanceKm(currentLocation || ECHAGUE_CENTER, getIncidentLatLng(item)) }))
@@ -277,14 +342,35 @@ export default function PublicMap() {
       }]
     : [];
 
-  const setPointFromInput = (kind) => {
-    const parsed = parsePointInput(kind === 'start' ? startInput : destinationInput);
+  const setPointFromInput = async (kind) => {
+    const inputValue = kind === 'start' ? startInput : destinationInput;
+    const existingPoint = kind === 'start' ? start : destination;
+    let parsed = existingPoint?.label === inputValue.trim()
+      ? existingPoint
+      : parsePointInput(inputValue, searchableLocations);
+
+    if (!parsed && inputValue.trim()) {
+      setRouteError('Searching for that location...');
+      try {
+        parsed = await searchPlaceInput(inputValue);
+      } catch (searchError) {
+        setRouteError(searchError.message || 'Place search is unavailable. Use Pin to choose the place on the map.');
+        return;
+      }
+    }
+
     if (!parsed) {
-      setRouteError('Enter coordinates as "16.705, 121.676" or choose a quick destination.');
+      setRouteError('Location not found. Try a nearby landmark, or use Pin to choose the place on the map.');
       return;
     }
-    if (kind === 'start') setStart(parsed);
-    else setDestination(parsed);
+    if (kind === 'start') {
+      setStart(parsed);
+      setStartInput(parsed.label);
+    } else {
+      setDestination(parsed);
+      setDestinationInput(parsed.label);
+    }
+    setRouteError('');
   };
 
   const useGpsStart = () => {
@@ -299,13 +385,15 @@ export default function PublicMap() {
 
   const handleMapClick = (latlng) => {
     if (!pinMode) return;
-    const point = { label: pinMode === 'start' ? 'Pinned Point A' : 'Pinned Point B', latLng: [latlng.lat, latlng.lng] };
+    const latLng = [latlng.lat, latlng.lng];
+    const label = describePinnedLocation(latLng, pinMode, searchableLocations);
+    const point = { label, latLng };
     if (pinMode === 'start') {
       setStart(point);
-      setStartInput(`${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`);
+      setStartInput(label);
     } else {
       setDestination(point);
-      setDestinationInput(`${latlng.lat.toFixed(6)}, ${latlng.lng.toFixed(6)}`);
+      setDestinationInput(label);
     }
     setPinMode(null);
     setRouteError('');
@@ -323,11 +411,11 @@ export default function PublicMap() {
   const approachingAlert = routeAlerts.find(alert => alert.approach <= 0.35);
 
   return (
-    <div className="min-h-screen bg-background" style={{ fontFamily: 'Inter, sans-serif' }}>
-      <div className="grid min-h-screen lg:grid-cols-[1fr_390px]">
-        <main className="relative min-h-[72vh] lg:min-h-screen">
+    <div className="min-h-[calc(100vh-4rem)] bg-background" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[minmax(0,1fr)_360px]">
+        <main className="relative h-[calc(100vh-4rem)] min-h-[620px] overflow-hidden">
           <LeafletIncidentMap
-            height="100vh"
+            height="100%"
             incidents={incidents}
             hazardZones={hazardZones}
             routes={route}
@@ -344,67 +432,13 @@ export default function PublicMap() {
             showDangerZones
             clusterMarkers={false}
             autoFit={!route.length && !selectedIncidentId}
+            compact
           />
 
-          <div className="absolute left-4 top-4 z-[500] w-[min(calc(100%-2rem),430px)] rounded-xl border border-border bg-card/95 p-4 shadow-lg backdrop-blur">
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Navigation className="h-4 w-4 text-blue-500" />
-                <h1 className="text-sm font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Live Safety Navigation</h1>
-              </div>
-              <button onClick={loadMap} className="grid h-8 w-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-secondary" title="Refresh alerts">
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-2">
-              <RouteInput
-                label="Point A"
-                value={startInput}
-                placeholder="Start or lat,lng"
-                onChange={setStartInput}
-                onApply={() => setPointFromInput('start')}
-                onPin={() => setPinMode(pinMode === 'start' ? null : 'start')}
-                active={pinMode === 'start'}
-              />
-              <RouteInput
-                label="Point B"
-                value={destinationInput}
-                placeholder="Destination or lat,lng"
-                onChange={setDestinationInput}
-                onApply={() => setPointFromInput('destination')}
-                onPin={() => setPinMode(pinMode === 'destination' ? null : 'destination')}
-                active={pinMode === 'destination'}
-              />
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button onClick={useGpsStart} className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
-                <LocateFixed className="h-3.5 w-3.5" />
-                Use GPS start
-              </button>
-              <button onClick={clearRoute} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground">
-                <X className="h-3.5 w-3.5" />
-                Clear route
-              </button>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-1.5">
-              {quickDestinations.map(item => (
-                <button
-                  key={item.label}
-                  onClick={() => {
-                    setDestination(item);
-                    setDestinationInput(item.label);
-                  }}
-                  className="rounded-full border border-border bg-background/80 px-2.5 py-1 text-[10px] text-muted-foreground hover:bg-secondary hover:text-foreground"
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-            {pinMode && <p className="mt-2 text-[11px] font-medium text-blue-500">Tap the map to set {pinMode === 'start' ? 'Point A' : 'Point B'}.</p>}
-            {routeError && <p className="mt-2 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-[11px] text-orange-500">{routeError}</p>}
+          <div className="absolute left-3 top-3 z-[500] md:left-4">
+            <button onClick={loadMap} className="grid h-10 w-10 place-items-center rounded-lg border border-border bg-card/95 text-muted-foreground shadow-lg backdrop-blur hover:bg-secondary" title="Refresh alerts">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
 
           {approachingAlert && (
@@ -419,26 +453,10 @@ export default function PublicMap() {
             </div>
           )}
 
-          <div className="absolute bottom-5 left-4 right-4 z-[500] rounded-xl border border-border bg-card/95 p-4 shadow-lg backdrop-blur lg:right-auto lg:w-[460px]">
-            <div className="flex items-start gap-3">
-              <ShieldAlert className={`mt-0.5 h-5 w-5 ${routeAlerts.some(alert => alert.severity === 'critical') ? 'text-red-500' : 'text-blue-500'}`} />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold text-foreground">
-                  {routePlan ? `${routePlan.provider}: ${formatDistance(routePlan.distanceKm)}` : selectedIncident?.title || 'Plan a safe route'}
-                </div>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {routePlan
-                    ? `${routePlan.durationMinutes} min estimate. ${routeAlerts.length} safety alert${routeAlerts.length === 1 ? '' : 's'} near this route.`
-                    : 'Set Point A and Point B, or pin them on the map, to generate safety-aware route guidance.'}
-                </p>
-                {routeLoading && <p className="mt-1 text-[11px] text-blue-500">Generating route...</p>}
-              </div>
-            </div>
-          </div>
         </main>
 
-        <aside className="border-l border-border bg-card">
-          <div className="border-b border-border p-5">
+        <aside className="border-l border-border bg-card lg:h-[calc(100vh-4rem)] lg:overflow-y-auto">
+          <div className="border-b border-border p-4">
             <div className="flex items-center gap-2">
               <Car className="h-4 w-4 text-blue-500" />
               <h2 className="text-sm font-bold text-foreground">Route Guidance</h2>
@@ -446,6 +464,31 @@ export default function PublicMap() {
             <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {hazardZones.length} hazard zones</p>
             {error && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">{error}</div>}
           </div>
+
+          <RoutePlanner
+            startInput={startInput}
+            destinationInput={destinationInput}
+            onStartChange={setStartInput}
+            onDestinationChange={setDestinationInput}
+            onSetStart={() => setPointFromInput('start')}
+            onSetDestination={() => setPointFromInput('destination')}
+            onUseGpsStart={useGpsStart}
+            onClearRoute={clearRoute}
+            onPinStart={() => setPinMode(pinMode === 'start' ? null : 'start')}
+            onPinDestination={() => setPinMode(pinMode === 'destination' ? null : 'destination')}
+            pinMode={pinMode}
+            routeError={routeError}
+            routeLoading={routeLoading}
+            routePlan={routePlan}
+            routeAlerts={routeAlerts}
+            selectedIncident={selectedIncident}
+            searchOptions={searchableLocations}
+            onQuickDestination={(item) => {
+              setDestination(item);
+              setDestinationInput(item.label);
+              setRouteError('');
+            }}
+          />
 
           <div className="grid grid-cols-3 gap-2 border-b border-border p-4">
             <Metric label="Critical" value={routeAlerts.filter(item => item.severity === 'critical').length} />
@@ -501,23 +544,147 @@ export default function PublicMap() {
   );
 }
 
-function RouteInput({ label, value, placeholder, onChange, onApply, onPin, active }) {
+function RoutePlanner({
+  startInput,
+  destinationInput,
+  onStartChange,
+  onDestinationChange,
+  onSetStart,
+  onSetDestination,
+  onUseGpsStart,
+  onClearRoute,
+  onPinStart,
+  onPinDestination,
+  pinMode,
+  routeError,
+  routeLoading,
+  routePlan,
+  routeAlerts,
+  selectedIncident,
+  searchOptions,
+  onQuickDestination,
+}) {
   return (
-    <div className="grid grid-cols-[58px_1fr_auto_auto] items-center gap-2">
-      <span className="text-xs font-bold text-muted-foreground">{label}</span>
-      <input
-        value={value}
-        onChange={event => onChange(event.target.value)}
-        placeholder={placeholder}
-        className="min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-xs text-foreground outline-none focus:border-blue-500"
-        list="live-map-destinations"
-      />
-      <button onClick={onApply} className="rounded-lg bg-secondary px-2.5 py-2 text-[10px] font-semibold text-foreground hover:bg-secondary/80">Set</button>
-      <button onClick={onPin} className={`grid h-8 w-8 place-items-center rounded-lg border ${active ? 'border-blue-500 bg-blue-600 text-white' : 'border-border text-muted-foreground hover:bg-secondary'}`} title={`Pin ${label} on map`}>
-        <Crosshair className="h-3.5 w-3.5" />
-      </button>
-      <datalist id="live-map-destinations">
-        {quickDestinations.map(item => <option key={item.label} value={item.label} />)}
+    <section className="border-b border-border p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Navigation className="h-4 w-4 text-blue-500" />
+          <h3 className="text-sm font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Live Safety Navigation</h3>
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <RouteInput
+          id="public-map-start-search"
+          label="Point A"
+          value={startInput}
+          placeholder="Search start location"
+          onChange={onStartChange}
+          onApply={onSetStart}
+          onPin={onPinStart}
+          active={pinMode === 'start'}
+          searchOptions={searchOptions}
+        />
+        <RouteInput
+          id="public-map-destination-search"
+          label="Point B"
+          value={destinationInput}
+          placeholder="Search destination"
+          onChange={onDestinationChange}
+          onApply={onSetDestination}
+          onPin={onPinDestination}
+          active={pinMode === 'destination'}
+          searchOptions={searchOptions}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button onClick={onUseGpsStart} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">
+          <LocateFixed className="h-3.5 w-3.5" />
+          Use GPS
+        </button>
+        <button onClick={onClearRoute} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground">
+          <X className="h-3.5 w-3.5" />
+          Clear
+        </button>
+      </div>
+
+      <div className="mt-3 grid gap-1.5">
+        {quickDestinations.map(item => (
+          <button
+            key={item.label}
+            onClick={() => onQuickDestination(item)}
+            className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-left text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
+          >
+            <span className="truncate">{item.label}</span>
+            <MapPin className="h-3.5 w-3.5 shrink-0" />
+          </button>
+        ))}
+      </div>
+
+      {pinMode && (
+        <div className="mt-3 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-medium text-blue-600 dark:text-blue-300">
+          Tap the map to pin {pinMode === 'start' ? 'Point A' : 'Point B'}.
+        </div>
+      )}
+      {routeError && <p className="mt-3 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-xs text-orange-500">{routeError}</p>}
+
+      <div className="mt-4 rounded-lg border border-border bg-background/60 p-3">
+        <div className="flex items-start gap-3">
+          <ShieldAlert className={`mt-0.5 h-5 w-5 ${routeAlerts.some(alert => alert.severity === 'critical') ? 'text-red-500' : 'text-blue-500'}`} />
+          <div className="min-w-0 flex-1">
+            <div className="text-xs font-bold text-foreground">
+              {routePlan ? `${routePlan.provider}: ${formatDistance(routePlan.distanceKm)}` : selectedIncident?.title || 'Plan a safe route'}
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              {routePlan
+                ? `${routePlan.durationMinutes} min estimate. ${routeAlerts.length} safety alert${routeAlerts.length === 1 ? '' : 's'} near this route.`
+                : 'Search by place name, choose a suggestion, use GPS, or pin Point A and Point B on the map.'}
+            </p>
+            {routeLoading && (
+              <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-medium text-blue-500">
+                <Clock className="h-3.5 w-3.5 animate-pulse" />
+                Generating route
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function RouteInput({ id, label, value, placeholder, onChange, onApply, onPin, active, searchOptions }) {
+  const listId = `${id}-options`;
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor={id} className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{label}</label>
+        <button onClick={onPin} className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-semibold ${active ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:bg-secondary hover:text-foreground'}`} title={`Pin ${label} on map`}>
+          <Crosshair className="h-3.5 w-3.5" />
+          Pin
+        </button>
+      </div>
+      <div className="flex gap-2">
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <input
+            id={id}
+            value={value}
+            onChange={event => onChange(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') onApply();
+            }}
+            placeholder={placeholder}
+            className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-8 pr-3 text-xs text-foreground outline-none focus:border-blue-500"
+            list={listId}
+          />
+        </div>
+        <button onClick={onApply} className="h-10 rounded-lg bg-secondary px-3 text-xs font-semibold text-foreground hover:bg-secondary/80">Set</button>
+      </div>
+      <datalist id={listId}>
+        {searchOptions.map(item => <option key={`${id}-${item.label}`} value={item.label} label={item.type} />)}
       </datalist>
     </div>
   );
@@ -525,7 +692,7 @@ function RouteInput({ label, value, placeholder, onChange, onApply, onPin, activ
 
 function Metric({ label, value }) {
   return (
-    <div className="rounded-lg border border-border bg-background/50 p-3 text-center">
+    <div className="rounded-lg border border-border bg-background/50 px-2 py-3 text-center">
       <div className="text-lg font-bold text-foreground">{value}</div>
       <div className="text-[10px] text-muted-foreground">{label}</div>
     </div>
@@ -534,7 +701,7 @@ function Metric({ label, value }) {
 
 function Panel({ title, children }) {
   return (
-    <section className="border-b border-border p-4">
+    <section className="border-b border-border p-4 last:border-b-0">
       <div className="mb-3 flex items-center gap-2">
         <Route className="h-3.5 w-3.5 text-blue-500" />
         <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{title}</h3>

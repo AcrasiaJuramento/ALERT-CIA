@@ -263,13 +263,13 @@ export function LeafletIncidentMap({
         </div>
       )}
 
-      <div className="absolute bottom-3 left-3 z-[500] rounded-lg border border-border bg-card/95 px-3 py-2 text-xs shadow-lg backdrop-blur">
+      {!compact && <div className="absolute bottom-3 left-3 z-[500] rounded-lg border border-border bg-card/95 px-3 py-2 text-xs shadow-lg backdrop-blur">
         <div className="flex items-center gap-2 text-foreground">
           <span className="h-2 w-2 rounded-full bg-red-500" />
           <span className="font-semibold">{activeIncidents.length}</span>
           <span className="text-muted-foreground">active incidents</span>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router';
+import { Outlet, NavLink, useLocation, useNavigate } from 'react-router';
 import { Siren, Menu, X, MapPin, List, Home, AlertTriangle, PhoneCall, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAccessibility } from '../contexts/AccessibilityContext';
@@ -8,8 +8,10 @@ import AccessibilityPanel, { AccessibilityButton } from './AccessibilityPanel';
 export default function PublicLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { isDarkMode, toggleDarkMode } = useTheme();
   const { currentZoom, togglePanel } = useAccessibility();
+  const isPublicMap = location.pathname === '/public/map';
 
   // Alt+A global keyboard shortcut
   useEffect(() => {
@@ -181,22 +183,22 @@ export default function PublicLayout() {
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 bg-secondary border-t border-border text-muted-foreground py-6 mt-8 transition-colors duration-300">
+      {!isPublicMap && <footer className="relative z-10 bg-secondary border-t border-border text-muted-foreground py-6 mt-8 transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 bg-red-600 rounded flex items-center justify-center">
               <Siren className="w-3.5 h-3.5 text-white" />
             </div>
-            <span className="text-sm">ALERT-CIA © 2024 MDRRMO Echague. All rights reserved.</span>
+            <span className="text-sm">ALERT-CIA Copyright 2024 MDRRMO Echague. All rights reserved.</span>
           </div>
           <div className="flex items-center gap-1 text-sm">
             <AlertTriangle className="w-4 h-4 text-red-400" />
             <span>Emergency Hotline: <strong className="text-foreground">911</strong> | Echague, Isabela</span>
           </div>
         </div>
-      </footer>
+      </footer>}
 
-      {/* Accessibility Panel — portalled to document.body, unaffected by zoom */}
+      {/* Accessibility Panel - portalled to document.body, unaffected by zoom */}
       <AccessibilityPanel />
     </div>
   );
