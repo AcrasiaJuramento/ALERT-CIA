@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle, Flame, Droplets, Car, Heart, Shield,
-  ChevronDown, Layers, RefreshCw, ChevronRight, Clock, Database, FileText, Radio, Zap
+  Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
+  RefreshCw, ChevronRight, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
@@ -38,21 +38,6 @@ const sourceFilters = [
   { key: 'scraper', label: 'Scraper', icon: Radio },
 ];
 
-const mapLayerOptions = [
-  { key: 'incidents', label: 'Accident Hotspot', icon: AlertTriangle, color: 'text-red-500' },
-  { key: 'dangerZones', label: 'Flood Risk Area', icon: Droplets, color: 'text-blue-500' },
-  { key: 'advisories', label: 'Traffic Hazard', icon: Car, color: 'text-yellow-500' },
-  { key: 'heatmap', label: 'Heatmap', icon: Zap, color: 'text-orange-500' },
-];
-
-const layerToggleOptions = [
-  ['incidents', 'Incidents'],
-  ['advisories', 'Advisories'],
-  ['heatmap', 'Heatmap'],
-  ['dangerZones', 'Geofences'],
-  ['routes', 'Routes'],
-];
-
 function getSourceGroup(incident) {
   if (incident.sourceKind === 'pcr_report') return 'pcr_report';
   if (String(incident.sourceKind || '').includes('scraped')) return 'scraper';
@@ -63,6 +48,7 @@ function hasMapCoordinates(incident) {
   return Number.isFinite(Number(incident?.lat)) && Number.isFinite(Number(incident?.lng));
 }
 
+<<<<<<< Updated upstream
 function isAccidentRecord(record = {}) {
   const values = [
     record.type,
@@ -99,22 +85,15 @@ function mergeMapRecords(records = []) {
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 
+=======
+>>>>>>> Stashed changes
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
   const [selectedIncident, setSelectedIncident] = useState(null);
+  const [activeLayer, setActiveLayer] = useState(null);
   const [activeSource, setActiveSource] = useState('all');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const [layersOpen, setLayersOpen] = useState(false);
-  const [mapLayerMenuOpen, setMapLayerMenuOpen] = useState(false);
-  const [mapLayers, setMapLayers] = useState({
-    incidents: true,
-    advisories: true,
-    heatmap: true,
-    dangerZones: true,
-    routes: true,
-  });
   const [incidents, setIncidents] = useState([]);
   const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
@@ -123,7 +102,6 @@ export default function MapMonitoring() {
   const [scraperRefreshing, setScraperRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
-
 
   useEffect(() => {
     let mounted = true;
@@ -203,37 +181,19 @@ export default function MapMonitoring() {
     }
   };
 
-  const mapIncidents = useMemo(() => {
-      const officialVehicular = incidents.filter(isAccidentRecord);
-
-      const pcrVehicular = pcrIncidents.filter(isAccidentRecord);
-
-      const scrapedVehicular = scrapedIncidents.filter(isAccidentRecord);
-
-      return mergeMapRecords([
-        ...officialVehicular,
-        ...pcrVehicular,
-        ...scrapedVehicular,
-      ])
-        .filter(hasMapCoordinates)
-        .filter(item =>
-          activeSource === 'all' ||
-          getSourceGroup(item) === activeSource
-        );
-    }, [activeSource, incidents, pcrIncidents, scrapedIncidents]);
+  const mapIncidents = useMemo(
+    () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
+      .filter(hasMapCoordinates)
+      .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource),
+    [activeSource, incidents, pcrIncidents, scrapedIncidents]
+  );
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
   const sourceCounts = {
-    all:
-      incidents.filter(isAccidentRecord).length +
-      pcrIncidents.filter(isAccidentRecord).length +
-      scrapedIncidents.filter(isAccidentRecord).length,
-
-    official: incidents.filter(isAccidentRecord).length,
-
-    pcr_report: pcrIncidents.filter(isAccidentRecord).length,
-
-    scraper: scrapedIncidents.filter(isAccidentRecord).length,
+    all: incidents.length + pcrIncidents.length + scrapedIncidents.length,
+    official: incidents.length,
+    pcr_report: pcrIncidents.length,
+    scraper: scrapedIncidents.length,
   };
 
   return (
@@ -248,133 +208,56 @@ export default function MapMonitoring() {
           showDangerZones={true}
           onMarkerClick={(id) => setSelectedIncident(id)}
           selectedIncidentId={selectedIncident || undefined}
-          externalLayers={mapLayers}
-          onExternalLayersChange={setMapLayers}
-          hideLayerControl
         />
 
-        {/* Operations toolbar */}
-        <div className="absolute left-4 right-4 top-3 z-1001 flex items-start justify-between gap-3">
-          <div className="flex h-10 min-w-36 items-center gap-2 rounded-lg border border-slate-300 bg-white/95 px-3 text-slate-900 shadow-lg backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/95 dark:text-slate-100">
-            <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-            <div className="min-w-0 leading-tight">
-              <div className="text-[11px] font-bold uppercase">Operations Map</div>
-              <div className="truncate text-[10px] text-slate-500 dark:text-slate-300">Echague, Isabela</div>
-            </div>
+        {/* Top overlay bar */}
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-1001">
+          <div className="flex items-center gap-2 bg-card/95 border border-border rounded-xl px-4 py-2 shadow-lg">
+            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-xs text-foreground font-semibold">OPERATIONS MAP MONITOR</span>
+            <span className="text-[10px] text-muted-foreground">Echague, Isabela</span>
           </div>
+          <button
+            onClick={() => setReloadKey(key => key + 1)}
+            className="flex items-center gap-1.5 bg-card/95 border border-border rounded-xl px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-all shadow-lg"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            Refresh
+          </button>
+          <button
+            onClick={refreshScraperData}
+            disabled={scraperRefreshing}
+            className="flex items-center gap-1.5 bg-blue-600/95 border border-blue-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${scraperRefreshing ? 'animate-spin' : ''}`} />
+            {scraperRefreshing ? 'Fetching...' : 'Fetch latest incidents'}
+          </button>
+        </div>
 
-          <div className="flex flex-wrap items-start justify-center gap-3">
-            <div className="relative">
-              <button
-                onClick={() => {
-                  setLayersOpen(current => !current);
-                  setActionsOpen(false);
-                  setMapLayerMenuOpen(false);
-                }}
-                className="flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/95 px-3 text-[12px] font-semibold text-slate-700 shadow-lg backdrop-blur transition-all hover:bg-slate-100 hover:text-slate-950 dark:border-slate-700/70 dark:bg-slate-900/95 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                title="Layers"
-              >
-                <Layers className="h-3.5 w-3.5 text-blue-400" />
-                Layers
-                <ChevronDown className={`h-3.5 w-3.5 text-slate-600 transition-transform dark:text-slate-100 ${layersOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {layersOpen && (
-                <div className="absolute left-0 mt-2 w-40 rounded-xl border border-slate-300 bg-white/95 p-2 text-slate-700 shadow-2xl backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/95 dark:text-slate-200">
-                  <div className="mb-1 flex items-center gap-1.5 px-1 text-[12px] font-semibold text-slate-500 dark:text-slate-400">
-                    <Layers className="h-3.5 w-3.5 text-blue-400" />
-                    Layers
-                  </div>
-                  {layerToggleOptions.map(([key, label]) => (
-                    <label key={key} className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-1.5 text-lg font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white">
-                      <input
-                        type="checkbox"
-                        checked={mapLayers[key]}
-                        onChange={(event) => setMapLayers(current => ({ ...current, [key]: event.target.checked }))}
-                        className="h-4 w-4 rounded accent-blue-500"
-                      />
-                      <span>{label}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
+        {/* Layer Control (top right) */}
+        <div className="absolute top-14 right-14 z-1001">
+          <div className="bg-card/95 border border-border rounded-xl p-3 shadow-lg min-w-36">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Layers className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase">Map Layers</span>
             </div>
-
-            <div className="relative">
+            {[
+              { key: 'hotspot', label: 'Accident Hotspot', color: 'text-red-400', icon: AlertTriangle },
+              { key: 'flood', label: 'Flood Risk Area', color: 'text-blue-400', icon: Droplets },
+              { key: 'traffic', label: 'Traffic Hazard', color: 'text-yellow-400', icon: Car },
+              { key: 'heatmap', label: 'Heatmap', color: 'text-orange-400', icon: Zap },
+            ].map(({ key, label, color, icon: Icon }) => (
               <button
-                onClick={() => {
-                  setActionsOpen(current => !current);
-                  setLayersOpen(false);
-                  setMapLayerMenuOpen(false);
-                }}
-                className="flex h-10 items-center gap-1.5 rounded-lg border border-blue-400/40 bg-blue-600/95 px-4 text-[12px] font-semibold text-white shadow-lg transition-all hover:bg-blue-700 dark:border-blue-400/50 dark:bg-blue-600/95 dark:hover:bg-blue-500"
-                title="Refresh"
+                key={key}
+                onClick={() => setActiveLayer(activeLayer === key ? null : key)}
+                className={`flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-[10px] transition-all mb-0.5 ${
+                  activeLayer === key ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-secondary'
+                }`}
               >
-                <RefreshCw className={`w-3.5 h-3.5 text-white ${scraperRefreshing ? 'animate-spin' : ''}`} />
-                Refresh
-                <ChevronDown className={`h-3.5 w-3.5 text-white transition-transform ${actionsOpen ? 'rotate-180' : ''}`} />
+                <Icon className={`w-3 h-3 ${color}`} />
+                <span className="text-foreground/80">{label}</span>
               </button>
-              {actionsOpen && (
-                <div className="absolute left-1/2 mt-2 w-48 -translate-x-1/2 overflow-hidden rounded-xl border border-slate-300 bg-white/95 p-3 text-slate-700 shadow-2xl backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/95 dark:text-slate-200">
-                  <button
-                    onClick={() => {
-                      setReloadKey(key => key + 1);
-                      setActionsOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-lg font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                  >
-                    <RefreshCw className="h-4 w-4" />
-                    Refresh map
-                  </button>
-                  <button
-                    onClick={() => {
-                      refreshScraperData();
-                      setActionsOpen(false);
-                    }}
-                    disabled={scraperRefreshing}
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-lg font-semibold text-blue-300 hover:bg-blue-600/20 hover:text-blue-100 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <RefreshCw className={`h-4 w-4 ${scraperRefreshing ? 'animate-spin' : ''}`} />
-                    {scraperRefreshing ? 'Fetching latest' : 'Fetch latest'}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                onClick={() => {
-                  setMapLayerMenuOpen(current => !current);
-                  setActionsOpen(false);
-                  setLayersOpen(false);
-                }}
-                className="flex h-10 items-center gap-1.5 rounded-lg border border-slate-300 bg-white/95 px-3 text-[10px] font-bold uppercase tracking-wide text-slate-700 shadow-lg backdrop-blur transition-all hover:bg-slate-100 hover:text-slate-950 dark:border-slate-700/70 dark:bg-slate-900/95 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-                title="Map layers"
-              >
-                <Layers className="h-3.5 w-3.5 text-blue-400" />
-                Map Layers
-                <ChevronDown className={`h-3.5 w-3.5 text-slate-600 transition-transform dark:text-slate-100 ${mapLayerMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {mapLayerMenuOpen && (
-                <div className="absolute right-0 mt-2 w-44 rounded-xl border border-slate-300 bg-white/95 p-3 text-xs text-slate-700 shadow-2xl backdrop-blur dark:border-slate-700/70 dark:bg-slate-900/95 dark:text-slate-200">
-                  <div className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    <Layers className="h-3.5 w-3.5 text-blue-400" />
-                    Map Layers
-                  </div>
-                  {mapLayerOptions.map(({ key, label, icon: Icon, color }) => (
-                    <button
-                      key={key}
-                      onClick={() => setMapLayers(current => ({ ...current, [key]: !current[key] }))}
-                      className={`flex w-full items-center gap-2 rounded-lg px-1.5 py-2 text-left font-semibold transition-all ${
-                        mapLayers[key] ? 'text-slate-900 dark:text-slate-100' : 'text-slate-400 dark:text-slate-500'
-                      } hover:bg-slate-100 hover:text-slate-950 dark:hover:bg-slate-800 dark:hover:text-white`}
-                    >
-                      <Icon className={`h-3.5 w-3.5 ${color}`} />
-                      <span className="flex-1">{label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            ))}
           </div>
         </div>
 
@@ -405,7 +288,7 @@ export default function MapMonitoring() {
                   onClick={() => setSelectedIncident(null)}
                   className="text-muted-foreground hover:text-foreground text-lg leading-none"
                 >
-                  x
+                  ×
                 </button>
               </div>
               <p className="text-xs text-muted-foreground mb-3">{selectedInc.description}</p>
@@ -434,7 +317,7 @@ export default function MapMonitoring() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className={`text-xs font-semibold ${statusColors[selectedInc.status]}`}>
-                    Status: {getIncidentStatusLabel(selectedInc.status).toUpperCase()}
+                    ● {getIncidentStatusLabel(selectedInc.status).toUpperCase()}
                   </span>
                   <span className="text-xs text-muted-foreground">{selectedInc.assignedTeam}</span>
                 </div>
@@ -458,13 +341,12 @@ export default function MapMonitoring() {
       {/* Right Incidents Panel */}
       <div
         className={`shrink-0 bg-card border-l border-border flex flex-col transition-all duration-300 overflow-hidden ${
-          incidentPanelOpen ? 'w-80' : 'w-10'
+          incidentPanelOpen ? 'w-72' : 'w-10'
         }`}
       >
         <button
           onClick={() => setIncidentPanelOpen(!incidentPanelOpen)}
-          className="w-full h-9 flex items-center justify-center border-b border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-all shrink-0"
-          title={incidentPanelOpen ? 'Collapse records panel' : 'Open records panel'}
+          className="w-full h-10 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all shrink-0"
         >
           {incidentPanelOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 rotate-180" />}
         </button>
@@ -477,23 +359,6 @@ export default function MapMonitoring() {
                 <span className="text-sm font-semibold text-foreground">Operational Records</span>
               </div>
               <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
-              <div className="mt-3 flex gap-1.5 overflow-x-auto pb-1">
-                {sourceFilters.map(({ key, label, icon: Icon }) => (
-                  <button
-                    key={key}
-                    onClick={() => setActiveSource(key)}
-                    className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-all ${
-                      activeSource === key
-                        ? 'border-blue-500/40 bg-blue-600/15 text-blue-500'
-                        : 'border-border bg-background/60 text-muted-foreground hover:bg-secondary hover:text-foreground'
-                    }`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    {label}
-                    <span className="text-[9px] opacity-70">{sourceCounts[key]}</span>
-                  </button>
-                ))}
-              </div>
               {loading && <p className="mt-1 text-[10px] text-muted-foreground">Loading map records...</p>}
               {scraperMessage && <p className="mt-1 text-[10px] text-green-400">{scraperMessage}</p>}
               {scraperError && <p className="mt-1 text-[10px] text-orange-400">{scraperError}</p>}
