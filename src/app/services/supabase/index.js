@@ -3,6 +3,7 @@ export * from "./auditService";
 export * from "./cacheService";
 export * from "./dispatchService";
 export * from "./errors";
+export * from "./hazardService";
 export * from "./incidentService";
 export * from "./notificationService";
 export * from "./pcrService";

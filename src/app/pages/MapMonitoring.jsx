@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
-  RefreshCw, ChevronRight, MapPin, Zap
+  RefreshCw, ChevronRight, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { listIncidents, listOfficerScrapedMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
+import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 
 const severityBadge = {
@@ -31,13 +31,32 @@ const typeIcons = {
   other: AlertTriangle,
 };
 
+const sourceFilters = [
+  { key: 'all', label: 'All sources', icon: Database },
+  { key: 'official', label: 'Official', icon: Shield },
+  { key: 'pcr_report', label: 'PCR', icon: FileText },
+  { key: 'scraper', label: 'Scraper', icon: Radio },
+];
+
+function getSourceGroup(incident) {
+  if (incident.sourceKind === 'pcr_report') return 'pcr_report';
+  if (String(incident.sourceKind || '').includes('scraped')) return 'scraper';
+  return 'official';
+}
+
+function hasMapCoordinates(incident) {
+  return Number.isFinite(Number(incident?.lat)) && Number.isFinite(Number(incident?.lng));
+}
+
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [activeLayer, setActiveLayer] = useState(null);
+  const [activeSource, setActiveSource] = useState('all');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
   const [incidents, setIncidents] = useState([]);
+  const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
   const [scraperError, setScraperError] = useState('');
   const [scraperMessage, setScraperMessage] = useState('');
@@ -51,13 +70,15 @@ export default function MapMonitoring() {
     async function loadMapData() {
       setLoading(true);
       try {
-        const [officialRecords, scrapedRecords] = await Promise.all([
+        const [officialRecords, scrapedRecords, pcrRecords] = await Promise.all([
           listIncidents({ limit: 500 }),
           listOfficerScrapedMapIncidents(),
+          listPCRMapIncidents({ limit: 200 }),
         ]);
         if (mounted) {
           setIncidents(officialRecords);
           setScrapedIncidents(scrapedRecords);
+          setPcrIncidents(pcrRecords);
           setScraperError('');
         }
       } catch (error) {
@@ -81,6 +102,16 @@ export default function MapMonitoring() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'scraper_records' },
+        () => setReloadKey(key => key + 1),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'incidents' },
+        () => setReloadKey(key => key + 1),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pcr_reports' },
         () => setReloadKey(key => key + 1),
       )
       .subscribe();
@@ -107,9 +138,20 @@ export default function MapMonitoring() {
     }
   };
 
-  const mapIncidents = useMemo(() => [...incidents, ...scrapedIncidents], [scrapedIncidents]);
+  const mapIncidents = useMemo(
+    () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
+      .filter(hasMapCoordinates)
+      .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource),
+    [activeSource, incidents, pcrIncidents, scrapedIncidents]
+  );
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
+  const sourceCounts = {
+    all: incidents.length + pcrIncidents.length + scrapedIncidents.length,
+    official: incidents.length,
+    pcr_report: pcrIncidents.length,
+    scraper: scrapedIncidents.length,
+  };
 
   return (
     <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
@@ -129,8 +171,8 @@ export default function MapMonitoring() {
         <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-20">
           <div className="flex items-center gap-2 bg-card/95 border border-border rounded-xl px-4 py-2 shadow-lg">
             <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-xs text-foreground font-semibold">LIVE MAP</span>
-            <span className="text-[10px] text-muted-foreground">— Echague, Isabela</span>
+            <span className="text-xs text-foreground font-semibold">OPERATIONS MAP MONITOR</span>
+            <span className="text-[10px] text-muted-foreground">Echague, Isabela</span>
           </div>
           <button
             onClick={() => setReloadKey(key => key + 1)}
@@ -150,7 +192,26 @@ export default function MapMonitoring() {
         </div>
 
         {/* Layer Control (top right) */}
-        <div className="absolute top-14 right-14 z-20">
+        <div className="absolute top-14 right-14 z-20 space-y-3">
+          <div className="bg-card/95 border border-border rounded-xl p-3 shadow-lg min-w-36">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Database className="w-3.5 h-3.5 text-blue-400" />
+              <span className="text-[10px] text-muted-foreground font-medium uppercase">Data Sources</span>
+            </div>
+            {sourceFilters.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setActiveSource(key)}
+                className={`flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-[10px] transition-all mb-0.5 ${
+                  activeSource === key ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-secondary'
+                }`}
+              >
+                <Icon className="w-3 h-3 text-blue-400" />
+                <span className="text-foreground/80">{label}</span>
+                <span className="ml-auto text-muted-foreground">{sourceCounts[key]}</span>
+              </button>
+            ))}
+          </div>
           <div className="bg-card/95 border border-border rounded-xl p-3 shadow-lg min-w-36">
             <div className="flex items-center gap-1.5 mb-2">
               <Layers className="w-3.5 h-3.5 text-blue-400" />
@@ -195,7 +256,7 @@ export default function MapMonitoring() {
                   <p className="text-xs text-foreground/80">{selectedInc.location}</p>
                   {selectedInc.sourceKind && (
                     <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-blue-400">
-                      {selectedInc.sourceKind.replaceAll('_', ' ')} • {selectedInc.sourceLabel}
+                      {selectedInc.sourceKind.replaceAll('_', ' ')} / {selectedInc.sourceLabel}
                     </p>
                   )}
                 </div>
@@ -207,6 +268,28 @@ export default function MapMonitoring() {
                 </button>
               </div>
               <p className="text-xs text-muted-foreground mb-3">{selectedInc.description}</p>
+              <div className="mb-3 grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
+                <div className="rounded-lg bg-secondary/60 p-2">
+                  <span className="block uppercase tracking-wide">Barangay</span>
+                  <span className="text-foreground">{selectedInc.barangay || selectedInc.location || 'Unspecified'}</span>
+                </div>
+                <div className="rounded-lg bg-secondary/60 p-2">
+                  <span className="block uppercase tracking-wide">Date / Time</span>
+                  <span className="text-foreground">{selectedInc.date || '-'} {selectedInc.time || ''}</span>
+                </div>
+                <div className="rounded-lg bg-secondary/60 p-2">
+                  <span className="block uppercase tracking-wide">Coordinates</span>
+                  <span className="text-foreground">
+                    {Number.isFinite(Number(selectedInc.lat)) && Number.isFinite(Number(selectedInc.lng))
+                      ? `${Number(selectedInc.lat).toFixed(5)}, ${Number(selectedInc.lng).toFixed(5)}`
+                      : 'Location pending'}
+                  </span>
+                </div>
+                <div className="rounded-lg bg-secondary/60 p-2">
+                  <span className="block uppercase tracking-wide">Related Record</span>
+                  <span className="text-foreground">{selectedInc.recordId || selectedInc.relatedIncidentId || selectedInc.responseId || 'Official'}</span>
+                </div>
+              </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className={`text-xs font-semibold ${statusColors[selectedInc.status]}`}>
@@ -216,14 +299,14 @@ export default function MapMonitoring() {
                 </div>
                 <button
                   onClick={() => {
-                    if (!selectedInc.sourceKind || selectedInc.sourceKind === 'promoted_scraped') {
-                      navigate(`/admin/incidents/${selectedInc.id}`);
+                    if (!selectedInc.sourceKind || selectedInc.sourceKind === 'official' || selectedInc.sourceKind === 'promoted_scraped') {
+                      navigate(`/admin/incidents/${selectedInc.relatedIncidentId || selectedInc.id}`);
                     }
                   }}
-                  disabled={selectedInc.sourceKind && selectedInc.sourceKind !== 'promoted_scraped'}
+                  disabled={selectedInc.sourceKind && !['official', 'promoted_scraped'].includes(selectedInc.sourceKind)}
                   className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all"
                 >
-                  {selectedInc.sourceKind && selectedInc.sourceKind !== 'promoted_scraped' ? 'External' : 'Details'} <ChevronRight className="w-3 h-3" />
+                  {selectedInc.sourceKind && !['official', 'promoted_scraped'].includes(selectedInc.sourceKind) ? 'Linked record' : 'Details'} <ChevronRight className="w-3 h-3" />
                 </button>
               </div>
             </div>
@@ -249,9 +332,9 @@ export default function MapMonitoring() {
             <div className="px-4 py-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2 mb-1">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-sm font-semibold text-foreground">Active Incidents</span>
+                <span className="text-sm font-semibold text-foreground">Operational Records</span>
               </div>
-              <p className="text-[10px] text-muted-foreground">{activeIncidents.length} ongoing</p>
+              <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
               {loading && <p className="mt-1 text-[10px] text-muted-foreground">Loading map records...</p>}
               {scraperMessage && <p className="mt-1 text-[10px] text-green-400">{scraperMessage}</p>}
               {scraperError && <p className="mt-1 text-[10px] text-orange-400">{scraperError}</p>}
@@ -292,6 +375,10 @@ export default function MapMonitoring() {
                             {inc.sourceKind.replaceAll('_', ' ')}
                           </p>
                         )}
+                        <div className="flex items-center gap-1 mt-1">
+                          <Clock className="w-2.5 h-2.5 text-muted-foreground" />
+                          <span className="text-[9px] text-muted-foreground">{inc.date || '-'} {inc.time || ''}</span>
+                        </div>
                         <div className="flex items-center gap-1 mt-1">
                           <Shield className="w-2.5 h-2.5 text-muted-foreground" />
                           <span className="text-[9px] text-muted-foreground">{inc.assignedTeam}</span>

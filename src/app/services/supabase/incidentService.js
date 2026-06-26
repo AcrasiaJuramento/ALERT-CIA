@@ -33,6 +33,10 @@ function incidentToApp(row = {}) {
     responders: team ? 1 : 0,
     casualties: 0,
     publicVisible: row.public_visible,
+    sourceKind: row.record_origin || "official",
+    sourceLabel: row.record_origin === "promoted_scraped" ? "Promoted scraper record" : "Official incident record",
+    externalSourceUrl: row.external_source_url || "",
+    scraperRecordId: row.scraper_record_id || null,
     status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -40,7 +44,7 @@ function incidentToApp(row = {}) {
 }
 
 function incidentPayload(record = {}, barangayId) {
-  return {
+  const payload = {
     response_id: record.responseId || null,
     barangay_id: barangayId || record.barangayId || null,
     classification: record.classification || record.type || "other",
@@ -54,6 +58,13 @@ function incidentPayload(record = {}, barangayId) {
     public_visible: Boolean(record.publicVisible),
     status: record.status || "draft",
   };
+  const lat = Number(record.lat ?? record.latitude);
+  const lng = Number(record.lng ?? record.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    payload.latitude = lat;
+    payload.longitude = lng;
+  }
+  return payload;
 }
 
 export async function listIncidents({ publicOnly = false, limit = 200, from = 0 } = {}) {

@@ -74,7 +74,11 @@ function scraperRecordToMapIncident(row = {}) {
   return {
     id: `SCR-${String(row.id).slice(0, 8)}`,
     recordId: row.id,
-    sourceKind: row.related_incident_id ? "promoted_scraped" : row.public_visible ? "reviewed_scraped" : "scraped",
+    sourceKind: row.related_incident_id || row.status === "promoted" || row.status === "imported"
+      ? "promoted_scraped"
+      : row.public_visible || row.status === "approved" || row.status === "matched"
+        ? "reviewed_scraped"
+        : "scraped",
     sourceLabel: row.source?.name || row.source_site || "External source",
     externalSourceUrl: row.source_url,
     type,
@@ -163,7 +167,7 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
       .from("scraper_records")
       .select("*")
       .eq("public_visible", true)
-      .in("status", ["matched", "imported"])
+      .in("status", ["approved", "promoted", "matched", "imported"])
       .is("deleted_at", null)
       .not("latitude", "is", null)
       .not("longitude", "is", null)
@@ -181,7 +185,7 @@ export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
     client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name), source:scraper_sources(id, name, source_key)")
-      .in("status", ["new", "matched", "imported"])
+      .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
       .is("deleted_at", null)
       .not("latitude", "is", null)
       .not("longitude", "is", null)
@@ -212,7 +216,7 @@ export async function approveScraperRecordForPublicMap(recordId) {
     client
       .from("scraper_records")
       .update({
-        status: "matched",
+        status: "approved",
         public_visible: true,
         processed_at: new Date().toISOString(),
       })

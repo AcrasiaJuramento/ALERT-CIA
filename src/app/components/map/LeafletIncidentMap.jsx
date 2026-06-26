@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapContainer, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
+import { CircleMarker, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { LocateFixed, Layers, RefreshCw } from 'lucide-react';
 import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
@@ -100,6 +100,30 @@ function UserLocationLayer({ enabled, followUser }) {
   ) : null;
 }
 
+function PlannerPointsLayer({ points = {} }) {
+  const visiblePoints = [
+    ['current', points.current],
+    ['start', points.start],
+    ['destination', points.destination],
+  ].filter(([, point]) => point?.latLng);
+
+  return visiblePoints.map(([key, point]) => (
+    <CircleMarker
+      key={key}
+      center={point.latLng}
+      radius={9}
+      pathOptions={{
+        color: key === 'destination' ? '#dc2626' : key === 'start' ? '#2563eb' : '#16a34a',
+        fillColor: key === 'destination' ? '#ef4444' : key === 'start' ? '#3b82f6' : '#22c55e',
+        fillOpacity: 0.9,
+        weight: 3,
+      }}
+    >
+      <Popup>{point.label || (key === 'destination' ? 'Point B' : key === 'start' ? 'Point A' : 'Current GPS location')}</Popup>
+    </CircleMarker>
+  ));
+}
+
 export function LeafletIncidentMap({
   height = '100%',
   incidents = [],
@@ -114,6 +138,8 @@ export function LeafletIncidentMap({
   onAdvisoryClick,
   clusterMarkers = true,
   routes = [],
+  hazardZones = [],
+  plannerPoints = {},
   compact = false,
   autoFit = true,
   onMapClick,
@@ -178,8 +204,9 @@ export function LeafletIncidentMap({
           onAdvisoryClick={onAdvisoryClick}
         />
         <HeatmapLayer points={[]} enabled={layers.heatmap} />
-        <HazardZonesLayer zones={[]} enabled={layers.dangerZones} />
+        <HazardZonesLayer zones={hazardZones} enabled={layers.dangerZones} />
         <RouteLayer routes={layers.routes ? routes : []} />
+        <PlannerPointsLayer points={plannerPoints} />
         <UserLocationLayer enabled={layers.locate} followUser={followUser} />
       </MapContainer>
 
