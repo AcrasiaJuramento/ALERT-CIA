@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, Edit2, Trash2, Shield, UserCog } from 'lucide-react';
-import { deactivateProfile, listProfiles, upsertProfile } from '../services/supabase';
+import { CheckCircle2, Edit2, Power, Save, Search, Shield, UserCog, X } from 'lucide-react';
+import { assignProfileRole, deactivateProfile, listProfiles, updateProfile } from '../services/supabase';
 
 const roleBadge = {
   administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -20,7 +20,22 @@ const statusDot = {
   inactive: 'bg-slate-500',
   on_duty: 'bg-orange-400 animate-pulse',
   pending: 'bg-yellow-400',
+  suspended: 'bg-red-400',
 };
+
+const statusLabel = {
+  active: 'Active',
+  inactive: 'Inactive',
+  pending: 'Pending',
+  suspended: 'Suspended',
+};
+
+const roleOptions = [
+  { value: 'dispatcher', label: 'Dispatcher Officer' },
+  { value: 'field_responder', label: 'Field Officer' },
+];
+
+const editableFields = ['display_name', 'email', 'contact_number', 'position_title', 'agency'];
 
 function profileToRow(profile = {}) {
   const name = profile.display_name || profile.email || 'Unnamed user';
@@ -45,6 +60,10 @@ export default function UserManagement() {
   const [filterRole, setFilterRole] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [savingId, setSavingId] = useState('');
+  const [editUser, setEditUser] = useState(null);
+  const [roleUser, setRoleUser] = useState(null);
+  const [formError, setFormError] = useState('');
 
   const loadUsers = async () => {
     setLoading(true);
@@ -69,14 +88,69 @@ export default function UserManagement() {
     return matchSearch && matchRole;
   }), [filterRole, search, userList]);
 
+  const replaceRow = profile => {
+    setUserList(current => current.map(row => (row.id === profile.id ? profileToRow(profile) : row)));
+  };
+
   const setStatus = async (row, accountStatus) => {
-    await upsertProfile({ id: row.id, account_status: accountStatus });
-    await loadUsers();
+    setSavingId(row.id);
+    setError('');
+    try {
+      const profile = await updateProfile(row.id, { account_status: accountStatus });
+      replaceRow(profile);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to update account status.');
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  const handleApprove = row => setStatus(row, 'active');
+
+  const handleSaveProfile = async event => {
+    event.preventDefault();
+    setFormError('');
+    setSavingId(editUser.id);
+    try {
+      const updates = Object.fromEntries(
+        editableFields.map(field => [field, editUser.raw[field]?.trim?.() ?? editUser.raw[field] ?? '']),
+      );
+      const profile = await updateProfile(editUser.id, updates);
+      replaceRow(profile);
+      setEditUser(null);
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to save user details.');
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  const handleSaveRole = async event => {
+    event.preventDefault();
+    setFormError('');
+    setSavingId(roleUser.id);
+    try {
+      const profile = await assignProfileRole(roleUser.id, roleUser.role);
+      replaceRow(profile);
+      setRoleUser(null);
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to update officer role.');
+    } finally {
+      setSavingId('');
+    }
   };
 
   const handleDelete = async id => {
-    await deactivateProfile(id);
-    await loadUsers();
+    setSavingId(id);
+    setError('');
+    try {
+      const profile = await deactivateProfile(id);
+      replaceRow(profile);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to deactivate user.');
+    } finally {
+      setSavingId('');
+    }
   };
 
   const roleCounts = {
@@ -181,26 +255,54 @@ export default function UserManagement() {
                   <td className="px-3 py-3.5">
                     <div className="flex items-center gap-1.5">
                       <div className={`w-2 h-2 rounded-full ${statusDot[user.status]}`} />
-                      <span className={`text-[10px] font-medium ${statusBadge[user.status].split(' ')[1]}`}>
-                        {user.status.replace('_', ' ')}
+                      <span className={`text-[10px] font-medium ${statusBadge[user.status]?.split(' ')[1] || 'text-muted-foreground'}`}>
+                        {statusLabel[user.status] || user.status.replace('_', ' ')}
                       </span>
                     </div>
                   </td>
                   <td className="px-3 py-3.5 text-muted-foreground text-[10px]">{user.lastLogin}</td>
                   <td className="px-3 py-3.5">
                     <div className="flex items-center justify-center gap-1">
-                      <button onClick={() => setStatus(user, user.status === 'active' ? 'inactive' : 'active')} className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-all" title="Toggle active status">
+                      {user.status === 'pending' && (
+                        <button
+                          onClick={() => handleApprove(user)}
+                          disabled={savingId === user.id}
+                          className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-900 text-white text-[10px] font-semibold transition-all"
+                          title="Approve officer account"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Approve
+                        </button>
+                      )}
+                      <button
+                        onClick={() => {
+                          setFormError('');
+                          setEditUser({ ...user, raw: { ...user.raw } });
+                        }}
+                        className="p-1.5 rounded-lg text-blue-400 hover:bg-blue-500/10 transition-all"
+                        title="Edit user details"
+                      >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
-                      <button className="p-1.5 rounded-lg text-purple-400 hover:bg-purple-500/10 transition-all" title="Assign Role">
-                        <UserCog className="w-3.5 h-3.5" />
-                      </button>
+                      {user.role !== 'administrator' && (
+                        <button
+                          onClick={() => {
+                            setFormError('');
+                            setRoleUser({ id: user.id, name: user.name, role: user.role });
+                          }}
+                          className="p-1.5 rounded-lg text-purple-400 hover:bg-purple-500/10 transition-all"
+                          title="Change officer role"
+                        >
+                          <UserCog className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                       <button
-                        onClick={() => handleDelete(user.id)}
-                        className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 transition-all"
-                        title="Remove"
+                        onClick={() => user.status === 'active' ? setStatus(user, 'inactive') : handleDelete(user.id)}
+                        disabled={savingId === user.id}
+                        className="p-1.5 rounded-lg text-red-400 hover:bg-red-500/10 disabled:opacity-50 transition-all"
+                        title={user.status === 'active' ? 'Set inactive' : 'Deactivate account'}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Power className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   </td>
@@ -226,6 +328,98 @@ export default function UserManagement() {
         )}
       </div>
 
+      {editUser && (
+        <Modal title="Edit User" onClose={() => setEditUser(null)}>
+          <form onSubmit={handleSaveProfile} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Full Name" value={editUser.raw.display_name || ''} onChange={value => setEditUser(user => ({ ...user, raw: { ...user.raw, display_name: value } }))} />
+              <Field label="Email" type="email" value={editUser.raw.email || ''} onChange={value => setEditUser(user => ({ ...user, raw: { ...user.raw, email: value } }))} />
+              <Field label="Contact Number" value={editUser.raw.contact_number || ''} onChange={value => setEditUser(user => ({ ...user, raw: { ...user.raw, contact_number: value } }))} />
+              <Field label="Position / Rank" value={editUser.raw.position_title || ''} onChange={value => setEditUser(user => ({ ...user, raw: { ...user.raw, position_title: value } }))} />
+              <div className="sm:col-span-2">
+                <Field label="Agency / Unit" value={editUser.raw.agency || ''} onChange={value => setEditUser(user => ({ ...user, raw: { ...user.raw, agency: value } }))} />
+              </div>
+            </div>
+            {formError && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{formError}</div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setEditUser(null)} className="px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground text-xs font-semibold">Cancel</button>
+              <button type="submit" disabled={savingId === editUser.id} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 text-white text-xs font-semibold">
+                <Save className="w-3.5 h-3.5" />
+                Save Changes
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {roleUser && (
+        <Modal title="Change Officer Role" onClose={() => setRoleUser(null)}>
+          <form onSubmit={handleSaveRole} className="space-y-4">
+            <div>
+              <div className="text-xs text-muted-foreground mb-2">Selected User</div>
+              <div className="text-sm font-semibold text-foreground">{roleUser.name}</div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {roleOptions.map(option => (
+                <label
+                  key={option.value}
+                  className={`rounded-xl border p-3 cursor-pointer transition-all ${roleUser.role === option.value ? 'border-blue-500 bg-blue-600/20 text-blue-300' : 'border-border bg-secondary/40 text-muted-foreground hover:border-border/80'}`}
+                >
+                  <input
+                    type="radio"
+                    name="role"
+                    value={option.value}
+                    checked={roleUser.role === option.value}
+                    onChange={event => setRoleUser(user => ({ ...user, role: event.target.value }))}
+                    className="sr-only"
+                  />
+                  <span className="text-xs font-semibold">{option.label}</span>
+                </label>
+              ))}
+            </div>
+            {formError && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{formError}</div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setRoleUser(null)} className="px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground text-xs font-semibold">Cancel</button>
+              <button type="submit" disabled={savingId === roleUser.id} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:bg-purple-900 text-white text-xs font-semibold">
+                <UserCog className="w-3.5 h-3.5" />
+                Update Role
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
     </div>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-xl rounded-xl border border-border bg-card shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border px-5 py-4">
+          <h2 className="text-sm font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>{title}</h2>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Close modal">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <div className="p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, type = 'text' }) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-medium text-muted-foreground mb-1.5">{label}</span>
+      <input
+        type={type}
+        required
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500"
+      />
+    </label>
   );
 }

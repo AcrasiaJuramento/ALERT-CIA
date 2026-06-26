@@ -81,9 +81,30 @@ export async function listProfiles() {
   "Unable to load users.");
 }
 
+export async function getProfile(profileId) {
+  return runSupabaseRequest(client =>
+    client
+      .from("profiles")
+      .select("*, roles:profile_roles!profile_roles_profile_id_fkey(role), station:stations(id, name)")
+      .eq("id", profileId)
+      .single(),
+  "Unable to load user profile.");
+}
+
 export async function upsertProfile(profile) {
   return runSupabaseRequest(client =>
     client.from("profiles").upsert(profile).select("*").single(),
+  "Unable to save user profile.");
+}
+
+export async function updateProfile(profileId, updates) {
+  return runSupabaseRequest(client =>
+    client
+      .from("profiles")
+      .update(updates)
+      .eq("id", profileId)
+      .select("*, roles:profile_roles!profile_roles_profile_id_fkey(role), station:stations(id, name)")
+      .single(),
   "Unable to save user profile.");
 }
 
@@ -92,9 +113,26 @@ export async function assignProfileRole(profileId, role) {
     throw new Error("Administrator roles must be assigned through a controlled admin-only setup.");
   }
 
-  return runSupabaseRequest(client =>
-    client.from("profile_roles").upsert({ profile_id: profileId, role }).select("*").single(),
-  "Unable to assign user role.");
+  return runSupabaseRequest(async client => {
+    const { error: deleteError } = await client
+      .from("profile_roles")
+      .delete()
+      .eq("profile_id", profileId);
+
+    if (deleteError) return { data: null, error: deleteError };
+
+    const { error: insertError } = await client
+      .from("profile_roles")
+      .insert({ profile_id: profileId, role });
+
+    if (insertError) return { data: null, error: insertError };
+
+    return client
+      .from("profiles")
+      .select("*, roles:profile_roles!profile_roles_profile_id_fkey(role), station:stations(id, name)")
+      .eq("id", profileId)
+      .single();
+  }, "Unable to assign user role.");
 }
 
 export async function deactivateProfile(profileId) {
@@ -103,7 +141,7 @@ export async function deactivateProfile(profileId) {
       .from("profiles")
       .update({ account_status: "inactive", deleted_at: new Date().toISOString() })
       .eq("id", profileId)
-      .select("*")
+      .select("*, roles:profile_roles!profile_roles_profile_id_fkey(role), station:stations(id, name)")
       .single(),
   "Unable to deactivate user.");
 }

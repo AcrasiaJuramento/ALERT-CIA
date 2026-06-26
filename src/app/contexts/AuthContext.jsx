@@ -95,7 +95,10 @@ export function AuthProvider({ children }) {
       }
       if (profile.account_status !== 'active') {
         await supabase.auth.signOut();
-        throw new Error('Your account is pending administrator approval.');
+        if (profile.account_status === 'pending') {
+          throw new Error('Your account is pending administrator approval.');
+        }
+        throw new Error('Your account is not active. Contact an administrator for assistance.');
       }
 
       const nextUser = profileToUser(profile);

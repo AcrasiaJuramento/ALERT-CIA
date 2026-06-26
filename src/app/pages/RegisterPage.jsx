@@ -68,7 +68,7 @@ export default function RegisterPage() {
             Request Submitted
           </h2>
           <p className="text-slate-400 mb-6 leading-relaxed">
-            Your account registration request has been submitted. An administrator will review and approve your account shortly.
+            Your account is pending administrator approval.
           </p>
           <div className="p-4 bg-slate-800 border border-slate-700 rounded-xl text-left mb-6">
             <div className="text-xs text-slate-400 mb-2">Registration Details</div>

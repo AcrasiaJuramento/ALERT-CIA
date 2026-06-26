@@ -204,15 +204,8 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Divider */}
-          <div className="flex items-center gap-3 my-6">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-muted-foreground text-xs">or</span>
-            <div className="flex-1 h-px bg-border" />
-          </div>
-
           {/* Register link */}
-          <div className="text-center">
+          <div className="text-center mt-6">
             <span className="text-muted-foreground text-sm">Don't have an account? </span>
             <button
               onClick={() => navigate('/register')}
@@ -220,27 +213,6 @@ export default function LoginPage() {
             >
               Request Access
             </button>
-          </div>
-
-          {/* Demo logins */}
-          <div className="mt-8 p-4 bg-secondary/50 border border-border rounded-xl">
-            <div className="text-xs text-muted-foreground mb-2 font-medium">Demo Access:</div>
-            <div className="space-y-1.5">
-              {[
-                { label: 'Administrator', email: 'admin@mdrrmo.gov.ph', pass: 'admin123' },
-                { label: 'Dispatcher', email: 'dispatch@mdrrmo.gov.ph', pass: 'dispatch123' },
-                { label: 'Field Officer', email: 'field@mdrrmo.gov.ph', pass: 'field123' },
-              ].map(({ label, email, pass }) => (
-                <button
-                  key={label}
-                  onClick={() => setForm({ email, password: pass, remember: false })}
-                  className="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-700/50 transition-all"
-                >
-                  <span className="text-slate-300 text-xs font-medium">{label}</span>
-                  <span className="text-slate-500 text-xs ml-2">{email}</span>
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </div>
