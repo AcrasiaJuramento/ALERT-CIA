@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Edit2, Power, Save, Search, Shield, UserCog, X } from 'lucide-react';
-import { assignProfileRole, deactivateProfile, listProfiles, updateProfile } from '../services/supabase';
+import { CheckCircle2, Edit2, Power, Radio, Save, Search, Shield, UserCog, X } from 'lucide-react';
+import { assignProfileRole, assignProfileToRespondingTeam, deactivateProfile, getActiveTeamMembership, listProfiles, listRespondingTeams, updateProfile } from '../services/supabase';
 
 const roleBadge = {
   administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -39,6 +39,7 @@ const editableFields = ['display_name', 'email', 'contact_number', 'position_tit
 
 function profileToRow(profile = {}) {
   const name = profile.display_name || profile.email || 'Unnamed user';
+  const activeTeam = getActiveTeamMembership(profile);
   return {
     id: profile.id,
     name,
@@ -47,6 +48,10 @@ function profileToRow(profile = {}) {
     position: profile.position_title || '',
     agency: profile.station?.name || '',
     role: profile.roles?.[0]?.role || 'field_responder',
+    teamId: activeTeam?.team_id || '',
+    teamName: activeTeam?.team?.name || '',
+    teamRole: activeTeam?.team_role || 'Field Officer',
+    isTeamLeader: Boolean(activeTeam?.is_leader),
     status: profile.account_status || 'pending',
     avatar: name.split(' ').map(part => part[0]).join('').slice(0, 2).toUpperCase(),
     lastLogin: '-',
@@ -63,6 +68,8 @@ export default function UserManagement() {
   const [savingId, setSavingId] = useState('');
   const [editUser, setEditUser] = useState(null);
   const [roleUser, setRoleUser] = useState(null);
+  const [teamUser, setTeamUser] = useState(null);
+  const [teamOptions, setTeamOptions] = useState([]);
   const [formError, setFormError] = useState('');
 
   const loadUsers = async () => {
@@ -71,6 +78,8 @@ export default function UserManagement() {
     try {
       const rows = await listProfiles();
       setUserList(rows.map(profileToRow));
+      const teams = await listRespondingTeams();
+      setTeamOptions(teams);
     } catch (requestError) {
       setError(requestError.message || 'Unable to load user profiles.');
     } finally {
@@ -92,6 +101,17 @@ export default function UserManagement() {
     setUserList(current => current.map(row => (row.id === profile.id ? profileToRow(profile) : row)));
   };
 
+  const openTeamAssignment = row => {
+    setFormError('');
+    setTeamUser({
+      id: row.id,
+      name: row.name,
+      teamId: row.teamId || '',
+      teamRole: row.teamRole || 'Field Officer',
+      isTeamLeader: row.isTeamLeader,
+    });
+  };
+
   const setStatus = async (row, accountStatus) => {
     setSavingId(row.id);
     setError('');
@@ -105,7 +125,14 @@ export default function UserManagement() {
     }
   };
 
-  const handleApprove = row => setStatus(row, 'active');
+  const handleApprove = row => {
+    if (row.role === 'field_responder' && !row.teamId) {
+      setError('Assign this field officer to a responding team before approving the account.');
+      openTeamAssignment(row);
+      return;
+    }
+    setStatus(row, 'active');
+  };
 
   const handleSaveProfile = async event => {
     event.preventDefault();
@@ -135,6 +162,24 @@ export default function UserManagement() {
       setRoleUser(null);
     } catch (requestError) {
       setFormError(requestError.message || 'Unable to update officer role.');
+    } finally {
+      setSavingId('');
+    }
+  };
+
+  const handleSaveTeam = async event => {
+    event.preventDefault();
+    setFormError('');
+    setSavingId(teamUser.id);
+    try {
+      const profile = await assignProfileToRespondingTeam(teamUser.id, teamUser.teamId || null, {
+        teamRole: teamUser.teamRole,
+        isLeader: teamUser.isTeamLeader,
+      });
+      replaceRow(profile);
+      setTeamUser(null);
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to update responding team assignment.');
     } finally {
       setSavingId('');
     }
@@ -220,6 +265,7 @@ export default function UserManagement() {
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Position / Agency</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Contact</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Role</th>
+                <th className="text-left px-3 py-3 text-muted-foreground font-medium">Responding Team</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Status</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Last Login</th>
                 <th className="text-center px-3 py-3 text-muted-foreground font-medium">Actions</th>
@@ -251,6 +297,29 @@ export default function UserManagement() {
                     <span className={`px-2 py-1 rounded-lg text-[10px] font-semibold capitalize ${roleBadge[user.role]}`}>
                       {user.role === 'field_responder' ? 'Field Officer' : user.role === 'administrator' ? 'Administrator' : 'Dispatcher Officer'}
                     </span>
+                  </td>
+                  <td className="px-3 py-3.5">
+                    {user.role === 'field_responder' ? (
+                      <div className="space-y-2">
+                        <div>
+                          <div className="text-foreground/80">{user.teamName || 'No team assigned'}</div>
+                          <div className="text-muted-foreground text-[10px]">{user.teamName ? user.teamRole : 'Required before approval'}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => openTeamAssignment(user)}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-cyan-500"
+                        >
+                          <Radio className="h-3.5 w-3.5" />
+                          {user.teamName ? 'Change team' : 'Assign team'}
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="text-foreground/80">-</div>
+                        <div className="text-muted-foreground text-[10px]">Not required</div>
+                      </>
+                    )}
                   </td>
                   <td className="px-3 py-3.5">
                     <div className="flex items-center gap-1.5">
@@ -294,6 +363,15 @@ export default function UserManagement() {
                           title="Change officer role"
                         >
                           <UserCog className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {user.role === 'field_responder' && (
+                        <button
+                          onClick={() => openTeamAssignment(user)}
+                          className="p-1.5 rounded-lg text-cyan-400 hover:bg-cyan-500/10 transition-all"
+                          title="Assign responding team"
+                        >
+                          <Radio className="w-3.5 h-3.5" />
                         </button>
                       )}
                       <button
@@ -383,6 +461,46 @@ export default function UserManagement() {
               <button type="submit" disabled={savingId === roleUser.id} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:bg-purple-900 text-white text-xs font-semibold">
                 <UserCog className="w-3.5 h-3.5" />
                 Update Role
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {teamUser && (
+        <Modal title="Assign Responding Team" onClose={() => setTeamUser(null)}>
+          <form onSubmit={handleSaveTeam} className="space-y-4">
+            <div>
+              <div className="text-xs text-muted-foreground mb-2">Selected Field Officer</div>
+              <div className="text-sm font-semibold text-foreground">{teamUser.name}</div>
+            </div>
+            <label className="block">
+              <span className="block text-xs font-medium text-muted-foreground mb-1.5">Responding Team</span>
+              <select
+                value={teamUser.teamId}
+                onChange={event => setTeamUser(user => ({ ...user, teamId: event.target.value }))}
+                className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
+              >
+                <option value="">No active team assignment</option>
+                {teamOptions.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+              </select>
+            </label>
+            <Field label="Team Role" value={teamUser.teamRole} onChange={value => setTeamUser(user => ({ ...user, teamRole: value }))} />
+            <label className="flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs text-foreground">
+              <input
+                type="checkbox"
+                checked={teamUser.isTeamLeader}
+                onChange={event => setTeamUser(user => ({ ...user, isTeamLeader: event.target.checked }))}
+                className="accent-blue-600"
+              />
+              Team leader
+            </label>
+            {formError && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{formError}</div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setTeamUser(null)} className="px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground text-xs font-semibold">Cancel</button>
+              <button type="submit" disabled={savingId === teamUser.id} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-900 text-white text-xs font-semibold">
+                <Radio className="w-3.5 h-3.5" />
+                Save Assignment
               </button>
             </div>
           </form>

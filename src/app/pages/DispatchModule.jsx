@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Save, Download, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
@@ -446,7 +446,7 @@ export default function DispatchModule({ onBack }) {
               </select>
             </Field>
             <Field label="Responding Team">
-              <select className={input} value={form.team} onChange={e => update("team", e.target.value)}>
+              <select className={input} required value={form.team} onChange={e => update("team", e.target.value)}>
                 <option value="">Select responding team</option>
                 {teamOptions.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}
               </select>

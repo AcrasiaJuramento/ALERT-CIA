@@ -8,7 +8,7 @@ import {
 import {
   acceptDispatchByResponse,
   getPCRReportByResponse,
-  listDispatchRecords,
+  listReceivedDispatchRecords,
   markResponseBackToBase,
 } from "../services/supabase";
 
@@ -26,7 +26,7 @@ export default function ReceivedDispatches() {
     setLoading(true);
     setError("");
     try {
-      const rows = await listDispatchRecords({ limit: 200 });
+      const rows = await listReceivedDispatchRecords({ limit: 200 });
       setRecords(rows);
       const pairs = await Promise.all(rows.map(async record => {
         try {
@@ -182,7 +182,7 @@ export default function ReceivedDispatches() {
         <div className="rounded-xl border border-border bg-card py-16 text-center">
           <Radio size={36} className="mx-auto mb-3 text-muted-foreground/30" />
           <p className="font-semibold">No dispatches received</p>
-          <p className="mt-1 text-xs text-muted-foreground">Dispatches appear here after the dispatcher sends them to a responding team.</p>
+          <p className="mt-1 text-xs text-muted-foreground">Dispatches appear here after the dispatcher sends them to your assigned responding team.</p>
         </div>
       )}
     </div>

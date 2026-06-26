@@ -6,6 +6,7 @@ import {
   toDbDispatchStatus,
 } from "./mappers";
 import { findAmbulanceUnitByCallSign, findBarangayByName, findRespondingTeamByName } from "./referenceService";
+import { getCurrentProfileTeamMemberships } from "./userService";
 
 const DISPATCH_SELECT = `
   *,
@@ -61,11 +62,20 @@ export async function listDispatchRecords({ status, teamId, limit = 100, from = 
       .range(from, from + limit - 1);
 
     if (status) query = query.eq("status", toDbDispatchStatus(status));
-    if (teamId) query = query.eq("response.responding_team_id", teamId);
     return query;
   }, "Unable to load dispatch records.");
 
-  return rows.map(dispatchToApp);
+  const mappedRows = rows.map(dispatchToApp);
+  return teamId ? mappedRows.filter(row => row.respondingTeamId === teamId) : mappedRows;
+}
+
+export async function listReceivedDispatchRecords({ limit = 100, from = 0 } = {}) {
+  const memberships = await getCurrentProfileTeamMemberships();
+  const teamIds = memberships.map(membership => membership.team_id).filter(Boolean);
+  if (!teamIds.length) return [];
+
+  const rows = await listDispatchRecords({ limit, from });
+  return rows.filter(row => teamIds.includes(row.respondingTeamId));
 }
 
 export async function getDispatchRecord(dispatchId) {
@@ -78,6 +88,9 @@ export async function getDispatchRecord(dispatchId) {
 
 export async function createDispatchRecord(form) {
   const ids = await resolveDispatchIds(form);
+  if (!ids.teamId && !form.respondingTeamId) {
+    throw new Error("A responding team is required before saving this dispatch.");
+  }
 
   return runSupabaseRequest(async client => {
     const { data: response, error: responseError } = await client
@@ -106,6 +119,9 @@ export async function createDispatchRecord(form) {
 
 export async function updateDispatchRecord(dispatchId, form) {
   const ids = await resolveDispatchIds(form);
+  if (!ids.teamId && !form.respondingTeamId) {
+    throw new Error("A responding team is required before saving this dispatch.");
+  }
   const existing = await getDispatchRecord(dispatchId);
   if (!existing) throw new Error("Dispatch record was not found.");
 
@@ -134,6 +150,16 @@ export async function updateDispatchRecord(dispatchId, form) {
 
 export async function sendDispatchToRespondingTeam(dispatchId) {
   return runSupabaseRequest(async client => {
+    const { data: currentDispatch, error: currentError } = await client
+      .from("dispatch_forms")
+      .select("response:responses(responding_team_id)")
+      .eq("id", dispatchId)
+      .single();
+    if (currentError) return { data: null, error: currentError };
+    if (!currentDispatch?.response?.responding_team_id) {
+      return { data: null, error: new Error("A responding team is required before sending this dispatch.") };
+    }
+
     const sentAt = new Date().toISOString();
     const { data: dispatch, error: dispatchError } = await client
       .from("dispatch_forms")

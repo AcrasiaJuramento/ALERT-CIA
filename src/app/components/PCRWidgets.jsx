@@ -75,8 +75,50 @@ const Checked = ({ on }) => <span>{on ? "☒" : "☐"}</span>;
 const Cell = ({ label, value, className = "" }) => <div className={`pcr-cell ${className}`}><b>{label}</b>{value != null && <span> {value || ""}</span>}</div>;
 const PaperCheck = ({ on, label }) => <span className="mr-2">{on ? "[x]" : "[ ]"} {label}</span>;
 const TriageMark = ({ color, label, selected }) => <span className={`pcr-triage pcr-triage-${color} ${selected ? "pcr-triage-selected" : ""}`}>{selected ? "[x]" : "[ ]"} {label}</span>;
-export function PrintablePCR({ record, printOnly = false }) {
-  if (!record) return null; const gcsTotal = [record.gcs?.eye, record.gcs?.verbal, record.gcs?.motor].reduce((a,b)=>a+Number(b||0),0);
+
+function arrayValue(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function objectValue(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function normalizePrintableRecord(record = {}) {
+  return {
+    ...record,
+    respondingTeam: record.respondingTeam || record.team || "",
+    dispatchTime: record.dispatchTime || record.dispatchedTime || "",
+    airway: arrayValue(record.airway),
+    breathing: arrayValue(record.breathing),
+    pulseFindings: arrayValue(record.pulseFindings),
+    pupils: arrayValue(record.pupils),
+    skin: arrayValue(record.skin),
+    painQuality: arrayValue(record.painQuality),
+    medicalHistory: arrayValue(record.medicalHistory),
+    emergencyTypes: arrayValue(record.emergencyTypes),
+    traumaTypes: arrayValue(record.traumaTypes),
+    vitals: arrayValue(record.vitals),
+    medications: arrayValue(record.medications),
+    interventions: objectValue(record.interventions),
+    allergies: objectValue(record.allergies),
+    hospitalization: objectValue(record.hospitalization),
+    smoking: objectValue(record.smoking),
+    alcohol: objectValue(record.alcohol),
+    obstetric: objectValue(record.obstetric),
+    crash: objectValue(record.crash),
+    bodyMap: objectValue(record.bodyMap),
+    signatures: objectValue(record.signatures),
+    signatureNames: objectValue(record.signatureNames),
+    signatureDates: objectValue(record.signatureDates),
+    gcs: objectValue(record.gcs),
+  };
+}
+
+export function PrintablePCR({ record: sourceRecord, printOnly = false }) {
+  if (!sourceRecord) return null;
+  const record = normalizePrintableRecord(sourceRecord);
+  const gcsTotal = [record.gcs?.eye, record.gcs?.verbal, record.gcs?.motor].reduce((a,b)=>a+Number(b||0),0);
   return <div className={`pcr-paper ${printOnly ? "pcr-print-source" : "pcr-preview"} text-black bg-white`} data-pcr-export-id={record.id}>
     <style>{`@media screen{.pcr-print-source{position:absolute;left:-10000px;width:210mm}}@media print{body *{visibility:hidden!important}.pcr-preview{display:none!important}.pcr-print-source,.pcr-print-source *{visibility:visible!important}.pcr-print-source{position:absolute!important;left:0!important;top:0!important;width:100%!important}.pcr-page{page-break-after:always}.pcr-page:last-child{page-break-after:auto}}.pcr-paper{font-family:Arial,sans-serif;font-size:9px}.pcr-page{padding:7mm}.pcr-title{text-align:center;font-weight:700;font-size:16px;margin:4px}.pcr-grid{display:grid;border-left:1px solid #111;border-top:1px solid #111}.pcr-cell{min-height:25px;padding:4px;border-right:1px solid #111;border-bottom:1px solid #111}.pcr-cell b{font-size:8px;text-transform:uppercase}.pcr-section{text-align:center;font-weight:700;background:#eee;padding:3px;border:1px solid #111;border-bottom:0}.pcr-table{width:100%;border-collapse:collapse}.pcr-table td,.pcr-table th{border:1px solid #111;padding:3px}.pcr-sign{height:55px;object-fit:contain;max-width:100%}.pcr-anatomy{height:235px;width:100%}.pcr-triage{display:inline-block;width:24%;padding:4px 6px;margin-right:1%;border:1px solid #111;text-align:center;font-weight:700}.pcr-triage-red{background:#dc2626;color:#fff}.pcr-triage-yellow{background:#fde047;color:#111}.pcr-triage-green{background:#16a34a;color:#fff}.pcr-triage-black{background:#111827;color:#fff}.pcr-triage-selected{outline:2px solid #111;outline-offset:-3px}`}</style>
     <section className="pcr-page">
