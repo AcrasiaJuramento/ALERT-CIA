@@ -9,6 +9,7 @@ export const INCIDENT_STATUS = {
   PCR_IN_PROGRESS: 'pcr_in_progress',
   PCR_COMPLETED: 'pcr_completed',
   CANCELLED: 'cancelled',
+  SCRAPED: 'scraped',
 };
 
 export const INCIDENT_STATUS_OPTIONS = [
@@ -30,6 +31,7 @@ const STATUS_LABELS = {
   [INCIDENT_STATUS.PCR_IN_PROGRESS]: 'PCR in progress',
   [INCIDENT_STATUS.PCR_COMPLETED]: 'PCR completed',
   [INCIDENT_STATUS.CANCELLED]: 'Cancelled',
+  [INCIDENT_STATUS.SCRAPED]: 'Scraped',
 };
 
 const COMPLETED_STATUSES = new Set([

@@ -32,8 +32,10 @@ const severityTone = {
 
 function sanitizeForPublic(record = {}) {
   const type = record.type || record.classification || 'incident';
+  const fromScraper = String(record.sourceKind || '').includes('scraped');
   return {
     ...record,
+    status: fromScraper ? 'scraped' : record.status,
     sourceLabel: record.sourceKind === 'pcr_report' ? 'Verified emergency response' : record.sourceLabel || 'Approved public report',
     assignedTeam: 'Emergency responders',
     title: record.title || `${type} alert`,
