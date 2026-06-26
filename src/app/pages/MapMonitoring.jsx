@@ -48,7 +48,6 @@ function hasMapCoordinates(incident) {
   return Number.isFinite(Number(incident?.lat)) && Number.isFinite(Number(incident?.lng));
 }
 
-<<<<<<< Updated upstream
 function isAccidentRecord(record = {}) {
   const values = [
     record.type,
@@ -85,8 +84,6 @@ function mergeMapRecords(records = []) {
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 
-=======
->>>>>>> Stashed changes
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
