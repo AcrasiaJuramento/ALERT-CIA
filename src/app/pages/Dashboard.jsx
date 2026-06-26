@@ -90,6 +90,8 @@ const initialAmbulanceForm = {
   status: 'available',
 };
 
+const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
+
 const AnalyticsTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -133,13 +135,18 @@ export default function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [incidentRows, dispatchRows, notificationRows, ambulanceRows, teamRows] = await Promise.all([
+      const [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult] = await Promise.allSettled([
         listIncidents({ limit: 500 }),
         listDispatchRecords({ limit: 100 }),
         listNotifications({ limit: 20 }),
         listAmbulanceUnits({ activeOnly: false }),
         listRespondingTeams({ activeOnly: true }),
       ]);
+      const incidentRows = settledValue(incidentResult, []);
+      const dispatchRows = settledValue(dispatchResult, []);
+      const notificationRows = settledValue(notificationResult, []);
+      const ambulanceRows = settledValue(ambulanceResult, []);
+      const teamRows = settledValue(teamResult, []);
       setIncidents(incidentRows);
       setDispatches(dispatchRows);
       setAmbulanceUnits(ambulanceRows);
@@ -150,6 +157,8 @@ export default function Dashboard() {
         message: item.title || item.message,
         time: item.timestamp ? new Date(item.timestamp).toLocaleString() : '',
       })));
+      const failed = [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult].find(result => result.status === 'rejected');
+      if (failed) setError(failed.reason?.message || 'Some dashboard data could not be loaded for your role.');
     } catch (requestError) {
       setError(requestError.message || 'Unable to load dashboard data.');
     } finally {

@@ -1,8 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
 
-console.log('Supabase URL loaded:', !!import.meta.env.VITE_SUPABASE_URL);
-console.log('Supabase publishable key loaded:', !!import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY);
-
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabasePublishableKey =
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||

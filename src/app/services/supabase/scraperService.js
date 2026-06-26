@@ -1,7 +1,7 @@
 import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
 
-const scraperApiBaseUrl = import.meta.env.VITE_SCRAPER_API_URL || " http://localhost:3000";
+const scraperApiBaseUrl = import.meta.env.VITE_SCRAPER_API_URL || "http://localhost:3000";
 
 const ECHAGUE_BOUNDS = {
   north: 16.765,

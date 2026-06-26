@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, CheckCircle2, MapPin, Clock, ChevronRight,
-  Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2
+  Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2, X
 } from 'lucide-react';
-import { ADVISORY_EVENT, formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
+import { formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
+import { listPublishedAdvisories, subscribeToPublicAdvisories } from '../../services/supabase';
 
 const typeIcons = {
   vehicular: Car,
@@ -43,15 +44,27 @@ const announcementSeverity = {
 export default function PublicDashboard() {
   const navigate = useNavigate();
   const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
+  const [dismissedAdvisoryId, setDismissedAdvisoryId] = useState('');
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
   const resolvedToday = incidents.filter(i => isIncidentCompleted(i.status)).length;
   const criticalCount = incidents.filter(i => i.severity === 'critical').length;
+  const topAdvisory = useMemo(() => publicAdvisories[0] || null, [publicAdvisories]);
+  const showAdvisoryPopup = topAdvisory && topAdvisory.id !== dismissedAdvisoryId;
 
   useEffect(() => {
     let mounted = true;
+    async function loadAdvisoriesFromDatabase() {
+      try {
+        const advisories = await listPublishedAdvisories({ limit: 50 });
+        if (mounted) setPublicAdvisories(advisories);
+      } catch {
+        if (mounted) setPublicAdvisories(loadPublishedAdvisories());
+      }
+    }
+
     async function loadIncidents() {
       setLoading(true);
       setError('');
@@ -65,18 +78,33 @@ export default function PublicDashboard() {
       }
     }
     loadIncidents();
-    const refreshAdvisories = () => setPublicAdvisories(loadPublishedAdvisories());
-    window.addEventListener('storage', refreshAdvisories);
-    window.addEventListener(ADVISORY_EVENT, refreshAdvisories);
+    loadAdvisoriesFromDatabase();
+    const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
+    const refreshTimer = window.setInterval(loadAdvisoriesFromDatabase, 60000);
     return () => {
       mounted = false;
-      window.removeEventListener('storage', refreshAdvisories);
-      window.removeEventListener(ADVISORY_EVENT, refreshAdvisories);
+      unsubscribe();
+      window.clearInterval(refreshTimer);
     };
   }, []);
 
   return (
     <div className="bg-background min-h-screen transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
+      {topAdvisory && (
+        <div className={`${announcementSeverity[topAdvisory.severity]?.dot || 'bg-orange-500'} text-white px-4 py-2.5 shadow-sm`}>
+          <div className="mx-auto flex max-w-7xl items-center gap-3">
+            <div className="h-2.5 w-2.5 shrink-0 rounded-full bg-white animate-pulse" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-bold">{topAdvisory.title}</div>
+              <div className="truncate text-xs text-white/85">{topAdvisory.message}</div>
+            </div>
+            <button onClick={() => navigate('/public/map')} className="hidden rounded-lg bg-white/15 px-3 py-1.5 text-xs font-bold hover:bg-white/25 sm:inline-flex">
+              View map
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Emergency Banner */}
       {criticalCount > 0 && (
         <div className="bg-red-600 text-white py-2.5 px-4">
@@ -94,6 +122,30 @@ export default function PublicDashboard() {
       )}
 
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
+        {showAdvisoryPopup && (
+          <div className={`rounded-2xl border p-4 shadow-lg ${announcementSeverity[topAdvisory.severity]?.bg || announcementSeverity.warning.bg} ${announcementSeverity[topAdvisory.severity]?.border || announcementSeverity.warning.border}`}>
+            <div className="flex items-start gap-3">
+              <div className={`mt-1 h-3 w-3 shrink-0 rounded-full ${announcementSeverity[topAdvisory.severity]?.dot || announcementSeverity.warning.dot} animate-pulse`} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-base font-bold text-foreground">{topAdvisory.title}</h2>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${severityBadge[topAdvisory.severity] || severityBadge.warning}`}>
+                    {topAdvisory.severity}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{topAdvisory.message}</p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />{topAdvisory.area}</span>
+                  <span className="inline-flex items-center gap-1"><Clock className="h-3.5 w-3.5" />{formatAdvisoryTime(topAdvisory)}</span>
+                </div>
+              </div>
+              <button onClick={() => setDismissedAdvisoryId(topAdvisory.id)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-background/60" title="Dismiss advisory">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Page Header */}
         <div>
           <h1 className="text-2xl font-bold text-foreground mb-1" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
@@ -135,7 +187,7 @@ export default function PublicDashboard() {
             </div>
             <div className="space-y-3">
               {publicAdvisories.map((ann) => {
-                const s = announcementSeverity[ann.severity];
+                const s = announcementSeverity[ann.severity] || announcementSeverity.warning;
                 return (
                   <div key={ann.id} className={`p-4 rounded-2xl border ${s.bg} ${s.border} transition-colors duration-300`}>
                     <div className="flex items-start gap-3">

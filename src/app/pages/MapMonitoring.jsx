@@ -97,6 +97,8 @@ function mergeMapRecords(records = []) {
   return [...byKey.values()];
 }
 
+const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
+
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
@@ -129,16 +131,20 @@ export default function MapMonitoring() {
     async function loadMapData() {
       setLoading(true);
       try {
-        const [officialRecords, scrapedRecords, pcrRecords] = await Promise.all([
+        const [officialResult, scrapedResult, pcrResult] = await Promise.allSettled([
           listIncidents({ limit: 500 }),
           listOfficerScrapedMapIncidents(),
           listPCRMapIncidents({ limit: 200 }),
         ]);
         if (mounted) {
+          const officialRecords = settledValue(officialResult, []);
+          const scrapedRecords = settledValue(scrapedResult, []);
+          const pcrRecords = settledValue(pcrResult, []);
           setIncidents(officialRecords);
           setScrapedIncidents(scrapedRecords);
           setPcrIncidents(pcrRecords);
-          setScraperError('');
+          const failed = [officialResult, scrapedResult, pcrResult].find(result => result.status === 'rejected');
+          setScraperError(failed?.reason?.message || '');
         }
       } catch (error) {
         if (mounted) setScraperError(error.message || 'Unable to load map records.');

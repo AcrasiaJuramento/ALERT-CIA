@@ -25,6 +25,8 @@ const priorityColors = {
 
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
+
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
@@ -333,13 +335,17 @@ export default function Analytics() {
       setLoading(true);
       setError('');
       try {
-        const [incidentRows, dispatchRows] = await Promise.all([
+        const [incidentResult, dispatchResult] = await Promise.allSettled([
           listIncidents({ limit: 1000 }),
           listDispatchRecords({ limit: 1000 }),
         ]);
         if (mounted) {
+          const incidentRows = settledValue(incidentResult, []);
+          const dispatchRows = settledValue(dispatchResult, []);
           setIncidents(incidentRows);
           setDispatches(dispatchRows);
+          const failed = [incidentResult, dispatchResult].find(result => result.status === 'rejected');
+          if (failed) setError(failed.reason?.message || 'Some analytics data could not be loaded for your role.');
         }
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load analytics data.');

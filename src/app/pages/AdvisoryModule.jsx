@@ -1,13 +1,23 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, BellRing, CheckCircle2, Droplets, Edit3, Megaphone,
   MapPin, Plus, Save, TrafficCone, Trash2, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { deleteAdvisory, formatAdvisoryTime, loadAdvisories, saveAdvisory } from '../utils/advisoryStorage';
+import { formatAdvisoryTime, loadAdvisories } from '../utils/advisoryStorage';
+import { archiveAdvisoryRecord, listAdvisories, saveAdvisoryRecord } from '../services/supabase';
 
-const emptyForm = {
+function toDateTimeLocalValue(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function createEmptyForm() {
+  return {
   id: '',
   title: '',
   message: '',
@@ -16,7 +26,10 @@ const emptyForm = {
   area: 'Echague, Isabela',
   coordinates: null,
   status: 'published',
-};
+  startsAt: toDateTimeLocalValue(new Date()),
+  expiresAt: '',
+  };
+}
 
 const severityOptions = [
   { value: 'critical', label: 'Critical' },
@@ -41,10 +54,36 @@ const severityStyles = {
 
 const categoryLabel = (value) => categoryOptions.find((item) => item.value === value)?.label || 'General';
 
+function getAdvisoryVisibility(advisory) {
+  if (advisory.status !== 'published') return { label: 'draft', className: 'bg-slate-500/10 text-muted-foreground' };
+  const now = Date.now();
+  const startsAt = advisory.startsAt ? new Date(advisory.startsAt).getTime() : 0;
+  const expiresAt = advisory.expiresAt ? new Date(advisory.expiresAt).getTime() : null;
+  if (Number.isFinite(startsAt) && startsAt > now) return { label: 'scheduled', className: 'bg-blue-500/10 text-blue-400' };
+  if (expiresAt && Number.isFinite(expiresAt) && expiresAt <= now) return { label: 'expired', className: 'bg-red-500/10 text-red-400' };
+  return { label: 'active', className: 'bg-green-500/10 text-green-400' };
+}
+
 export default function AdvisoryModule() {
   const [advisories, setAdvisories] = useState(() => loadAdvisories());
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => createEmptyForm());
   const [filter, setFilter] = useState('all');
+  const [loading, setLoading] = useState(true);
+
+  const refreshAdvisories = async () => {
+    setLoading(true);
+    try {
+      setAdvisories(await listAdvisories({ limit: 200 }));
+    } catch (error) {
+      toast.error(error.message || 'Unable to load public advisories.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshAdvisories();
+  }, []);
 
   const filteredAdvisories = useMemo(() => (
     filter === 'all' ? advisories : advisories.filter((item) => item.status === filter)
@@ -54,7 +93,7 @@ export default function AdvisoryModule() {
   const draftCount = advisories.filter((item) => item.status === 'draft').length;
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
-  const resetForm = () => setForm(emptyForm);
+  const resetForm = () => setForm(createEmptyForm());
   const previewMarker = form.coordinates ? [{
     ...form,
     id: form.id || 'advisory-draft-pin',
@@ -63,36 +102,57 @@ export default function AdvisoryModule() {
     coordinates: form.coordinates,
   }] : [];
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.title.trim() || !form.message.trim()) {
-      toast.error('Please add a title and advisory message.');
+    if (!form.title.trim() || !form.message.trim() || !form.category || !form.severity || !form.status || !form.startsAt) {
+      toast.error('Please complete the title, message, type, priority, start date, and status.');
       return;
     }
 
-    const saved = saveAdvisory({
-      ...form,
-      title: form.title.trim(),
-      message: form.message.trim(),
-      area: form.area.trim() || 'Echague, Isabela',
-    });
-    setAdvisories(loadAdvisories());
-    setForm(emptyForm);
-    toast.success(saved.status === 'published' ? 'Advisory published to the public page.' : 'Advisory saved as draft.');
+    if (form.expiresAt && new Date(form.expiresAt) <= new Date(form.startsAt)) {
+      toast.error('End date must be later than the start date.');
+      return;
+    }
+
+    try {
+      const saved = await saveAdvisoryRecord({
+        ...form,
+        title: form.title.trim(),
+        message: form.message.trim(),
+        area: form.area.trim() || 'Echague, Isabela',
+      });
+      setAdvisories(current => (
+        current.some(item => item.id === saved.id)
+          ? current.map(item => (item.id === saved.id ? saved : item))
+          : [saved, ...current]
+      ));
+      setForm(createEmptyForm());
+      toast.success(saved.status === 'published' ? 'Advisory published to the public page.' : 'Advisory saved as draft.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to save public advisory.');
+    }
   };
 
-  const toggleStatus = (advisory) => {
+  const toggleStatus = async (advisory) => {
     const nextStatus = advisory.status === 'published' ? 'draft' : 'published';
-    saveAdvisory({ ...advisory, status: nextStatus });
-    setAdvisories(loadAdvisories());
-    toast.success(nextStatus === 'published' ? 'Advisory is now visible publicly.' : 'Advisory moved to draft.');
+    try {
+      const saved = await saveAdvisoryRecord({ ...advisory, status: nextStatus });
+      setAdvisories(current => current.map(item => (item.id === saved.id ? saved : item)));
+      toast.success(nextStatus === 'published' ? 'Advisory is now visible publicly.' : 'Advisory moved to draft.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to update advisory status.');
+    }
   };
 
-  const removeAdvisory = (id) => {
-    deleteAdvisory(id);
-    setAdvisories(loadAdvisories());
-    if (form.id === id) resetForm();
-    toast.success('Advisory removed.');
+  const removeAdvisory = async (id) => {
+    try {
+      await archiveAdvisoryRecord(id);
+      setAdvisories(current => current.filter(item => item.id !== id));
+      if (form.id === id) resetForm();
+      toast.success('Advisory removed.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to remove advisory.');
+    }
   };
 
   return (
@@ -121,7 +181,7 @@ export default function AdvisoryModule() {
           <div className="mb-4 flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold text-foreground">{form.id ? 'Edit Advisory' : 'New Advisory'}</h2>
-              <p className="text-xs text-muted-foreground">Published advisories appear on the public dashboard.</p>
+              <p className="text-xs text-muted-foreground">Active published advisories appear on the public dashboard.</p>
             </div>
             {form.id && (
               <button type="button" onClick={resetForm} className="grid h-8 w-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary" title="Clear form">
@@ -149,10 +209,31 @@ export default function AdvisoryModule() {
                 </select>
               </label>
               <label className="block">
-                <span className="mb-1 block text-xs font-medium text-muted-foreground">Severity</span>
+                <span className="mb-1 block text-xs font-medium text-muted-foreground">Priority</span>
                 <select value={form.severity} onChange={(event) => updateForm('severity', event.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
                   {severityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
+              </label>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-muted-foreground">Start Date</span>
+                <input
+                  type="datetime-local"
+                  value={form.startsAt}
+                  onChange={(event) => updateForm('startsAt', event.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-muted-foreground">End Date</span>
+                <input
+                  type="datetime-local"
+                  value={form.expiresAt || ''}
+                  onChange={(event) => updateForm('expiresAt', event.target.value)}
+                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+                />
               </label>
             </div>
 
@@ -231,8 +312,12 @@ export default function AdvisoryModule() {
           </div>
 
           <div className="divide-y divide-border">
-            {filteredAdvisories.map((advisory) => {
+            {loading && (
+              <div className="p-8 text-center text-sm text-muted-foreground">Loading advisories from the database...</div>
+            )}
+            {!loading && filteredAdvisories.map((advisory) => {
               const CategoryIcon = categoryOptions.find((item) => item.value === advisory.category)?.icon || Megaphone;
+              const visibility = getAdvisoryVisibility(advisory);
               return (
                 <div key={advisory.id} className="p-4 hover:bg-secondary/30">
                   <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -250,13 +335,23 @@ export default function AdvisoryModule() {
                           {advisory.status === 'published' ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
                           {advisory.status}
                         </span>
+                        <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-semibold ${visibility.className}`}>
+                          {visibility.label}
+                        </span>
                       </div>
                       <h3 className="text-sm font-semibold text-foreground">{advisory.title}</h3>
                       <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{advisory.message}</p>
-                      <div className="mt-2 text-xs text-muted-foreground">{advisory.area} - {formatAdvisoryTime(advisory)}</div>
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        {advisory.area} - Starts {formatAdvisoryTime({ updatedAt: advisory.startsAt, createdAt: advisory.startsAt })}
+                        {advisory.expiresAt ? ` - Ends ${formatAdvisoryTime({ updatedAt: advisory.expiresAt, createdAt: advisory.expiresAt })}` : ''}
+                      </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <button onClick={() => setForm(advisory)} className="grid h-8 w-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-secondary hover:text-foreground" title="Edit advisory">
+                      <button onClick={() => setForm({
+                        ...advisory,
+                        startsAt: toDateTimeLocalValue(advisory.startsAt),
+                        expiresAt: toDateTimeLocalValue(advisory.expiresAt),
+                      })} className="grid h-8 w-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-secondary hover:text-foreground" title="Edit advisory">
                         <Edit3 className="h-4 w-4" />
                       </button>
                       <button onClick={() => toggleStatus(advisory)} className="grid h-8 w-8 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-secondary hover:text-foreground" title={advisory.status === 'published' ? 'Move to draft' : 'Publish advisory'}>
@@ -270,7 +365,7 @@ export default function AdvisoryModule() {
                 </div>
               );
             })}
-            {filteredAdvisories.length === 0 && (
+            {!loading && filteredAdvisories.length === 0 && (
               <div className="p-8 text-center text-sm text-muted-foreground">No advisories found for this view.</div>
             )}
           </div>

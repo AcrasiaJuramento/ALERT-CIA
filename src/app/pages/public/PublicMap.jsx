@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Car, Clock, Crosshair, LocateFixed, MapPin,
-  Navigation, RefreshCw, Route, Search, ShieldAlert, X
+  Megaphone, Navigation, RefreshCw, Route, Search, ShieldAlert, X
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
 import {
+  listPublishedAdvisories,
   listIncidents,
-  listOfficerScrapedMapIncidents,
   listPublicHazardZones,
   listPublicPCRMapIncidents,
   listPublicScrapedMapIncidents,
@@ -240,6 +240,7 @@ function buildRouteAlerts({ incidents, hazardZones, routePoints, currentLocation
 
 export default function PublicMap() {
   const [incidents, setIncidents] = useState([]);
+  const [advisories, setAdvisories] = useState([]);
   const [hazardZones, setHazardZones] = useState([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState(null);
   const [pinMode, setPinMode] = useState(null);
@@ -261,22 +262,22 @@ export default function PublicMap() {
       const [officialSets, pcrLinked, scraped, zones] = await Promise.all([
         Promise.all([
           listIncidents({ publicOnly: true, limit: 300 }),
-          listIncidents({ limit: 300 }).catch(() => []),
         ]),
         listPublicPCRMapIncidents({ limit: 100 }),
         Promise.all([
           listPublicScrapedMapIncidents({ limit: 100 }),
-          listOfficerScrapedMapIncidents({ limit: 200 }).catch(() => []),
         ]),
         listPublicHazardZones({ limit: 100 }),
       ]);
+      const activeAdvisories = await listPublishedAdvisories({ limit: 100 });
       const official = mergeMapRecords(officialSets.flat());
-      const [publicScraped, reviewedScraped] = scraped;
+      const [publicScraped] = scraped;
       const accidentReports = official.filter(item => item.publicVisible || isAccidentRecord(item));
-      const accidentScraped = mergeMapRecords([...publicScraped, ...reviewedScraped]).filter(item => item.publicVisible || isAccidentRecord(item));
+      const accidentScraped = mergeMapRecords(publicScraped).filter(item => item.publicVisible || isAccidentRecord(item));
       const officialIds = new Set(accidentReports.map(item => item.id));
       const pcrOnly = pcrLinked.filter(item => !officialIds.has(item.relatedIncidentId));
       setIncidents(mergeMapRecords([...accidentReports, ...pcrOnly, ...accidentScraped]).filter(hasMapCoordinates).map(sanitizeForPublic));
+      setAdvisories(activeAdvisories.filter(item => item.coordinates));
       setHazardZones(zones);
     } catch (requestError) {
       setError(requestError.message || 'Unable to load live map data.');
@@ -296,6 +297,7 @@ export default function PublicMap() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, () => loadMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => loadMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'hazard_zones' }, () => loadMap())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'public_advisories' }, () => loadMap())
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
@@ -460,6 +462,7 @@ export default function PublicMap() {
           <LeafletIncidentMap
             height="100%"
             incidents={incidents}
+            advisoryMarkers={advisories}
             hazardZones={hazardZones}
             routes={route}
             plannerPoints={{
@@ -504,7 +507,7 @@ export default function PublicMap() {
               <Car className="h-4 w-4 text-blue-500" />
               <h2 className="text-sm font-bold text-foreground">Route Guidance</h2>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {hazardZones.length} hazard zones</p>
+            <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {advisories.length} advisories / {hazardZones.length} hazard zones</p>
             {error && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">{error}</div>}
           </div>
 
@@ -540,6 +543,15 @@ export default function PublicMap() {
           </div>
 
           <Panel title="Active Route Alerts">
+            {advisories.map(advisory => (
+              <div key={`advisory-${advisory.id}`} className={`rounded-lg border p-3 ${severityTone[advisory.severity] || severityTone.warning}`}>
+                <div className="flex items-center gap-2">
+                  <Megaphone className="h-3.5 w-3.5" />
+                  <span className="text-xs font-bold">{advisory.title}</span>
+                </div>
+                <p className="mt-1 text-[11px] opacity-80">{advisory.message}</p>
+              </div>
+            ))}
             {routeAlerts.map(alert => (
               <div key={`${alert.type}-${alert.id}`} className={`rounded-lg border p-3 ${severityTone[alert.severity] || severityTone.moderate}`}>
                 <div className="flex items-center justify-between gap-2">
@@ -549,7 +561,7 @@ export default function PublicMap() {
                 <p className="mt-1 text-[11px] opacity-80">{alert.description}</p>
               </div>
             ))}
-            {!routeAlerts.length && <p className="text-xs text-muted-foreground">No active alerts within the route corridor.</p>}
+            {!routeAlerts.length && !advisories.length && <p className="text-xs text-muted-foreground">No active alerts within the route corridor.</p>}
           </Panel>
 
           <Panel title="Directions">

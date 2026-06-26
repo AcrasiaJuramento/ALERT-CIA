@@ -69,13 +69,22 @@ function incidentPayload(record = {}, barangayId) {
 
 export async function listIncidents({ publicOnly = false, limit = 200, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
+    if (publicOnly) {
+      return client
+        .from("incidents")
+        .select("id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at")
+        .eq("public_visible", true)
+        .is("deleted_at", null)
+        .order("incident_date", { ascending: false })
+        .range(from, from + limit - 1);
+    }
+
     let query = client
       .from("incidents")
       .select("*, barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))")
       .is("deleted_at", null)
       .order("incident_date", { ascending: false })
       .range(from, from + limit - 1);
-    if (publicOnly) query = query.eq("public_visible", true);
     return query;
   }, "Unable to load incidents.");
 

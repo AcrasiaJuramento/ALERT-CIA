@@ -56,7 +56,9 @@ export default function IncidentDetails() {
       setError('');
       try {
         const row = await getIncident(id);
-        const logs = row?.responseId ? await listAuditLogs({ responseId: row.responseId, limit: 20 }) : [];
+        const logs = row?.responseId
+          ? await listAuditLogs({ responseId: row.responseId, limit: 20 }).catch(() => [])
+          : [];
         if (mounted) {
           setIncident(row);
           setAuditLogs(logs);

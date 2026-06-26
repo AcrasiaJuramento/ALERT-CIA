@@ -1,6 +1,5 @@
 import {
   listIncidents,
-  listOfficerScrapedMapIncidents,
   listPublicPCRMapIncidents,
   listPublicScrapedMapIncidents,
 } from '../services/supabase';
@@ -54,12 +53,10 @@ export async function loadPublicAccidentIncidents({ officialLimit = 300, scraped
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
       listIncidents({ publicOnly: true, limit: officialLimit }),
-      listIncidents({ limit: officialLimit }).catch(() => []),
     ]),
     listPublicPCRMapIncidents({ limit: pcrLimit }).catch(() => []),
     Promise.all([
       listPublicScrapedMapIncidents({ limit: scrapedLimit }),
-      listOfficerScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
     ]),
   ]);
 
