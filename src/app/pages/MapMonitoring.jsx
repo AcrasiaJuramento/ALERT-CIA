@@ -126,7 +126,7 @@ export default function MapMonitoring() {
         />
 
         {/* Top overlay bar */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-20">
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-1001">
           <div className="flex items-center gap-2 bg-card/95 border border-border rounded-xl px-4 py-2 shadow-lg">
             <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
             <span className="text-xs text-foreground font-semibold">LIVE MAP</span>
@@ -150,7 +150,7 @@ export default function MapMonitoring() {
         </div>
 
         {/* Layer Control (top right) */}
-        <div className="absolute top-14 right-14 z-20">
+        <div className="absolute top-14 right-14 z-1001">
           <div className="bg-card/95 border border-border rounded-xl p-3 shadow-lg min-w-36">
             <div className="flex items-center gap-1.5 mb-2">
               <Layers className="w-3.5 h-3.5 text-blue-400" />
@@ -178,7 +178,7 @@ export default function MapMonitoring() {
 
         {/* Selected Incident Popup */}
         {selectedInc && (
-          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 w-96">
+          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-1001 w-96">
             <div className={`bg-card/98 border rounded-xl p-4 shadow-2xl ${
               selectedInc.severity === 'critical' ? 'border-red-500/50' :
               selectedInc.severity === 'warning' ? 'border-orange-500/50' :
