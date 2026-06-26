@@ -63,6 +63,40 @@ function hasMapCoordinates(incident) {
   return Number.isFinite(Number(incident?.lat)) && Number.isFinite(Number(incident?.lng));
 }
 
+function isAccidentRecord(record = {}) {
+  const values = [
+    record.type,
+    record.classification,
+    record.incidentType,
+    record.category,
+    record.title,
+    record.description,
+  ].map(value => String(value || '').toLowerCase());
+
+  return values.some(value => (
+    value.includes('accident') ||
+    value.includes('vehicular') ||
+    value.includes('vehicle') ||
+    value.includes('collision') ||
+    value.includes('crash') ||
+    value === 'mvc'
+  ));
+}
+
+function mergeMapRecords(records = []) {
+  const byKey = new Map();
+
+  records.forEach(record => {
+    const key = record.relatedIncidentId || record.recordId || record.id;
+
+    if (!key || byKey.has(key)) return;
+
+    byKey.set(key, record);
+  });
+
+  return [...byKey.values()];
+}
+
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
@@ -87,6 +121,7 @@ export default function MapMonitoring() {
   const [scraperRefreshing, setScraperRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+
 
   useEffect(() => {
     let mounted = true;
@@ -162,19 +197,37 @@ export default function MapMonitoring() {
     }
   };
 
-  const mapIncidents = useMemo(
-    () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
-      .filter(hasMapCoordinates)
-      .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource),
-    [activeSource, incidents, pcrIncidents, scrapedIncidents]
-  );
+  const mapIncidents = useMemo(() => {
+      const officialVehicular = incidents.filter(isAccidentRecord);
+
+      const pcrVehicular = pcrIncidents.filter(isAccidentRecord);
+
+      const scrapedVehicular = scrapedIncidents.filter(isAccidentRecord);
+
+      return mergeMapRecords([
+        ...officialVehicular,
+        ...pcrVehicular,
+        ...scrapedVehicular,
+      ])
+        .filter(hasMapCoordinates)
+        .filter(item =>
+          activeSource === 'all' ||
+          getSourceGroup(item) === activeSource
+        );
+    }, [activeSource, incidents, pcrIncidents, scrapedIncidents]);
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
   const sourceCounts = {
-    all: incidents.length + pcrIncidents.length + scrapedIncidents.length,
-    official: incidents.length,
-    pcr_report: pcrIncidents.length,
-    scraper: scrapedIncidents.length,
+    all:
+      incidents.filter(isAccidentRecord).length +
+      pcrIncidents.filter(isAccidentRecord).length +
+      scrapedIncidents.filter(isAccidentRecord).length,
+
+    official: incidents.filter(isAccidentRecord).length,
+
+    pcr_report: pcrIncidents.filter(isAccidentRecord).length,
+
+    scraper: scrapedIncidents.filter(isAccidentRecord).length,
   };
 
   return (
