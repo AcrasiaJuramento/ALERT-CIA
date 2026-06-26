@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, MapPin, Clock, Filter, Flame, Droplets, Car, Heart, AlertTriangle } from 'lucide-react';
-import { listIncidents, listPublicScrapedMapIncidents } from '../../services/supabase';
 import { getIncidentStatusLabel, INCIDENT_STATUS } from '../../utils/incidentStatus';
+import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
 
 const typeIcons = {
   vehicular: Car,
@@ -45,11 +45,8 @@ export default function PublicIncidentList() {
       setLoading(true);
       setError('');
       try {
-        const [official, scraped] = await Promise.all([
-          listIncidents({ publicOnly: true, limit: 300 }),
-          listPublicScrapedMapIncidents({ limit: 100 }),
-        ]);
-        if (mounted) setIncidents([...official, ...scraped]);
+        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 300, scrapedLimit: 100 });
+        if (mounted) setIncidents(publicIncidents);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incidents.');
       } finally {

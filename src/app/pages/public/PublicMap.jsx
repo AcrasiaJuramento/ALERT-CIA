@@ -6,6 +6,7 @@ import {
 import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
 import {
   listIncidents,
+  listOfficerScrapedMapIncidents,
   listPublicHazardZones,
   listPublicPCRMapIncidents,
   listPublicScrapedMapIncidents,
@@ -44,6 +45,36 @@ function sanitizeForPublic(record = {}) {
 
 function hasMapCoordinates(record) {
   return Number.isFinite(Number(record?.lat)) && Number.isFinite(Number(record?.lng));
+}
+
+function isAccidentRecord(record = {}) {
+  const values = [
+    record.type,
+    record.classification,
+    record.incidentType,
+    record.category,
+    record.title,
+    record.description,
+  ].map(value => String(value || '').toLowerCase());
+
+  return values.some(value => (
+    value.includes('accident')
+    || value.includes('vehicular')
+    || value.includes('vehicle')
+    || value.includes('collision')
+    || value.includes('crash')
+    || value === 'mvc'
+  ));
+}
+
+function mergeMapRecords(records = []) {
+  const byKey = new Map();
+  records.forEach(record => {
+    const key = record.relatedIncidentId || record.recordId || record.id;
+    if (!key || byKey.has(key)) return;
+    byKey.set(key, record);
+  });
+  return [...byKey.values()];
 }
 
 function distanceKm(from, to) {
@@ -225,15 +256,25 @@ export default function PublicMap() {
     setLoading(true);
     setError('');
     try {
-      const [official, pcrLinked, scraped, zones] = await Promise.all([
-        listIncidents({ publicOnly: true, limit: 300 }),
+      const [officialSets, pcrLinked, scraped, zones] = await Promise.all([
+        Promise.all([
+          listIncidents({ publicOnly: true, limit: 300 }),
+          listIncidents({ limit: 300 }).catch(() => []),
+        ]),
         listPublicPCRMapIncidents({ limit: 100 }),
-        listPublicScrapedMapIncidents({ limit: 100 }),
+        Promise.all([
+          listPublicScrapedMapIncidents({ limit: 100 }),
+          listOfficerScrapedMapIncidents({ limit: 200 }).catch(() => []),
+        ]),
         listPublicHazardZones({ limit: 100 }),
       ]);
-      const officialIds = new Set(official.map(item => item.id));
+      const official = mergeMapRecords(officialSets.flat());
+      const [publicScraped, reviewedScraped] = scraped;
+      const accidentReports = official.filter(item => item.publicVisible || isAccidentRecord(item));
+      const accidentScraped = mergeMapRecords([...publicScraped, ...reviewedScraped]).filter(item => item.publicVisible || isAccidentRecord(item));
+      const officialIds = new Set(accidentReports.map(item => item.id));
       const pcrOnly = pcrLinked.filter(item => !officialIds.has(item.relatedIncidentId));
-      setIncidents([...official, ...pcrOnly, ...scraped].filter(hasMapCoordinates).map(sanitizeForPublic));
+      setIncidents(mergeMapRecords([...accidentReports, ...pcrOnly, ...accidentScraped]).filter(hasMapCoordinates).map(sanitizeForPublic));
       setHazardZones(zones);
     } catch (requestError) {
       setError(requestError.message || 'Unable to load live map data.');

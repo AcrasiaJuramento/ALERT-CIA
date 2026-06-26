@@ -4,9 +4,9 @@ import {
   AlertTriangle, Activity, CheckCircle2, MapPin, Clock, ChevronRight,
   Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2
 } from 'lucide-react';
-import { listIncidents, listPublicScrapedMapIncidents } from '../../services/supabase';
 import { ADVISORY_EVENT, formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
+import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
 
 const typeIcons = {
   vehicular: Car,
@@ -56,11 +56,8 @@ export default function PublicDashboard() {
       setLoading(true);
       setError('');
       try {
-        const [official, scraped] = await Promise.all([
-          listIncidents({ publicOnly: true, limit: 200 }),
-          listPublicScrapedMapIncidents({ limit: 100 }),
-        ]);
-        if (mounted) setIncidents([...official, ...scraped]);
+        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 200, scrapedLimit: 100 });
+        if (mounted) setIncidents(publicIncidents);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incident data.');
       } finally {
