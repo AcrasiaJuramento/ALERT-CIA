@@ -1,6 +1,10 @@
 import { runSupabaseRequest } from "./errors";
 import { findBarangayByName } from "./referenceService";
 
+function asRows(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function incidentToApp(row = {}) {
   const classification = row.classification || "other";
   const priority = row.priority || "medium";
@@ -88,7 +92,7 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0 
     return query;
   }, "Unable to load incidents.");
 
-  return rows.map(incidentToApp);
+  return asRows(rows).map(incidentToApp);
 }
 
 export async function getIncident(incidentId) {

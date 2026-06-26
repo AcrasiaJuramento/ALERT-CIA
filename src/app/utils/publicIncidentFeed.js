@@ -26,7 +26,8 @@ function isAccidentRecord(record = {}) {
 
 function mergeMapRecords(records = []) {
   const byKey = new Map();
-  records.forEach(record => {
+  const safeRecords = Array.isArray(records) ? records : [];
+  safeRecords.forEach(record => {
     const key = record.relatedIncidentId || record.recordId || record.id;
     if (!key || byKey.has(key)) return;
     byKey.set(key, record);
@@ -52,21 +53,24 @@ function sanitizeForPublic(record = {}) {
 export async function loadPublicAccidentIncidents({ officialLimit = 300, scrapedLimit = 200, pcrLimit = 100 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
-      listIncidents({ publicOnly: true, limit: officialLimit }),
+      listIncidents({ publicOnly: true, limit: officialLimit }).catch(() => []),
     ]),
     listPublicPCRMapIncidents({ limit: pcrLimit }).catch(() => []),
     Promise.all([
-      listPublicScrapedMapIncidents({ limit: scrapedLimit }),
+      listPublicScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
     ]),
   ]);
 
-  const official = mergeMapRecords(officialSets.flat());
-  const [publicScraped, reviewedScraped] = scrapedSets;
+  const official = mergeMapRecords((Array.isArray(officialSets) ? officialSets : []).flat());
+  const [publicScraped = [], reviewedScraped = []] = Array.isArray(scrapedSets) ? scrapedSets : [];
   const publicAndAccidentReports = official.filter(item => item.publicVisible || isAccidentRecord(item));
-  const scrapedAccidents = mergeMapRecords([...publicScraped, ...reviewedScraped])
+  const scrapedAccidents = mergeMapRecords([
+    ...(Array.isArray(publicScraped) ? publicScraped : []),
+    ...(Array.isArray(reviewedScraped) ? reviewedScraped : []),
+  ])
     .filter(item => item.publicVisible || isAccidentRecord(item));
   const officialIds = new Set(publicAndAccidentReports.map(item => item.id));
-  const pcrOnly = pcrLinked.filter(item => !officialIds.has(item.relatedIncidentId));
+  const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : []).filter(item => !officialIds.has(item.relatedIncidentId));
 
   return mergeMapRecords([...publicAndAccidentReports, ...pcrOnly, ...scrapedAccidents]).map(sanitizeForPublic);
 }

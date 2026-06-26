@@ -18,6 +18,10 @@ const PCR_SELECT = `
   pcr_attachments(*)
 `;
 
+function asRows(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
@@ -30,7 +34,7 @@ export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
     return query;
   }, "Unable to load PCR reports.");
 
-  return rows.map(pcrToApp);
+  return asRows(rows).map(pcrToApp);
 }
 
 function priorityToSeverity(priority = "medium") {
@@ -95,7 +99,8 @@ export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = 
     return query;
   }, "Unable to load PCR map reports.");
 
-  const responseIds = rows.map(row => row.response_id).filter(Boolean);
+  const pcrRows = asRows(rows);
+  const responseIds = pcrRows.map(row => row.response_id).filter(Boolean);
   if (!responseIds.length) return [];
 
   const incidents = await runSupabaseRequest(client => {
@@ -110,8 +115,8 @@ export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = 
     return query;
   }, "Unable to load PCR map locations.");
 
-  const incidentByResponse = new Map(incidents.map(incident => [incident.response_id, incident]));
-  return rows
+  const incidentByResponse = new Map(asRows(incidents).map(incident => [incident.response_id, incident]));
+  return pcrRows
     .map(row => {
       const incident = incidentByResponse.get(row.response_id);
       return incident ? pcrMapRowToIncident(row, incident, { publicSafe: publicOnly }) : null;
@@ -124,7 +129,7 @@ export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
     client.rpc("public_pcr_map_incidents", { max_rows: limit }),
   "Unable to load public PCR map records.");
 
-  return (rows || []).map(row => {
+  return asRows(rows).map(row => {
     const dateValue = row.incident_date ? new Date(row.incident_date) : new Date();
     return {
       id: `INC-${String(row.incident_id).slice(0, 8)}`,

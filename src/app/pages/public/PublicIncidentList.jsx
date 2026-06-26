@@ -46,7 +46,7 @@ export default function PublicIncidentList() {
       setError('');
       try {
         const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 300, scrapedLimit: 100 });
-        if (mounted) setIncidents(publicIncidents);
+        if (mounted) setIncidents(Array.isArray(publicIncidents) ? publicIncidents : []);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incidents.');
       } finally {
