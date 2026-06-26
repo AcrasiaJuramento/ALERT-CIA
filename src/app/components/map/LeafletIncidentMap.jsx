@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CircleMarker, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { LocateFixed, Layers, RefreshCw } from 'lucide-react';
+import { ChevronDown, LocateFixed, Layers, RefreshCw } from 'lucide-react';
 import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
@@ -143,6 +143,9 @@ export function LeafletIncidentMap({
   compact = false,
   autoFit = true,
   onMapClick,
+  externalLayers,
+  onExternalLayersChange,
+  hideLayerControl = false,
 }) {
   const [layers, setLayers] = useState({
     heatmap: showHeatmap,
@@ -153,6 +156,15 @@ export function LeafletIncidentMap({
     locate: false,
   });
   const [followUser, setFollowUser] = useState(false);
+  const [layerMenuOpen, setLayerMenuOpen] = useState(false);
+  const effectiveLayers = { ...layers, ...(externalLayers || {}) };
+  const setLayerValue = (key, checked) => {
+    if (externalLayers && onExternalLayersChange) {
+      onExternalLayersChange({ ...externalLayers, [key]: checked });
+      return;
+    }
+    setLayers((current) => ({ ...current, [key]: checked }));
+  };
 
   const activeIncidents = useMemo(
     () => incidents.filter((incident) => !isIncidentCompleted(incident.status)),
@@ -185,12 +197,12 @@ export function LeafletIncidentMap({
           />
         )}
         <ClusteredIncidentMarkers
-          incidents={layers.incidents ? incidents : []}
+          incidents={effectiveLayers.incidents ? incidents : []}
           selectedIncidentId={selectedIncidentId}
           onMarkerClick={onMarkerClick}
           enabled={clusterMarkers}
         />
-        {!clusterMarkers && layers.incidents && (
+        {!clusterMarkers && effectiveLayers.incidents && (
           <ClusteredIncidentMarkers
             incidents={incidents}
             selectedIncidentId={selectedIncidentId}
@@ -199,45 +211,54 @@ export function LeafletIncidentMap({
           />
         )}
         <AdvisoryMarkersLayer
-          advisories={layers.advisories ? advisoryMarkers : []}
+          advisories={effectiveLayers.advisories ? advisoryMarkers : []}
           selectedAdvisoryId={selectedAdvisoryId}
           onAdvisoryClick={onAdvisoryClick}
         />
-        <HeatmapLayer points={[]} enabled={layers.heatmap} />
-        <HazardZonesLayer zones={hazardZones} enabled={layers.dangerZones} />
-        <RouteLayer routes={layers.routes ? routes : []} />
+        <HeatmapLayer points={[]} enabled={effectiveLayers.heatmap} />
+        <HazardZonesLayer zones={hazardZones} enabled={effectiveLayers.dangerZones} />
+        <RouteLayer routes={effectiveLayers.routes ? routes : []} />
         <PlannerPointsLayer points={plannerPoints} />
         <UserLocationLayer enabled={layers.locate} followUser={followUser} />
       </MapContainer>
 
-      {!compact && (
-        <div className="absolute left-3 top-3 z-[500] rounded-lg border border-border bg-card/95 p-2 text-xs shadow-lg backdrop-blur">
-          <div className="mb-1 flex items-center gap-1.5 font-medium text-muted-foreground">
+      {!compact && !hideLayerControl && (
+        <div className="absolute left-3 top-3 z-[500] text-xs">
+          <button
+            onClick={() => setLayerMenuOpen(current => !current)}
+            className="flex h-10 items-center gap-2 rounded-lg border border-border bg-card/95 px-3 font-semibold text-muted-foreground shadow-lg backdrop-blur hover:bg-secondary hover:text-foreground"
+            title="Map layers"
+          >
             <Layers className="h-3.5 w-3.5 text-blue-400" />
             Layers
-          </div>
-          {[
-            ['incidents', 'Incidents'],
-            ['advisories', 'Advisories'],
-            ['heatmap', 'Heatmap'],
-            ['dangerZones', 'Geofences'],
-            ['routes', 'Routes'],
-          ].map(([key, label]) => (
-            <label key={key} className="flex cursor-pointer items-center gap-2 py-0.5 text-foreground/85">
-              <input
-                type="checkbox"
-                checked={layers[key]}
-                onChange={(event) => setLayers((current) => ({ ...current, [key]: event.target.checked }))}
-                className="accent-blue-500"
-              />
-              <span>{label}</span>
-            </label>
-          ))}
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${layerMenuOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {layerMenuOpen && (
+            <div className="mt-2 w-44 rounded-lg border border-border bg-card/95 p-2 shadow-xl backdrop-blur">
+              {[
+                ['incidents', 'Incidents'],
+                ['advisories', 'Advisories'],
+                ['heatmap', 'Heatmap'],
+                ['dangerZones', 'Geofences'],
+                ['routes', 'Routes'],
+              ].map(([key, label]) => (
+                <label key={key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-foreground/85 hover:bg-secondary">
+                  <input
+                    type="checkbox"
+                    checked={effectiveLayers[key]}
+                    onChange={(event) => setLayerValue(key, event.target.checked)}
+                    className="accent-blue-500"
+                  />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {showControls && (
-        <div className="absolute right-3 top-3 z-[500] flex flex-col gap-2">
+        <div className="absolute bottom-28 right-3 z-[500] flex flex-col gap-2">
           <button
             onClick={() => setLayers((current) => ({ ...current, locate: !current.locate }))}
             className={`flex h-9 w-9 items-center justify-center rounded-lg border shadow-lg transition-all ${

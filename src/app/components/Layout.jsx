@@ -86,7 +86,7 @@ export default function Layout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <header className="h-16 bg-card border-b border-border flex items-center px-4 gap-3 shrink-0">
+        <header className="relative z-[2000] h-16 bg-card border-b border-border flex items-center px-4 gap-3 shrink-0">
           <button onClick={() => setMobileSidebarOpen(true)} className="md:hidden w-8 h-8 grid place-items-center rounded-lg text-muted-foreground hover:bg-secondary"><Menu className="w-4 h-4" /></button>
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="hidden md:grid w-8 h-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary">{sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}</button>
           <div className="min-w-0">
@@ -101,15 +101,38 @@ export default function Layout() {
 
           <div className="relative">
             <button onClick={() => { setNotifOpen(!notifOpen); setUserMenuOpen(false); }} className="relative w-9 h-9 grid place-items-center rounded-lg text-muted-foreground hover:bg-secondary"><Bell className="w-5 h-5" />{unreadCount > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />}</button>
-            {notifOpen && <div className="absolute right-0 top-11 w-80 max-w-[calc(100vw-2rem)] bg-card border border-border rounded-xl shadow-xl z-60 overflow-hidden"><div className="px-4 py-3 border-b border-border font-semibold text-sm">Notifications</div><div className="max-h-96 overflow-y-auto">{notifications.slice(0, 10).map(n => <button key={n.id} onClick={() => openPCRNotification(n)} className={`w-full text-left px-4 py-3 border-b border-border/50 hover:bg-secondary/50 ${!n.read ? 'bg-blue-500/5' : ''}`}><div className="text-xs text-foreground">{n.title}</div><div className="text-xs text-muted-foreground">{n.message}</div></button>)}</div></div>}
+            {notifOpen && (
+              <div className="fixed right-4 top-16 z-[2100] w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
+                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">Notifications</div>
+                    <div className="text-[10px] text-muted-foreground">{unreadCount} unread</div>
+                  </div>
+                  <button onClick={() => setNotifOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground" title="Close notifications">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="max-h-[min(420px,calc(100vh-6rem))] overflow-y-auto">
+                  {notifications.slice(0, 10).map(n => (
+                    <button key={n.id} onClick={() => openPCRNotification(n)} className={`w-full border-b border-border/50 px-4 py-3 text-left hover:bg-secondary/50 ${!n.read ? 'bg-blue-500/5' : ''}`}>
+                      <div className="text-xs font-semibold text-foreground">{n.title}</div>
+                      <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{n.message}</div>
+                    </button>
+                  ))}
+                  {!notifications.length && (
+                    <div className="px-4 py-8 text-center text-xs text-muted-foreground">No notifications yet.</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="relative">
             <button onClick={() => { setUserMenuOpen(!userMenuOpen); setNotifOpen(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-secondary"><div className="w-8 h-8 bg-blue-600 rounded-full grid place-items-center text-xs font-bold text-white">{user.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="hidden md:block text-left"><div className="text-xs font-semibold text-foreground">{user.name}</div><div className="text-[10px] text-muted-foreground">{roleLabel}</div></div><ChevronDown className="w-3 h-3 text-muted-foreground" /></button>
-            {userMenuOpen && <div className="absolute right-0 top-11 w-52 bg-card border border-border rounded-xl shadow-xl z-60 overflow-hidden"><div className="px-4 py-3 border-b border-border"><div className="text-xs font-semibold">{user.name}</div><div className="text-[10px] text-muted-foreground">{user.email}</div></div><button onClick={handleLogout} className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-secondary">Logout</button></div>}
+            {userMenuOpen && <div className="fixed right-4 top-16 z-[2100] w-52 bg-card border border-border rounded-lg shadow-2xl overflow-hidden"><div className="px-4 py-3 border-b border-border"><div className="text-xs font-semibold">{user.name}</div><div className="text-[10px] text-muted-foreground">{user.email}</div></div><button onClick={handleLogout} className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-secondary">Logout</button></div>}
           </div>
         </header>
-        <main className="flex-1 overflow-auto bg-background"><Outlet /></main>
+        <main className="relative z-0 flex-1 overflow-auto bg-background"><Outlet /></main>
       </div>
     </div>
   );
