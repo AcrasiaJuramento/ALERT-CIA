@@ -58,7 +58,7 @@ export default function IncidentList() {
       setError('');
       try {
         const rows = await listIncidents({ limit: 500 });
-        if (mounted) setIncidents(rows);
+        if (mounted) setIncidents(Array.isArray(rows) ? rows : []);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load incidents.');
       } finally {

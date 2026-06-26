@@ -10,6 +10,10 @@ const ECHAGUE_BOUNDS = {
   east: 121.74,
 };
 
+function asRows(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function scraperRecordToApp(row = {}) {
   return {
     id: row.id,
@@ -156,7 +160,7 @@ export async function listScraperRecords({ status, category, sourceId, limit = 1
     return query;
   }, "Unable to load scraper records.");
 
-  return rows.map(scraperRecordToApp);
+  return asRows(rows).map(scraperRecordToApp);
 }
 
 export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
@@ -175,7 +179,7 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
       .limit(limit),
   "Unable to load public scraper map incidents.");
 
-  return rows.map(scraperRecordToMapIncident);
+  return asRows(rows).map(scraperRecordToMapIncident);
 }
 
 export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
@@ -193,7 +197,7 @@ export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
       .limit(limit),
   "Unable to load officer scraper map incidents.");
 
-  return rows.map(scraperRecordToMapIncident);
+  return asRows(rows).map(scraperRecordToMapIncident);
 }
 
 export async function updateScraperRecordStatus(recordId, status, errorMessage = null) {
