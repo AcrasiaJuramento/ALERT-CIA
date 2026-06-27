@@ -166,10 +166,11 @@ export default function MapMonitoring() {
     setScraperError('');
     setScraperMessage('');
     try {
-      const result = await triggerScraperRefresh({ type: 'all' });
-      const inserted = result.totals?.inserted ?? 0;
-      const duplicates = result.totals?.duplicates ?? 0;
-      setScraperMessage(`Scraper updated: ${inserted} new, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
+      const result = await triggerScraperRefresh({ type: 'all', mode: 'update' });
+      const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
+      const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
+      const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
+      setScraperMessage(`Scraper updated: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
       setReloadKey(key => key + 1);
     } catch (error) {
       setScraperError(error.message || 'Unable to refresh scraper data.');

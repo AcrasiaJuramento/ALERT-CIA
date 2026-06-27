@@ -9,7 +9,7 @@ export function startScraperScheduler() {
 
   globalThis[globalKey] = setInterval(async () => {
     try {
-      await runScraper({ endpointType: "all" });
+      await runScraper({ endpointType: "all", mode: "update" });
     } catch (error) {
       console.error("[alert-cia-scraper] scheduled run failed:", error);
     }

@@ -1,7 +1,7 @@
 import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
 
-const scraperApiBaseUrl = import.meta.env.VITE_SCRAPER_API_URL || "http://localhost:3000";
+const scraperApiBaseUrl = import.meta.env.VITE_SCRAPER_API_URL || "http://127.0.0.1:3000";
 
 const ECHAGUE_BOUNDS = {
   north: 16.765,
@@ -111,7 +111,7 @@ export async function listScraperSources() {
   "Unable to load scraper sources.");
 }
 
-export async function triggerScraperRefresh({ type = "all" } = {}) {
+export async function triggerScraperRefresh({ type = "all", mode = "update" } = {}) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase authentication is required to refresh scraper data.");
   }
@@ -121,12 +121,17 @@ export async function triggerScraperRefresh({ type = "all" } = {}) {
   const token = data.session?.access_token;
   if (!token) throw new Error("Sign in again before refreshing scraper data.");
 
-  const response = await fetch(`${scraperApiBaseUrl.replace(/\/$/, "")}/api/run?type=${encodeURIComponent(type)}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  let response;
+  try {
+    response = await fetch(`${scraperApiBaseUrl.replace(/\/$/, "")}/api/run?type=${encodeURIComponent(type)}&mode=${encodeURIComponent(mode)}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  } catch {
+    throw new Error(`Scraper API is unreachable at ${scraperApiBaseUrl}. Start the alert-cia-scraper service and try again.`);
+  }
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok || payload.success === false) {

@@ -16,6 +16,12 @@ function getEndpointType(request) {
   // "all", "incidents", 
 }
 
+function getMode(request, { cron = false } = {}) {
+  if (cron) return "update";
+  const { searchParams } = new URL(request.url);
+  return searchParams.get("mode") === "full" ? "full" : "update";
+}
+
 function isCronAuthorized(request) {
   const secret = process.env.SCRAPER_CRON_SECRET;
   if (!secret) return false;
@@ -24,7 +30,7 @@ function isCronAuthorized(request) {
 
 async function handleRun(request, { allowCron = false } = {}) {
   if (allowCron && isCronAuthorized(request)) {
-    const result = await runScraper({ endpointType: getEndpointType(request) });
+    const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }) });
     return Response.json(
       { ...result, triggeredBy: "cron" },
       {
@@ -44,7 +50,7 @@ async function handleRun(request, { allowCron = false } = {}) {
     );
   }
 
-  const result = await runScraper({ endpointType: getEndpointType(request) });
+  const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request) });
   return Response.json(
     {
       ...result,
