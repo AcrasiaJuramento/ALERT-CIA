@@ -1,5 +1,6 @@
 import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
+import { resolveIsabelaBarangayGeometry } from "../../data/isabelaBarangayGeometry";
 
 const scraperApiBaseUrl = import.meta.env.VITE_SCRAPER_API_URL || "http://127.0.0.1:3000";
 
@@ -39,6 +40,13 @@ function scraperRecordToApp(row = {}) {
     errorMessage: row.error_message || "",
     rawPayload: row.raw_payload || {},
     publicVisible: Boolean(row.public_visible),
+    rawLocationText: row.raw_location_text || row.location_text || "",
+    extractedBarangay: row.extracted_barangay || row.raw_payload?.location?.barangay || "",
+    extractedMunicipality: row.extracted_municipality || row.raw_payload?.location?.municipality || "",
+    extractedProvince: row.extracted_province || row.raw_payload?.location?.province || "",
+    geocodePrecision: row.geocode_precision || row.raw_payload?.geocode_precision || "",
+    matchConfidence: Number(row.match_confidence || 0),
+    mappingStatus: row.mapping_status || "needs_review",
   };
 }
 
@@ -69,10 +77,36 @@ function latLngToPercentCoordinates(lat, lng) {
   };
 }
 
-function scraperRecordToMapIncident(row = {}) {
+function normalizedBarangayName(value = "") {
+  return String(value).toLowerCase()
+    .replace(/\bgeneral\b/g, "gen")
+    .replace(/\bsanta\b/g, "sta")
+    .replace(/\bsanto\b/g, "sto")
+    .replace(/\b(?:barangay|brgy|bgy|baryo)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function geographyPoint(value) {
+  if (value?.type === "Point" && Array.isArray(value.coordinates)) {
+    return { lat: Number(value.coordinates[1]), lng: Number(value.coordinates[0]) };
+  }
+  if (typeof value === "string") {
+    const match = value.match(/POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)/i);
+    if (match) return { lat: Number(match[2]), lng: Number(match[1]) };
+  }
+  return null;
+}
+
+function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
   const type = incidentTypeToMapType(row);
-  const lat = Number(row.latitude);
-  const lng = Number(row.longitude);
+  const extractedBarangay = row.extracted_barangay || row.raw_payload?.location?.barangay || "";
+  const linkedBarangayMatches = extractedBarangay && row.barangay?.name &&
+    normalizedBarangayName(extractedBarangay) === normalizedBarangayName(row.barangay.name);
+  const centroid = linkedBarangayMatches ? geographyPoint(row.barangay?.centroid) : null;
+  const precision = row.geocode_precision || row.raw_payload?.geocode_precision || "unknown";
+  const geocodeIsSafe = !extractedBarangay || ["barangay", "road", "barangay_master"].includes(precision);
+  const lat = boundaryPoint?.lat ?? centroid?.lat ?? (geocodeIsSafe ? Number(row.latitude) : Number.NaN);
+  const lng = boundaryPoint?.lng ?? centroid?.lng ?? (geocodeIsSafe ? Number(row.longitude) : Number.NaN);
   const date = row.scraped_at ? new Date(row.scraped_at) : new Date();
 
   return {
@@ -102,7 +136,23 @@ function scraperRecordToMapIncident(row = {}) {
     reportedBy: row.source_site || "Scraper",
     publicVisible: Boolean(row.public_visible),
     scraperStatus: row.status,
+    barangayBoundary: boundaryPoint?.feature || null,
+    locationPrecision: boundaryPoint?.precision || (centroid ? "barangay_master" : precision),
+    coordinateSource: boundaryPoint?.source || (centroid ? "Supabase barangay centroid" : row.raw_payload?.geocoded_from || "geocoder"),
+    mappingStatus: boundaryPoint ? "matched_barangay" : row.mapping_status || "needs_review",
+    matchConfidence: boundaryPoint ? 1 : Number(row.match_confidence || 0),
   };
+}
+
+async function scraperRowsToMapIncidents(rows = []) {
+  return Promise.all(rows.map(async (row) => {
+    const location = row.raw_payload?.location || {};
+    const boundaryPoint = await resolveIsabelaBarangayGeometry({
+      barangay: row.extracted_barangay || location.barangay || row.barangay?.name,
+      municipality: row.extracted_municipality || location.municipality || row.barangay?.municipality,
+    });
+    return scraperRecordToMapIncident(row, boundaryPoint);
+  }));
 }
 
 export async function listScraperSources() {
@@ -141,6 +191,16 @@ export async function triggerScraperRefresh({ type = "all", mode = "update" } = 
   return payload;
 }
 
+export async function getScraperProgress() {
+  try {
+    const response = await fetch(`${scraperApiBaseUrl.replace(/\/$/, "")}/api/status`);
+    const payload = await response.json().catch(() => ({}));
+    return response.ok ? payload.progress || null : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listScraperRuns({ limit = 50 } = {}) {
   return runSupabaseRequest(client =>
     client
@@ -174,17 +234,15 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   const rows = await runSupabaseRequest(client =>
     client
       .from("scraper_records")
-      .select("*")
+      .select("*, barangay:barangays(id, name, municipality, province, centroid)")
       .eq("public_visible", true)
       .in("status", ["approved", "promoted", "matched", "imported"])
       .is("deleted_at", null)
-      .not("latitude", "is", null)
-      .not("longitude", "is", null)
       .order("scraped_at", { ascending: false })
       .limit(limit),
   "Unable to load public scraper map incidents.");
 
-  return asRows(rows).map(scraperRecordToMapIncident);
+  return scraperRowsToMapIncidents(asRows(rows));
 }
 
 export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
@@ -193,16 +251,14 @@ export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
   const rows = await runSupabaseRequest(client =>
     client
       .from("scraper_records")
-      .select("*, barangay:barangays(id, name), source:scraper_sources(id, name, source_key)")
+      .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
       .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
       .is("deleted_at", null)
-      .not("latitude", "is", null)
-      .not("longitude", "is", null)
       .order("scraped_at", { ascending: false })
       .limit(limit),
   "Unable to load officer scraper map incidents.");
 
-  return asRows(rows).map(scraperRecordToMapIncident);
+  return scraperRowsToMapIncidents(asRows(rows));
 }
 
 export async function updateScraperRecordStatus(recordId, status, errorMessage = null) {

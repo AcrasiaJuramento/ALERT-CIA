@@ -7,6 +7,7 @@ import { fetchHTML, fetchHTMLBatch } from "../lib/fetchHTML";
 import { isRelevant } from "../lib/filters";
 import { geocode } from "../lib/geocode";
 import { extractLocation, isValidLocation } from "../lib/locations";
+import { startScraperProgress, updateScraperProgress } from "../lib/progress";
 import { findExistingSourceUrls } from "../lib/scraperStore";
 import { normalizeUrl } from "../lib/urls";
 
@@ -16,10 +17,17 @@ async function listPages(source, mode, stats) {
   const maxPages = mode === "full" ? source.maxPagesFull : source.maxPagesUpdate;
   const links = new Set();
   let nextUrl = source.firstPageUrl;
+  let detectedNextUrl = null;
   let duplicateHeavyPages = 0;
+  const visitedPages = new Set();
 
-  for (let page = 1; page <= maxPages && nextUrl; page += 1) {
-    const pageUrl = source.paginationType === "next_link" ? nextUrl : source.pageUrl(page);
+  for (let page = 1; page <= maxPages; page += 1) {
+    const pageUrl = source.paginationType === "next_link"
+      ? nextUrl
+      : detectedNextUrl || source.pageUrl(page);
+    if (!pageUrl || visitedPages.has(pageUrl)) break;
+    visitedPages.add(pageUrl);
+    updateScraperProgress({ phase: "pages", page, max_pages: maxPages, page_url: pageUrl, article: 0, articles_total: 0 });
     const html = await fetchHTML(pageUrl, { cacheTtlMs: mode === "full" ? 30 * 60 * 1000 : 3 * 60 * 1000 });
     stats.pages_checked += 1;
     if (!html) {
@@ -41,9 +49,11 @@ async function listPages(source, mode, stats) {
       if (duplicateHeavyPages >= 2) break;
     }
 
-    nextUrl = extractNextPage(html, pageUrl);
-    if (source.paginationType === "next_link" && !nextUrl) break;
-    if (source.paginationType !== "next_link" && page >= maxPages) break;
+    detectedNextUrl = extractNextPage(html, pageUrl);
+    if (source.paginationType === "next_link") {
+      nextUrl = detectedNextUrl;
+      if (!nextUrl) break;
+    }
   }
   return [...links];
 }
@@ -56,11 +66,14 @@ async function processSource(source, mode, stats, seenUrls) {
 
   const existing = await findExistingSourceUrls(normalizedLinks);
   stats.duplicates_skipped += existing.size;
-  const pending = normalizedLinks.filter((url) => !existing.has(url));
+  // Full mode re-fetches known URLs so improved extraction can repair stored mappings.
+  const pending = mode === "full" ? normalizedLinks : normalizedLinks.filter((url) => !existing.has(url));
+  updateScraperProgress({ phase: "downloading_articles", article: 0, articles_total: pending.length });
   const pages = await fetchHTMLBatch(pending, { concurrency: 5, cacheTtlMs: 15 * 60 * 1000 });
   const records = [];
 
-  for (const url of pending) {
+  for (const [articleIndex, url] of pending.entries()) {
+    updateScraperProgress({ phase: "processing_articles", article: articleIndex + 1, articles_total: pending.length });
     const html = pages.get(url);
     stats.articles_checked += 1;
     if (!html) { stats.failed_urls.push(url); continue; }
@@ -93,6 +106,7 @@ async function processSource(source, mode, stats, seenUrls) {
       display_name: geo.display_name,
       geocoded_from: geo.geocoded_from,
       geocode_status: geo.geocode_status,
+      geocode_precision: geo.geocode_precision,
       geocode_confidence: geo.geocode_confidence,
     };
     record.incident_key = incidentKey(record);
@@ -112,15 +126,29 @@ export async function scrapeSources({ mode = "update" } = {}) {
   };
   const records = [];
   const seenUrls = new Set();
+  startScraperProgress({ mode: safeMode, sourcesTotal: ENABLED_SOURCES.length });
 
-  for (const source of ENABLED_SOURCES) {
+  for (const [sourceIndex, source] of ENABLED_SOURCES.entries()) {
     stats.sources_checked += 1;
+    updateScraperProgress({
+      phase: "pages",
+      source_key: source.key,
+      source_name: source.name,
+      source_index: sourceIndex + 1,
+      sources_total: ENABLED_SOURCES.length,
+      page: 0,
+      max_pages: safeMode === "full" ? source.maxPagesFull : source.maxPagesUpdate,
+      page_url: source.firstPageUrl,
+      article: 0,
+      articles_total: 0,
+    });
     try {
       records.push(...await processSource(source, safeMode, stats, seenUrls));
     } catch (error) {
       stats.failed_urls.push(`${source.key}: ${error.message}`);
     }
   }
+  updateScraperProgress({ phase: "saving", page_url: null, article: 0, articles_total: records.length });
   return { mode: safeMode, records, stats };
 }
 

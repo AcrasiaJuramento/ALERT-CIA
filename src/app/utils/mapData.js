@@ -7,6 +7,19 @@ const ECHAGUE_BOUNDS = {
 
 export const ECHAGUE_CENTER = [16.705, 121.676];
 
+function toCoordinate(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const coordinate = Number(value);
+  return Number.isFinite(coordinate) ? coordinate : null;
+}
+
+export function hasValidLatLng(record = {}) {
+  const lat = toCoordinate(record.lat ?? record.latitude);
+  const lng = toCoordinate(record.lng ?? record.longitude ?? record.lon);
+
+  return lat !== null && lng !== null && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
 export function percentToLatLng(coordinates = {}) {
   const x = Number(coordinates.x ?? 50);
   const y = Number(coordinates.y ?? 50);
@@ -36,12 +49,12 @@ export function latLngToSvgPoint(latLng = {}, width = 900, height = 650) {
 }
 
 export function getIncidentLatLng(incident) {
-  if (Number.isFinite(incident?.lat) && Number.isFinite(incident?.lng)) {
-    return [incident.lat, incident.lng];
+  if (hasValidLatLng({ lat: incident?.lat, lng: incident?.lng ?? incident?.lon })) {
+    return [Number(incident.lat), Number(incident.lng ?? incident.lon)];
   }
 
-  if (Number.isFinite(incident?.latitude) && Number.isFinite(incident?.longitude)) {
-    return [incident.latitude, incident.longitude];
+  if (hasValidLatLng({ lat: incident?.latitude, lng: incident?.longitude })) {
+    return [Number(incident.latitude), Number(incident.longitude)];
   }
 
   return percentToLatLng(incident?.coordinates);
@@ -81,7 +94,7 @@ export function getHeatPoint(zone) {
 }
 
 export function getBoundsForIncidents(incidents = []) {
-  const points = incidents.map(getIncidentLatLng);
+  const points = incidents.filter(hasValidLatLng).map(getIncidentLatLng);
   if (!points.length) return null;
 
   return points;

@@ -1,13 +1,14 @@
 const TYPES = {
-  vehicular: ["accident", "aksidente", "banggaan", "salpukan", "nabangga", "bumangga", "tumaob", "collision", "crash", "hit and run", "vehicular", "motorcycle", "truck accident", "bus accident"],
-  fire: ["sunog", "fire", "blaze", "nasunog"],
-  flood: ["baha", "flood", "flash flood", "overflowed"],
-  landslide: ["landslide", "pagguho", "mudslide"],
-  robbery: ["holdap", "hold-up", "robbery", "nakawan", "theft", "stolen"],
-  shooting: ["shooting", "binaril", "gunshot"],
-  stabbing: ["stabbed", "stabbing", "sinaksak"],
+  vehicular: ["accident", "aksidente", "disgrasya", "nadisgrasya", "banggaan", "nagbanggaan", "nagkabanggaan", "salpukan", "sumalpok", "nasalpok", "nabangga", "bumangga", "tumaob", "tumagilid", "tumilapon", "nasagasaan", "sagasaan", "inararo", "nahulog sa bangin", "nawalan ng preno", "collision", "crash", "hit and run", "vehicular", "motorcycle", "motorsiklo", "truck accident", "bus accident"],
+  fire: ["sunog", "fire", "blaze", "nasunog", "nagliyab", "tinupok ng apoy", "nilamon ng apoy"],
+  flood: ["baha", "binaha", "pagbaha", "rumagasang tubig", "apaw", "flood", "flash flood", "overflowed"],
+  landslide: ["landslide", "pagguho", "gumuho ang lupa", "gumuhong lupa", "mudslide"],
+  robbery: ["holdap", "holdaper", "hold-up", "robbery", "nakawan", "ninakaw", "ninakawan", "nilooban", "tinangay", "hablot", "akyat-bahay", "theft", "stolen"],
+  shooting: ["shooting", "pamamaril", "binaril", "nabaril", "pinagbabaril", "gunshot"],
+  stabbing: ["stabbed", "stabbing", "pananaksak", "sinaksak", "nasaksak"],
+  homicide: ["pinaslang", "pinatay", "pagpatay", "murder", "homicide"],
   drowning: ["drowned", "drowning", "nalunod"],
-  rescue: ["rescue", "rescued", "emergency", "missing person"],
+  rescue: ["rescue", "rescued", "sinagip", "iniligtas", "saklolo", "emergency", "missing person", "nawawala"],
 };
 
 export function classify(text) {

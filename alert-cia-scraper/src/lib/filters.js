@@ -1,12 +1,18 @@
 import { ISABELA_PLACES } from "./locations";
 
 export const INCIDENT_KEYWORDS = [
-  "accident", "aksidente", "banggaan", "salpukan", "nabangga", "bumangga", "tumaob",
+  "accident", "aksidente", "disgrasya", "nadisgrasya", "banggaan", "nagbanggaan", "nagkabanggaan",
+  "salpukan", "sumalpok", "nasalpok", "nabangga", "bumangga", "tumaob", "tumagilid", "tumilapon",
+  "nasagasaan", "sagasaan", "inararo", "nahulog sa bangin", "nawalan ng preno",
   "road crash", "vehicular accident", "motorcycle accident", "truck accident", "bus accident",
-  "collision", "crash", "hit and run", "hit-and-run", "sugatan", "injured", "patay", "killed",
-  "dead on arrival", "holdap", "hold-up", "robbery", "nakawan", "theft", "stolen", "sunog",
-  "fire", "blaze", "baha", "flood", "landslide", "pagguho", "rescue", "emergency",
-  "shooting", "binaril", "stabbed", "sinaksak", "drowned", "nalunod", "missing person",
+  "collision", "crash", "hit and run", "hit-and-run", "sugatan", "nasugatan", "injured", "patay",
+  "nasawi", "namatay", "killed", "dead on arrival", "holdap", "holdaper", "hold-up", "robbery",
+  "nakawan", "ninakaw", "ninakawan", "nilooban", "tinangay", "hablot", "akyat-bahay", "theft",
+  "stolen", "sunog", "nasunog", "nagliyab", "tinupok ng apoy", "nilamon ng apoy", "fire", "blaze",
+  "baha", "binaha", "pagbaha", "rumagasang tubig", "flood", "landslide", "pagguho", "gumuho",
+  "rescue", "sinagip", "iniligtas", "saklolo", "emergency", "shooting", "pamamaril", "binaril",
+  "nabaril", "pinagbabaril", "pinaslang", "pinatay", "stabbed", "pananaksak", "sinaksak",
+  "nasaksak", "drowned", "nalunod", "missing person", "nawawala",
 ];
 
 export function isRelevant(text) {

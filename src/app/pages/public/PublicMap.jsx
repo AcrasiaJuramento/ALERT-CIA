@@ -12,7 +12,7 @@ import {
   listPublicScrapedMapIncidents,
   supabase,
 } from '../../services/supabase';
-import { ECHAGUE_CENTER, getIncidentLatLng, getZoneLatLng } from '../../utils/mapData';
+import { ECHAGUE_CENTER, getIncidentLatLng, getZoneLatLng, hasValidLatLng } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 
 const quickDestinations = [
@@ -43,10 +43,6 @@ function sanitizeForPublic(record = {}) {
       ? 'Emergency response activity has been verified in this area. Keep distance and follow official guidance.'
       : record.description || 'Use caution near this area and consider another route if conditions are unsafe.',
   };
-}
-
-function hasMapCoordinates(record) {
-  return Number.isFinite(Number(record?.lat)) && Number.isFinite(Number(record?.lng));
 }
 
 function isAccidentRecord(record = {}) {
@@ -276,7 +272,7 @@ export default function PublicMap() {
       const accidentScraped = mergeMapRecords(publicScraped).filter(item => item.publicVisible || isAccidentRecord(item));
       const officialIds = new Set(accidentReports.map(item => item.id));
       const pcrOnly = pcrLinked.filter(item => !officialIds.has(item.relatedIncidentId));
-      setIncidents(mergeMapRecords([...accidentReports, ...pcrOnly, ...accidentScraped]).filter(hasMapCoordinates).map(sanitizeForPublic));
+      setIncidents(mergeMapRecords([...accidentReports, ...pcrOnly, ...accidentScraped]).filter(hasValidLatLng).map(sanitizeForPublic));
       setAdvisories(activeAdvisories.filter(item => item.coordinates));
       setHazardZones(zones);
     } catch (requestError) {

@@ -5,8 +5,9 @@ import {
   RefreshCw, ChevronRight, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
+import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
+import { hasValidLatLng } from '../utils/mapData';
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
@@ -42,10 +43,6 @@ function getSourceGroup(incident) {
   if (incident.sourceKind === 'pcr_report') return 'pcr_report';
   if (String(incident.sourceKind || '').includes('scraped')) return 'scraper';
   return 'official';
-}
-
-function hasMapCoordinates(incident) {
-  return Number.isFinite(Number(incident?.lat)) && Number.isFinite(Number(incident?.lng));
 }
 
 function isAccidentRecord(record = {}) {
@@ -97,6 +94,8 @@ export default function MapMonitoring() {
   const [scraperError, setScraperError] = useState('');
   const [scraperMessage, setScraperMessage] = useState('');
   const [scraperRefreshing, setScraperRefreshing] = useState(false);
+  const [scraperMode, setScraperMode] = useState(null);
+  const [scraperProgress, setScraperProgress] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -161,27 +160,45 @@ export default function MapMonitoring() {
     };
   }, []);
 
-  const refreshScraperData = async () => {
+  useEffect(() => {
+    if (!scraperRefreshing) return undefined;
+    let active = true;
+    const poll = async () => {
+      const progress = await getScraperProgress();
+      if (active && progress) setScraperProgress(progress);
+    };
+    poll();
+    const timer = setInterval(poll, 1000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [scraperRefreshing]);
+
+  const refreshScraperData = async (mode = 'update') => {
     setScraperRefreshing(true);
+    setScraperMode(mode);
     setScraperError('');
     setScraperMessage('');
+    setScraperProgress(null);
     try {
-      const result = await triggerScraperRefresh({ type: 'all', mode: 'update' });
+      const result = await triggerScraperRefresh({ type: 'all', mode });
       const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
       const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
       const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
-      setScraperMessage(`Scraper updated: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
+      setScraperMessage(`${mode === 'full' ? 'Full scrape' : 'Latest update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
       setReloadKey(key => key + 1);
     } catch (error) {
       setScraperError(error.message || 'Unable to refresh scraper data.');
     } finally {
       setScraperRefreshing(false);
+      setScraperMode(null);
     }
   };
 
   const mapIncidents = useMemo(
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
-      .filter(hasMapCoordinates)
+      .filter(hasValidLatLng)
       .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource),
     [activeSource, incidents, pcrIncidents, scrapedIncidents]
   );
@@ -223,14 +240,51 @@ export default function MapMonitoring() {
             Refresh
           </button>
           <button
-            onClick={refreshScraperData}
+            onClick={() => refreshScraperData('update')}
             disabled={scraperRefreshing}
             className="flex items-center gap-1.5 bg-blue-600/95 border border-blue-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${scraperRefreshing ? 'animate-spin' : ''}`} />
-            {scraperRefreshing ? 'Fetching...' : 'Fetch latest incidents'}
+            {scraperMode === 'update' ? 'Fetching latest...' : 'Fetch latest incidents'}
+          </button>
+          <button
+            onClick={() => refreshScraperData('full')}
+            disabled={scraperRefreshing}
+            title="Scrape every available page from all enabled news sources"
+            className="flex items-center gap-1.5 bg-purple-600/95 border border-purple-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
+          >
+            <Database className={`w-3.5 h-3.5 ${scraperMode === 'full' ? 'animate-pulse' : ''}`} />
+            {scraperMode === 'full' ? 'Full scraping...' : 'Full scrape'}
           </button>
         </div>
+
+        {scraperRefreshing && scraperProgress && (
+          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-1001 min-w-80 max-w-xl rounded-xl border border-blue-500/30 bg-card/95 px-4 py-3 shadow-lg backdrop-blur">
+            <div className="flex items-center justify-between gap-4 text-xs">
+              <span className="font-semibold text-foreground">
+                {scraperProgress.source_name || 'Preparing scraper'}
+              </span>
+              <span className="text-muted-foreground">
+                Website {scraperProgress.source_index || 0}/{scraperProgress.sources_total || 0}
+              </span>
+            </div>
+            <div className="mt-1 flex items-center justify-between gap-4 text-[11px] text-muted-foreground">
+              <span className="capitalize">{String(scraperProgress.phase || 'starting').replaceAll('_', ' ')}</span>
+              {scraperProgress.phase === 'pages' && (
+                <span>Page {scraperProgress.page || 0} / {scraperProgress.max_pages || '?'}</span>
+              )}
+              {['downloading_articles', 'processing_articles'].includes(scraperProgress.phase) && (
+                <span>Article {scraperProgress.article || 0} / {scraperProgress.articles_total || 0}</span>
+              )}
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+              <div
+                className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                style={{ width: `${Math.max(3, ((scraperProgress.source_index || 0) / Math.max(scraperProgress.sources_total || 1, 1)) * 100)}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {/* Layer Control (top right) */}
         <div className="absolute top-14 right-14 z-1001">
@@ -302,7 +356,7 @@ export default function MapMonitoring() {
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <span className="block uppercase tracking-wide">Coordinates</span>
                   <span className="text-foreground">
-                    {Number.isFinite(Number(selectedInc.lat)) && Number.isFinite(Number(selectedInc.lng))
+                    {hasValidLatLng(selectedInc)
                       ? `${Number(selectedInc.lat).toFixed(5)}, ${Number(selectedInc.lng).toFixed(5)}`
                       : 'Location pending'}
                   </span>

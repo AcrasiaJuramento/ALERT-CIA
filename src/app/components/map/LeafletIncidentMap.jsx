@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CircleMarker, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { CircleMarker, GeoJSON, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { ChevronDown, LocateFixed, Layers, RefreshCw } from 'lucide-react';
 import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
+import { loadIsabelaBoundaryCollection } from '../../data/isabelaBarangayGeometry';
 import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
 import { ClusteredIncidentMarkers } from './ClusteredIncidentMarkers';
 import { HazardZonesLayer } from './HazardZonesLayer';
@@ -124,6 +125,120 @@ function PlannerPointsLayer({ points = {} }) {
   ));
 }
 
+const BASEMAP_PROVIDERS = [
+  {
+    name: 'OpenStreetMap',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+  },
+  {
+    name: 'Carto',
+    url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  },
+  {
+    name: 'Esri',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    attribution: 'Tiles &copy; Esri',
+  },
+];
+
+function ResilientTileLayer({ onUnavailable, onRecovered }) {
+  const [providerIndex, setProviderIndex] = useState(0);
+  const failures = useRef(0);
+  const provider = BASEMAP_PROVIDERS[providerIndex];
+  return (
+    <TileLayer
+      key={provider.url}
+      attribution={provider.attribution}
+      url={provider.url}
+      crossOrigin="anonymous"
+      eventHandlers={{
+        load: () => {
+          failures.current = 0;
+          onRecovered?.(provider.name);
+        },
+        tileerror: () => {
+          failures.current += 1;
+          if (failures.current < 6) return;
+          failures.current = 0;
+          if (providerIndex < BASEMAP_PROVIDERS.length - 1) {
+            setProviderIndex(index => index + 1);
+          } else {
+            onUnavailable?.();
+          }
+        },
+      }}
+    />
+  );
+}
+
+function MapResizeHandler() {
+  const map = useMap();
+  useEffect(() => {
+    const container = map.getContainer();
+    const resize = () => map.invalidateSize({ pan: false });
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    const timer = setTimeout(resize, 0);
+    return () => {
+      clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [map]);
+  return null;
+}
+
+function LocalIsabelaBasemap({ enabled }) {
+  const [collection, setCollection] = useState(null);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let active = true;
+    loadIsabelaBoundaryCollection().then((data) => {
+      if (active) setCollection(data);
+    });
+    return () => { active = false; };
+  }, [enabled]);
+  if (!enabled || !collection?.features?.length) return null;
+  return (
+    <GeoJSON
+      data={collection}
+      style={{ color: '#64748b', weight: 0.75, fillColor: '#f8fafc', fillOpacity: 0.42 }}
+      onEachFeature={(feature, layer) => {
+        layer.bindTooltip(`${feature.properties?.NAME_3 || 'Barangay'}, ${feature.properties?.NAME_2 || 'Isabela'}`, { sticky: true });
+      }}
+    />
+  );
+}
+
+function IncidentBarangayBoundaries({ incidents = [] }) {
+  const collection = useMemo(() => {
+    const unique = new Map();
+    incidents.forEach((incident) => {
+      const feature = incident.barangayBoundary;
+      if (!feature) return;
+      const key = feature.properties?.GID_3 || JSON.stringify(feature.properties || {});
+      unique.set(key, feature);
+    });
+    return { type: 'FeatureCollection', features: [...unique.values()] };
+  }, [incidents]);
+
+  if (!collection.features.length) return null;
+  const boundaryKey = collection.features.map(feature => feature.properties?.GID_3 || '').join('|');
+  return (
+    <GeoJSON
+      key={boundaryKey}
+      data={collection}
+      style={{ color: '#60a5fa', weight: 2, fillColor: '#3b82f6', fillOpacity: 0.08 }}
+      onEachFeature={(feature, layer) => {
+        const barangay = feature.properties?.NAME_3 || 'Barangay';
+        const municipality = feature.properties?.NAME_2 || 'Isabela';
+        layer.bindTooltip(`${barangay}, ${municipality}`, { sticky: true });
+      }}
+    />
+  );
+}
+
 export function LeafletIncidentMap({
   height = '100%',
   incidents = [],
@@ -157,6 +272,7 @@ export function LeafletIncidentMap({
   });
   const [followUser, setFollowUser] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
+  const [basemapUnavailable, setBasemapUnavailable] = useState(false);
   const effectiveLayers = { ...layers, ...(externalLayers || {}) };
   const setLayerValue = (key, checked) => {
     if (externalLayers && onExternalLayersChange) {
@@ -182,10 +298,12 @@ export function LeafletIncidentMap({
         zoomControl={false}
         scrollWheelZoom
       >
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        <ResilientTileLayer
+          onUnavailable={() => setBasemapUnavailable(true)}
+          onRecovered={() => setBasemapUnavailable(false)}
         />
+        <LocalIsabelaBasemap enabled={basemapUnavailable} />
+        <MapResizeHandler />
         <MapClickHandler onMapClick={onMapClick} />
         <ZoomControl position="bottomright" />
         {autoFit && (
@@ -196,6 +314,7 @@ export function LeafletIncidentMap({
             selectedAdvisoryId={selectedAdvisoryId}
           />
         )}
+        <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} />
         <ClusteredIncidentMarkers
           incidents={effectiveLayers.incidents ? incidents : []}
           selectedIncidentId={selectedIncidentId}
@@ -221,6 +340,12 @@ export function LeafletIncidentMap({
         <PlannerPointsLayer points={plannerPoints} />
         <UserLocationLayer enabled={layers.locate} followUser={followUser} />
       </MapContainer>
+
+      {basemapUnavailable && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-[500] -translate-x-1/2 rounded-lg border border-amber-500/30 bg-amber-50/95 px-3 py-1.5 text-[10px] font-medium text-amber-800 shadow">
+          Offline boundary map — external street tiles unavailable
+        </div>
+      )}
 
       {!compact && !hideLayerControl && (
         <div className="absolute left-3 top-3 z-[500] text-xs">

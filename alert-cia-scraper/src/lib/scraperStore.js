@@ -71,6 +71,10 @@ export async function getScrapedIncidentSnapshot({ limit = 1000 } = {}) {
 }
 
 async function syncSources(client) {
+  const removedSourceKeys = ["sunstar", "pna", "pilipino_star"];
+  const removal = await client.from("scraper_sources").delete().in("source_key", removedSourceKeys);
+  if (removal.error) throw removal.error;
+
   const payload = SOURCES.map((source) => ({
     source_key: source.key,
     name: source.name,
@@ -138,8 +142,44 @@ async function addIncidentSource(client, incidentId, record) {
     source_title: record.title,
     source_snippet: record.snippet,
     published_at: record.published_at,
-  }, { onConflict: "source_url", ignoreDuplicates: true });
+  }, { onConflict: "source_url" });
   if (error) throw error;
+}
+
+function mappingFields(record) {
+  const barangay = record.location?.barangay || null;
+  const municipality = record.location?.municipality || null;
+  const precision = record.geocode_precision || null;
+  const hasCoordinates = Number.isFinite(record.lat) && Number.isFinite(record.lon);
+  let mappingStatus = "needs_review";
+  if (barangay && ["barangay", "road", "barangay_master"].includes(precision) && hasCoordinates) {
+    mappingStatus = precision === "barangay_master" ? "matched_barangay" : "exact_geocode";
+  } else if (barangay) {
+    mappingStatus = "unmatched_location";
+  } else if (municipality && hasCoordinates) {
+    mappingStatus = "partial_match";
+  }
+  return {
+    raw_location_text: record.location_text || record.display_name || null,
+    extracted_barangay: barangay,
+    extracted_municipality: municipality,
+    extracted_province: record.location?.province || "Isabela",
+    geocode_precision: precision,
+    match_confidence: Number(record.geocode_confidence || 0),
+    mapping_status: mappingStatus,
+  };
+}
+
+function legacyLocationFields(record, runId) {
+  return {
+    run_id: runId,
+    location_text: record.location_text,
+    display_name: record.display_name,
+    latitude: Number.isFinite(record.lat) ? record.lat : null,
+    longitude: Number.isFinite(record.lon) ? record.lon : null,
+    raw_payload: record,
+    ...mappingFields(record),
+  };
 }
 
 async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
@@ -156,15 +196,32 @@ async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
     snippet: record.snippet,
     incident_type: record.incident_type_key,
     category,
-    location_text: record.location_text,
-    display_name: record.display_name,
-    latitude: record.lat,
-    longitude: record.lon,
-    raw_payload: record,
+    ...legacyLocationFields(record, runId),
     scraped_at: new Date().toISOString(),
   };
-  const { error } = await client.from("scraper_records").upsert(payload, { onConflict: "source_url", ignoreDuplicates: true });
+  const { error } = await client.from("scraper_records").upsert(payload, { onConflict: "source_url" });
   if (error) throw error;
+}
+
+async function refreshExactSourceRecord(client, record, runId) {
+  const sourceResult = await client.from("incident_sources")
+    .select("incident_id").eq("source_url", record.source_url).maybeSingle();
+  if (sourceResult.error) throw sourceResult.error;
+  const incidentId = sourceResult.data?.incident_id;
+  if (!incidentId) return false;
+
+  await addIncidentSource(client, incidentId, record);
+  const canonicalUpdate = incidentRow(record);
+  delete canonicalUpdate.incident_key;
+  const canonicalResult = await client.from("scraped_incidents").update(canonicalUpdate).eq("id", incidentId);
+  if (canonicalResult.error) throw canonicalResult.error;
+
+  const legacyResult = await client.from("scraper_records")
+    .update(legacyLocationFields(record, runId))
+    .eq("scraped_incident_id", incidentId)
+    .is("deleted_at", null);
+  if (legacyResult.error) throw legacyResult.error;
+  return true;
 }
 
 export async function saveScrapedRecords(records = [], { mode = "update", scrapeStats = {} } = {}) {
@@ -186,7 +243,11 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
     for (const record of records) {
       try {
         const exact = await findExistingSourceUrls([record.source_url]);
-        if (exact.has(record.source_url)) { duplicates += 1; continue; }
+        if (exact.has(record.source_url)) {
+          if (mode === "full") await refreshExactSourceRecord(client, record, runId);
+          duplicates += 1;
+          continue;
+        }
         const similar = await findSimilarIncident(client, record);
         let incident;
         if (similar) {

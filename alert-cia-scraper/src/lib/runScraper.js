@@ -1,6 +1,7 @@
 import { saveCache } from "@/lib/cache";
 import { getFetchMetrics, resetFetchMetrics } from "@/lib/fetchHTML";
 import { getScrapedIncidentSnapshot, saveScrapedRecords } from "@/lib/scraperStore";
+import { completeScraperProgress } from "@/lib/progress";
 import { scrapeSources } from "@/scrapers/scraper";
 
 export async function runScraper({ mode = "update", endpointType = "all" } = {}) {
@@ -40,6 +41,7 @@ export async function runScraper({ mode = "update", endpointType = "all" } = {})
     duplicates: scraped.stats.duplicates_skipped + (database.duplicates || 0),
     failed: failedRequests,
   });
+  completeScraperProgress({ success: database.enabled ? database.saved : true, error: database.errors?.[0] || null });
   return {
     success: database.enabled ? database.saved : true,
     mode: safeMode,

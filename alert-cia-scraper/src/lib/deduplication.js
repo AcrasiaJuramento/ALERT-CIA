@@ -1,6 +1,15 @@
 import crypto from "node:crypto";
 
-const STOP_WORDS = new Set(["ang", "and", "are", "for", "from", "has", "have", "isabela", "mga", "ng", "sa", "the", "this", "with"]);
+const STOP_WORDS = new Set([
+  "ang", "and", "are", "ay", "dahil", "for", "from", "has", "have", "isang", "isabela", "matapos",
+  "mga", "mula", "nang", "ng", "para", "sa", "the", "this", "umano", "with",
+]);
+
+const FILIPINO_NUMBERS = new Map([
+  ["isa", 1], ["isang", 1], ["dalawa", 2], ["dalawang", 2], ["tatlo", 3], ["tatlong", 3],
+  ["apat", 4], ["limang", 5], ["lima", 5], ["anim", 6], ["pito", 7], ["walo", 8],
+  ["siyam", 9], ["sampu", 10],
+]);
 
 export function normalizedWords(value = "") {
   return String(value).toLowerCase().normalize("NFKD").replace(/[^a-z0-9\s]/g, " ")
@@ -8,8 +17,12 @@ export function normalizedWords(value = "") {
 }
 
 export function extractVictimCount(text = "") {
-  const match = String(text).match(/\b(\d{1,3})\s+(?:people|persons?|passengers?|victims?|patay|nasawi|sugatan|injured|killed)\b/i);
-  return match ? Number(match[1]) : null;
+  const value = String(text);
+  const victimTerms = "people|persons?|passengers?|victims?|katao|indibidwal|motorsiklista|sakay|patay|nasawi|namatay|sugatan|nasugatan|injured|killed";
+  const numeric = value.match(new RegExp(`\\b(\\d{1,3})\\s+(?:na\\s+)?(?:${victimTerms})\\b`, "i"));
+  if (numeric) return Number(numeric[1]);
+  const word = value.match(new RegExp(`\\b(${[...FILIPINO_NUMBERS.keys()].join("|")})\\s+(?:na\\s+)?(?:${victimTerms})\\b`, "i"));
+  return word ? FILIPINO_NUMBERS.get(word[1].toLowerCase()) ?? null : null;
 }
 
 export function incidentKey(item) {

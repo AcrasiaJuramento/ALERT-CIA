@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:all": "node scripts/dev-all.mjs",
+    "dev:scraper": "npm --prefix alert-cia-scraper run dev -- --hostname 127.0.0.1 --port 3000",
+    "sync:isabela-barangays": "node scripts/sync-isabela-barangays.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "eslint ."

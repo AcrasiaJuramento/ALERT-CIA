@@ -62,6 +62,15 @@ function PopupContent({ incident }) {
       {incident.sourceLabel && (
         <p className="mt-2 text-[11px] text-slate-500">Source: {incident.sourceLabel}</p>
       )}
+      {isExternal && incident.locationPrecision && (
+        <p className="mt-1 text-[10px] text-slate-500">
+          Mapping: {incident.locationPrecision.replaceAll('_', ' ')}
+          {incident.coordinateSource ? ` / ${incident.coordinateSource}` : ''}
+        </p>
+      )}
+      {isExternal && ['unmatched_location', 'needs_review'].includes(incident.mappingStatus) && (
+        <p className="mt-1 text-[10px] font-semibold text-amber-600">Location needs review</p>
+      )}
     </div>
   );
 }

@@ -3,6 +3,9 @@ export const VEHICULAR_TYPES = {
     "motorcycle accident",
     "motorcycle crash",
     "motorcycle collision",
+    "aksidente sa motorsiklo",
+    "banggaan ng motorsiklo",
+    "sumalpok ang motorsiklo",
   ],
   traffic_accident: [
     "accident",
@@ -12,5 +15,12 @@ export const VEHICULAR_TYPES = {
     "road accident",
     "car crash",
     "truck accident",
+    "aksidente",
+    "disgrasya",
+    "banggaan",
+    "salpukan",
+    "sumalpok",
+    "nasagasaan",
+    "nawalan ng preno",
   ],
 };
