@@ -37,21 +37,18 @@ function getRootEnvFallback(key) {
 }
 
 const supabaseUrl =
+  process.env.SUPABASE_URL ||
   process.env.NEXT_PUBLIC_SUPABASE_URL ||
   process.env.VITE_SUPABASE_URL ||
   getRootEnvFallback("NEXT_PUBLIC_SUPABASE_URL") ||
   getRootEnvFallback("VITE_SUPABASE_URL");
 const supabasePublishableKey =
+  process.env.SUPABASE_PUBLISHABLE_KEY ||
   process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   process.env.VITE_SUPABASE_ANON_KEY ||
   getRootEnvFallback("VITE_SUPABASE_PUBLISHABLE_KEY") ||
   getRootEnvFallback("VITE_SUPABASE_ANON_KEY");
 const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || getRootEnvFallback("SUPABASE_SERVICE_ROLE_KEY");
-
-console.log("Supabase URL exists:", Boolean(supabaseUrl));
-console.log("Service key exists:", Boolean(serviceRoleKey));
-console.log("Service key prefix:", serviceRoleKey?.slice(0, 10) || null);
-console.log("NEXT_PUBLIC_SUPABASE_URL exists:", Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL));
 
 let client = null;
 

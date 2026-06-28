@@ -1,19 +1,14 @@
 import { requireAuthorizedScraperUser } from "@/lib/auth";
+import { getCorsHeaders } from "@/lib/cors";
 import { runScraper } from "@/lib/runScraper";
 
 export const runtime = "nodejs";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "http://localhost:5173",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-};
+export const maxDuration = 300;
 
 function getEndpointType(request) {
   const { searchParams } = new URL(request.url);
   const type = searchParams.get("type") || "all";
-  return ["vehicular"].includes(type) ? type : "all";
-  // "all", "incidents", 
+  return ["incidents", "vehicular"].includes(type) ? type : "all";
 }
 
 function getMode(request, { cron = false } = {}) {
@@ -23,12 +18,14 @@ function getMode(request, { cron = false } = {}) {
 }
 
 function isCronAuthorized(request) {
-  const secret = process.env.SCRAPER_CRON_SECRET;
+  const secret = process.env.CRON_SECRET || process.env.SCRAPER_CRON_SECRET;
   if (!secret) return false;
-  return request.headers.get("x-scraper-cron-secret") === secret;
+  return request.headers.get("authorization") === `Bearer ${secret}` ||
+    request.headers.get("x-scraper-cron-secret") === secret;
 }
 
 async function handleRun(request, { allowCron = false } = {}) {
+  const corsHeaders = getCorsHeaders(request, "GET, POST, OPTIONS");
   if (allowCron && isCronAuthorized(request)) {
     const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }) });
     return Response.json(
@@ -63,14 +60,15 @@ async function handleRun(request, { allowCron = false } = {}) {
   );
 }
 
-export async function OPTIONS() {
+export async function OPTIONS(request) {
   return new Response(null, {
     status: 204,
-    headers: corsHeaders,
+    headers: getCorsHeaders(request, "GET, POST, OPTIONS"),
   });
 }
 
 export async function POST(request) {
+  const corsHeaders = getCorsHeaders(request, "GET, POST, OPTIONS");
   try {
     return await handleRun(request);
   } catch (error) {
@@ -85,6 +83,7 @@ export async function POST(request) {
 }
 
 export async function GET(request) {
+  const corsHeaders = getCorsHeaders(request, "GET, POST, OPTIONS");
   try {
     return await handleRun(request, { allowCron: true });
   } catch (error) {

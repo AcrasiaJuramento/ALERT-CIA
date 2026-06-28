@@ -2,7 +2,25 @@ import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
 import { resolveIsabelaBarangayGeometry } from "../../data/isabelaBarangayGeometry";
 
-const scraperApiBaseUrl = import.meta.env.VITE_SCRAPER_API_URL || "http://127.0.0.1:3000";
+const scraperApiBaseUrl = String(import.meta.env.VITE_SCRAPER_API_URL || "")
+  .trim()
+  .replace(/\/+$/, "");
+
+function getConfiguredScraperApiUrl() {
+  if (!scraperApiBaseUrl) {
+    throw new Error(
+      "Scraper API is not configured. Set VITE_SCRAPER_API_URL for this deployment and redeploy the frontend.",
+    );
+  }
+
+  return scraperApiBaseUrl;
+}
+
+async function readJsonResponse(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("application/json")) return {};
+  return response.json().catch(() => ({}));
+}
 
 const ECHAGUE_BOUNDS = {
   north: 16.765,
@@ -171,30 +189,42 @@ export async function triggerScraperRefresh({ type = "all", mode = "update" } = 
   const token = data.session?.access_token;
   if (!token) throw new Error("Sign in again before refreshing scraper data.");
 
+  const apiBaseUrl = getConfiguredScraperApiUrl();
+
   let response;
   try {
-    response = await fetch(`${scraperApiBaseUrl.replace(/\/$/, "")}/api/run?type=${encodeURIComponent(type)}&mode=${encodeURIComponent(mode)}`, {
+    response = await fetch(`${apiBaseUrl}/api/run?type=${encodeURIComponent(type)}&mode=${encodeURIComponent(mode)}`, {
       method: "POST",
       headers: {
+        Accept: "application/json",
         Authorization: `Bearer ${token}`,
       },
     });
   } catch {
-    throw new Error(`Scraper API is unreachable at ${scraperApiBaseUrl}. Start the alert-cia-scraper service and try again.`);
+    throw new Error(
+      `Scraper API at ${apiBaseUrl} could not be reached. Check the deployment URL, CORS allowlist, and service status.`,
+    );
   }
-  const payload = await response.json().catch(() => ({}));
+  const payload = await readJsonResponse(response);
 
   if (!response.ok || payload.success === false) {
-    throw new Error(payload.error || "Unable to refresh scraper data.");
+    throw new Error(
+      payload.error ||
+      `Scraper API returned ${response.status}. Verify VITE_SCRAPER_API_URL points to the scraper project, not the frontend.`,
+    );
   }
 
   return payload;
 }
 
 export async function getScraperProgress() {
+  if (!scraperApiBaseUrl) return null;
+
   try {
-    const response = await fetch(`${scraperApiBaseUrl.replace(/\/$/, "")}/api/status`);
-    const payload = await response.json().catch(() => ({}));
+    const response = await fetch(`${scraperApiBaseUrl}/api/status`, {
+      headers: { Accept: "application/json" },
+    });
+    const payload = await readJsonResponse(response);
     return response.ok ? payload.progress || null : null;
   } catch {
     return null;
