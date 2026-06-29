@@ -43,6 +43,16 @@ function getSourceKey(request) {
   return searchParams.get("source") || searchParams.get("sourceKey") || null;
 }
 
+function getPageRange(request) {
+  const { searchParams } = new URL(request.url);
+  const pageFrom = Number(searchParams.get("pageFrom") || searchParams.get("page_from") || 1);
+  const pageTo = Number(searchParams.get("pageTo") || searchParams.get("page_to") || 0);
+  return {
+    pageFrom: Number.isFinite(pageFrom) && pageFrom > 0 ? Math.round(pageFrom) : 1,
+    pageTo: Number.isFinite(pageTo) && pageTo > 0 ? Math.round(pageTo) : null,
+  };
+}
+
 function isCronAuthorized(request) {
   const secret = runtimeEnv.CRON_SECRET || runtimeEnv.SCRAPER_CRON_SECRET;
   if (!secret) return false;
@@ -56,7 +66,7 @@ async function handleRun(req, res, { allowCron = false } = {}) {
   applyHeaders(res, headers);
 
   if (allowCron && isCronAuthorized(request)) {
-    const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }), sourceKey: getSourceKey(request) });
+    const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }), sourceKey: getSourceKey(request), ...getPageRange(request) });
     res.status(200).json({ ...result, triggeredBy: "cron" });
     return;
   }
@@ -67,7 +77,7 @@ async function handleRun(req, res, { allowCron = false } = {}) {
     return;
   }
 
-  const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request), sourceKey: getSourceKey(request) });
+  const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request), sourceKey: getSourceKey(request), ...getPageRange(request) });
   res.status(200).json({
     ...result,
     triggeredBy: "user",

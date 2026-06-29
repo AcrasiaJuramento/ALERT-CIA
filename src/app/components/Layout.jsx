@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell, ChevronDown, ExternalLink, LogOut, Menu, Moon, Radio, Siren, Sun, X,
+  Bell, ChevronDown, Database, ExternalLink, LogOut, Menu, Moon, Radio, Siren, Sun, X,
 } from 'lucide-react';
 import { getAuthorizedNavigation, getCurrentPage, isNavigationItemActive, PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
+import { cancelScraperJob, getScraperJobState, subscribeScraperJob } from '../services/scraperJobService';
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -14,6 +15,7 @@ export default function Layout() {
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const location = useLocation();
   const navigate = useNavigate();
   const { user, roleLabel, can, logout } = useAuth();
@@ -26,6 +28,8 @@ export default function Layout() {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => subscribeScraperJob(setScraperJob), []);
 
   const handleLogout = () => {
     logout();
@@ -133,6 +137,32 @@ export default function Layout() {
           </div>
         </header>
         <main className="relative z-0 flex-1 overflow-auto bg-background"><Outlet /></main>
+        {scraperJob.running && (
+          <div className="fixed bottom-4 right-4 z-[2200] w-80 rounded-xl border border-blue-500/30 bg-card/95 p-3 shadow-2xl backdrop-blur">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 grid h-8 w-8 place-items-center rounded-lg bg-blue-500/15 text-blue-500">
+                <Database className="h-4 w-4 animate-pulse" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-foreground">
+                  {scraperJob.mode === 'full' ? 'Full scrape running' : 'Update scrape running'}
+                </div>
+                <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                  {scraperJob.progress?.source_name || 'Scraping news websites'}
+                </div>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  Website {scraperJob.progress?.source_index || 0}/{scraperJob.progress?.sources_total || 0}
+                </div>
+              </div>
+              <button
+                onClick={cancelScraperJob}
+                className="rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[10px] font-bold text-red-500 hover:bg-red-500/20"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

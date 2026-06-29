@@ -31,16 +31,18 @@ function scraperFetchOptions(mode) {
   };
 }
 
-async function listPages(source, mode, stats) {
-  const maxPages = mode === "full" ? source.maxPagesFull : source.maxPagesUpdate;
+async function listPages(source, mode, stats, { pageFrom = 1, pageTo = null } = {}) {
+  const configuredMaxPages = mode === "full" ? source.maxPagesFull : source.maxPagesUpdate;
+  const maxPages = Math.min(configuredMaxPages, pageTo || configuredMaxPages);
+  const startPage = Math.max(1, Math.min(Number(pageFrom) || 1, maxPages));
   const links = new Set();
   let nextUrl = source.firstPageUrl;
   let detectedNextUrl = null;
   let duplicateHeavyPages = 0;
   const visitedPages = new Set();
 
-  for (let page = 1; page <= maxPages; page += 1) {
-    const pageUrl = source.paginationType === "next_link"
+  for (let page = startPage; page <= maxPages; page += 1) {
+    const pageUrl = source.paginationType === "next_link" && page === 1
       ? nextUrl
       : detectedNextUrl || source.pageUrl(page);
     if (!pageUrl || visitedPages.has(pageUrl)) break;
@@ -76,8 +78,8 @@ async function listPages(source, mode, stats) {
   return [...links];
 }
 
-async function processSource(source, mode, stats, seenUrls) {
-  const listLinks = await listPages(source, mode, stats);
+async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
+  const listLinks = await listPages(source, mode, stats, pageRange);
   const normalizedLinks = listLinks.map((url) => normalizeUrl(url)).filter(Boolean)
     .filter((url) => !seenUrls.has(url));
   normalizedLinks.forEach((url) => seenUrls.add(url));
@@ -137,7 +139,7 @@ async function processSource(source, mode, stats, seenUrls) {
   return records;
 }
 
-export async function scrapeSources({ mode = "update", sourceKey = null } = {}) {
+export async function scrapeSources({ mode = "update", sourceKey = null, pageFrom = 1, pageTo = null } = {}) {
   const safeMode = mode === "full" ? "full" : "update";
   const targetSources = sourceKey
     ? ENABLED_SOURCES.filter((source) => source.key === sourceKey)
@@ -168,13 +170,13 @@ export async function scrapeSources({ mode = "update", sourceKey = null } = {}) 
       articles_total: 0,
     });
     try {
-      records.push(...await processSource(source, safeMode, stats, seenUrls));
+      records.push(...await processSource(source, safeMode, stats, seenUrls, { pageFrom, pageTo }));
     } catch (error) {
       stats.failed_urls.push(`${source.key}: ${error.message}`);
     }
   }
   updateScraperProgress({ phase: "saving", page_url: null, article: 0, articles_total: records.length });
-  return { mode: safeMode, source_key: sourceKey, records, stats };
+  return { mode: safeMode, source_key: sourceKey, page_from: pageFrom, page_to: pageTo, records, stats };
 }
 
 // Compatibility export for callers from the original one-source scraper.

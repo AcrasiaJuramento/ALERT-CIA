@@ -5,7 +5,8 @@ import {
   RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, listScraperSources, supabase, triggerFullScraperRefreshBySource, triggerScraperRefresh } from '../services/supabase';
+import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase } from '../services/supabase';
+import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
 
@@ -46,26 +47,6 @@ function getSourceGroup(incident) {
 }
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
-const DEFAULT_SCRAPER_SOURCE_COUNT = 15;
-
-function buildLocalScraperProgress(mode, sourcesTotal = DEFAULT_SCRAPER_SOURCE_COUNT) {
-  return {
-    running: true,
-    mode,
-    phase: 'starting',
-    source_name: mode === 'full' ? 'Full scrape queued' : 'Update scrape queued',
-    source_index: 0,
-    sources_total: sourcesTotal,
-    page: 0,
-    max_pages: mode === 'full' ? 'all' : 3,
-    article: 0,
-    articles_total: 0,
-  };
-}
-
-function hasMeaningfulScraperProgress(progress = {}) {
-  return Boolean(progress.running || progress.sources_total > 0 || progress.source_index > 0 || progress.phase !== 'idle');
-}
 
 export default function MapMonitoring() {
   const navigate = useNavigate();
@@ -87,13 +68,15 @@ export default function MapMonitoring() {
   const [incidents, setIncidents] = useState([]);
   const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
-  const [scraperError, setScraperError] = useState('');
-  const [scraperMessage, setScraperMessage] = useState('');
-  const [scraperRefreshing, setScraperRefreshing] = useState(false);
-  const [scraperMode, setScraperMode] = useState(null);
-  const [scraperProgress, setScraperProgress] = useState(null);
+  const [mapError, setMapError] = useState('');
+  const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const scraperRefreshing = scraperJob.running;
+  const scraperMode = scraperJob.mode;
+  const scraperProgress = scraperJob.progress;
+  const scraperError = scraperJob.error;
+  const scraperMessage = scraperJob.message;
 
   useEffect(() => {
     let mounted = true;
@@ -114,10 +97,10 @@ export default function MapMonitoring() {
           setScrapedIncidents(scrapedRecords);
           setPcrIncidents(pcrRecords);
           const failed = [officialResult, scrapedResult, pcrResult].find(result => result.status === 'rejected');
-          setScraperError(failed?.reason?.message || '');
+          setMapError(failed?.reason?.message || '');
         }
       } catch (error) {
-        if (mounted) setScraperError(error.message || 'Unable to load map records.');
+        if (mounted) setMapError(error.message || 'Unable to load map records.');
       } finally {
         if (mounted) setLoading(false);
       }
@@ -157,72 +140,16 @@ export default function MapMonitoring() {
   }, []);
 
   useEffect(() => {
-    if (!scraperRefreshing) return undefined;
-    let active = true;
-    const poll = async () => {
-      const progress = await getScraperProgress();
-      if (active && progress && hasMeaningfulScraperProgress(progress)) {
-        setScraperProgress(current => ({
-          ...(current || {}),
-          ...progress,
-          sources_total: progress.sources_total || current?.sources_total || DEFAULT_SCRAPER_SOURCE_COUNT,
-        }));
-      }
-    };
-    poll();
-    const timer = setInterval(poll, 1000);
-    return () => {
-      active = false;
-      clearInterval(timer);
-    };
-  }, [scraperRefreshing]);
+    return subscribeScraperJob(setScraperJob);
+  }, []);
 
   const refreshScraperData = async (mode = 'update') => {
     setScrapeMenuOpen(false);
-    setScraperRefreshing(true);
-    setScraperMode(mode);
-    setScraperError('');
-    setScraperMessage('');
-    setScraperProgress(buildLocalScraperProgress(mode));
     try {
-      listScraperSources()
-        .then((sources = []) => {
-          const activeSources = sources.filter(source => source.active !== false);
-          const sourceTotal = activeSources.length || sources.length || DEFAULT_SCRAPER_SOURCE_COUNT;
-          setScraperProgress(current => current ? {
-            ...current,
-            sources_total: sourceTotal,
-            source_name: mode === 'full' ? 'Full scrape running' : 'Update scrape running',
-          } : current);
-        })
-        .catch(() => {});
-      const result = mode === 'full'
-        ? await triggerFullScraperRefreshBySource({
-            type: 'vehicular',
-            onSourceStart: ({ source, index, total }) => {
-              setScraperProgress(current => ({
-                ...(current || buildLocalScraperProgress(mode, total)),
-                source_name: source.name || source.source_key || 'News source',
-                source_index: index,
-                sources_total: total,
-                phase: 'pages',
-                page: 0,
-                max_pages: source.metadata?.max_pages_full || 'all',
-              }));
-            },
-          })
-        : await triggerScraperRefresh({ type: 'vehicular', mode });
-      const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
-      const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
-      const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
-      const failedSources = result.failed_sources?.length || 0;
-      setScraperMessage(`${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped${failedSources ? `, ${failedSources} source${failedSources === 1 ? '' : 's'} failed` : ''}.`);
+      await startScraperJob(mode);
       setReloadKey(key => key + 1);
-    } catch (error) {
-      setScraperError(error.message || 'Unable to refresh scraper data.');
-    } finally {
-      setScraperRefreshing(false);
-      setScraperMode(null);
+    } catch {
+      // The shared scraper job service owns the visible error state.
     }
   };
 
@@ -430,18 +357,36 @@ export default function MapMonitoring() {
             </div>
             <div className="mt-1 flex items-center justify-between gap-4 text-[11px] text-muted-foreground">
               <span className="capitalize">{String(scraperProgress.phase || 'starting').replaceAll('_', ' ')}</span>
-              {scraperProgress.phase === 'pages' && (
-                <span>Page {scraperProgress.page || 0} / {scraperProgress.max_pages || '?'}</span>
+              {scraperProgress.phase === 'pages' && Number(scraperProgress.page) > 0 && (
+                <span>Page {scraperProgress.page} / {scraperProgress.max_pages || '?'}</span>
+              )}
+              {scraperProgress.phase === 'source_running' && (
+                <span>
+                  Pages {scraperProgress.page || 1}-{scraperProgress.page_to || scraperProgress.page || '?'} / {scraperProgress.max_pages || '?'}
+                </span>
               )}
               {['downloading_articles', 'processing_articles'].includes(scraperProgress.phase) && (
                 <span>Article {scraperProgress.article || 0} / {scraperProgress.articles_total || 0}</span>
               )}
             </div>
+            {scraperProgress.phase === 'source_running' && (
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                Full scrape runs one website in small page batches to avoid Vercel timeout.
+              </p>
+            )}
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
               <div
                 className="h-full rounded-full bg-blue-500 transition-all duration-500"
                 style={{ width: `${Math.max(3, ((scraperProgress.source_index || 0) / Math.max(scraperProgress.sources_total || 1, 1)) * 100)}%` }}
               />
+            </div>
+            <div className="mt-3 flex justify-end">
+              <button
+                onClick={cancelScraperJob}
+                className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-[11px] font-semibold text-red-500 hover:bg-red-500/20"
+              >
+                Cancel scrape
+              </button>
             </div>
           </div>
         )}
@@ -565,7 +510,7 @@ export default function MapMonitoring() {
               </div>
               {loading && <p className="mt-1 text-[10px] text-muted-foreground">Loading map records...</p>}
               {scraperMessage && <p className="mt-1 text-[10px] text-green-400">{scraperMessage}</p>}
-              {scraperError && <p className="mt-1 text-[10px] text-orange-400">{scraperError}</p>}
+              {(mapError || scraperError) && <p className="mt-1 text-[10px] text-orange-400">{scraperError || mapError}</p>}
             </div>
 
             <div className="flex-1 overflow-y-auto">

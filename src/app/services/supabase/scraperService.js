@@ -30,6 +30,7 @@ const ECHAGUE_BOUNDS = {
 };
 
 const SCRAPER_MAP_CACHE_TTL_MS = 30 * 60 * 1000;
+const FULL_SCRAPE_PAGE_CHUNK_SIZE = 5;
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
@@ -224,7 +225,7 @@ export async function listScraperSources() {
   "Unable to load scraper sources.");
 }
 
-export async function triggerScraperRefresh({ type = "vehicular", mode = "update", sourceKey = null } = {}) {
+export async function triggerScraperRefresh({ type = "vehicular", mode = "update", sourceKey = null, pageFrom = null, pageTo = null, signal } = {}) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase authentication is required to refresh scraper data.");
   }
@@ -242,6 +243,8 @@ export async function triggerScraperRefresh({ type = "vehicular", mode = "update
     mode,
   });
   if (sourceKey) params.set("source", sourceKey);
+  if (pageFrom) params.set("pageFrom", String(pageFrom));
+  if (pageTo) params.set("pageTo", String(pageTo));
 
   try {
     response = await fetch(`${apiBaseUrl}/api/run?${params.toString()}`, {
@@ -250,6 +253,7 @@ export async function triggerScraperRefresh({ type = "vehicular", mode = "update
         Accept: "application/json",
         Authorization: `Bearer ${token}`,
       },
+      signal,
     });
   } catch {
     throw new Error(
@@ -268,7 +272,7 @@ export async function triggerScraperRefresh({ type = "vehicular", mode = "update
   return payload;
 }
 
-export async function triggerFullScraperRefreshBySource({ type = "vehicular", onSourceStart } = {}) {
+export async function triggerFullScraperRefreshBySource({ type = "vehicular", onSourceStart, signal } = {}) {
   const sources = await listScraperSources();
   const activeSources = asRows(sources).filter((source) => source.active !== false);
   const targets = activeSources.length ? activeSources : sources;
@@ -288,25 +292,33 @@ export async function triggerFullScraperRefreshBySource({ type = "vehicular", on
   };
 
   for (const [index, source] of targets.entries()) {
+    if (signal?.aborted) throw new DOMException("Scrape cancelled.", "AbortError");
     const sourceKey = source.source_key || source.key;
-    onSourceStart?.({ source, index: index + 1, total: targets.length });
-    try {
-      const result = await triggerScraperRefresh({ type, mode: "full", sourceKey });
-      totals.sources_checked += result.sources_checked || 0;
-      totals.pages_checked += result.pages_checked || 0;
-      totals.articles_checked += result.articles_checked || 0;
-      totals.new_incidents += result.new_incidents || 0;
-      totals.merged_incidents += result.merged_incidents || 0;
-      totals.duplicates_skipped += result.duplicates_skipped || 0;
-      totals.failed_requests += result.failed_requests || 0;
-      if (Array.isArray(result.data)) totals.data.push(...result.data);
-    } catch (error) {
-      totals.success = false;
-      totals.failed_sources.push({
-        source_key: sourceKey,
-        name: source.name || sourceKey,
-        error: error.message || "Source scrape failed.",
-      });
+    const maxPages = Number(source.metadata?.max_pages_full || 100);
+    for (let pageFrom = 1; pageFrom <= maxPages; pageFrom += FULL_SCRAPE_PAGE_CHUNK_SIZE) {
+      if (signal?.aborted) throw new DOMException("Scrape cancelled.", "AbortError");
+      const pageTo = Math.min(pageFrom + FULL_SCRAPE_PAGE_CHUNK_SIZE - 1, maxPages);
+      onSourceStart?.({ source, index: index + 1, total: targets.length, pageFrom, pageTo, maxPages });
+      try {
+        const result = await triggerScraperRefresh({ type, mode: "full", sourceKey, pageFrom, pageTo, signal });
+        totals.sources_checked += result.sources_checked || 0;
+        totals.pages_checked += result.pages_checked || 0;
+        totals.articles_checked += result.articles_checked || 0;
+        totals.new_incidents += result.new_incidents || 0;
+        totals.merged_incidents += result.merged_incidents || 0;
+        totals.duplicates_skipped += result.duplicates_skipped || 0;
+        totals.failed_requests += result.failed_requests || 0;
+        if (Array.isArray(result.data)) totals.data.push(...result.data);
+      } catch (error) {
+        totals.success = false;
+        totals.failed_sources.push({
+          source_key: sourceKey,
+          name: source.name || sourceKey,
+          page_from: pageFrom,
+          page_to: pageTo,
+          error: error.message || "Source scrape failed.",
+        });
+      }
     }
   }
 

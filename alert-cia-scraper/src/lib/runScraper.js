@@ -4,10 +4,10 @@ import { getScrapedIncidentSnapshot, saveScrapedRecords } from "./scraperStore.j
 import { completeScraperProgress } from "./progress.js";
 import { scrapeSources } from "../scrapers/scraper.js";
 
-export async function runScraper({ mode = "update", endpointType = "all", sourceKey = null } = {}) {
+export async function runScraper({ mode = "update", endpointType = "all", sourceKey = null, pageFrom = 1, pageTo = null } = {}) {
   const safeMode = mode === "full" ? "full" : "update";
   resetFetchMetrics();
-  const scraped = await scrapeSources({ mode: safeMode, sourceKey });
+  const scraped = await scrapeSources({ mode: safeMode, sourceKey, pageFrom, pageTo });
   const records = endpointType === "vehicular"
     ? scraped.records.filter((item) => item.incident_type_key === "vehicular")
     : scraped.records;
@@ -52,6 +52,8 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     mode: safeMode,
     endpoint_type: endpointType,
     source_key: sourceKey,
+    page_from: pageFrom,
+    page_to: pageTo,
     accident_only: true,
     fetched_at: new Date().toISOString(),
     sources_checked: scraped.stats.sources_checked,
