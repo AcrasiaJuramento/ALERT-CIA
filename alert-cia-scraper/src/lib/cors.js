@@ -1,7 +1,18 @@
 const localDevelopmentOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
+  "http://localhost:5176",
+  "http://127.0.0.1:5176",
 ];
+
+function isLocalDevelopmentOrigin(origin = "") {
+  try {
+    const url = new URL(origin);
+    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
 
 function configuredOrigins() {
   const values = String(process.env.SCRAPER_ALLOWED_ORIGINS || "")
@@ -16,7 +27,11 @@ function configuredOrigins() {
 export function getCorsHeaders(request, methods = "GET, OPTIONS") {
   const origin = request.headers.get("origin")?.replace(/\/$/, "");
   const requestOrigin = new URL(request.url).origin;
-  const originAllowed = origin && (origin === requestOrigin || configuredOrigins().has(origin));
+  const originAllowed = origin && (
+    origin === requestOrigin ||
+    configuredOrigins().has(origin) ||
+    isLocalDevelopmentOrigin(origin)
+  );
   const headers = {
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Allow-Methods": methods,

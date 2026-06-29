@@ -5,7 +5,7 @@ import {
   RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
+import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, listScraperSources, supabase, triggerScraperRefresh } from '../services/supabase';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
 
@@ -46,6 +46,26 @@ function getSourceGroup(incident) {
 }
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
+const DEFAULT_SCRAPER_SOURCE_COUNT = 15;
+
+function buildLocalScraperProgress(mode, sourcesTotal = DEFAULT_SCRAPER_SOURCE_COUNT) {
+  return {
+    running: true,
+    mode,
+    phase: 'starting',
+    source_name: mode === 'full' ? 'Full scrape queued' : 'Update scrape queued',
+    source_index: 0,
+    sources_total: sourcesTotal,
+    page: 0,
+    max_pages: mode === 'full' ? 'all' : 3,
+    article: 0,
+    articles_total: 0,
+  };
+}
+
+function hasMeaningfulScraperProgress(progress = {}) {
+  return Boolean(progress.running || progress.sources_total > 0 || progress.source_index > 0 || progress.phase !== 'idle');
+}
 
 export default function MapMonitoring() {
   const navigate = useNavigate();
@@ -141,7 +161,13 @@ export default function MapMonitoring() {
     let active = true;
     const poll = async () => {
       const progress = await getScraperProgress();
-      if (active && progress) setScraperProgress(progress);
+      if (active && progress && hasMeaningfulScraperProgress(progress)) {
+        setScraperProgress(current => ({
+          ...(current || {}),
+          ...progress,
+          sources_total: progress.sources_total || current?.sources_total || DEFAULT_SCRAPER_SOURCE_COUNT,
+        }));
+      }
     };
     poll();
     const timer = setInterval(poll, 1000);
@@ -157,8 +183,19 @@ export default function MapMonitoring() {
     setScraperMode(mode);
     setScraperError('');
     setScraperMessage('');
-    setScraperProgress(null);
+    setScraperProgress(buildLocalScraperProgress(mode));
     try {
+      listScraperSources()
+        .then((sources = []) => {
+          const activeSources = sources.filter(source => source.active !== false);
+          const sourceTotal = activeSources.length || sources.length || DEFAULT_SCRAPER_SOURCE_COUNT;
+          setScraperProgress(current => current ? {
+            ...current,
+            sources_total: sourceTotal,
+            source_name: mode === 'full' ? 'Full scrape running' : 'Update scrape running',
+          } : current);
+        })
+        .catch(() => {});
       const result = await triggerScraperRefresh({ type: 'vehicular', mode });
       const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
       const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
