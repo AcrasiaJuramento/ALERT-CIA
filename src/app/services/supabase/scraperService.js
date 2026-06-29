@@ -224,7 +224,7 @@ export async function listScraperSources() {
   "Unable to load scraper sources.");
 }
 
-export async function triggerScraperRefresh({ type = "vehicular", mode = "update" } = {}) {
+export async function triggerScraperRefresh({ type = "vehicular", mode = "update", sourceKey = null } = {}) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase authentication is required to refresh scraper data.");
   }
@@ -237,8 +237,14 @@ export async function triggerScraperRefresh({ type = "vehicular", mode = "update
   const apiBaseUrl = getConfiguredScraperApiUrl();
 
   let response;
+  const params = new URLSearchParams({
+    type,
+    mode,
+  });
+  if (sourceKey) params.set("source", sourceKey);
+
   try {
-    response = await fetch(`${apiBaseUrl}/api/run?type=${encodeURIComponent(type)}&mode=${encodeURIComponent(mode)}`, {
+    response = await fetch(`${apiBaseUrl}/api/run?${params.toString()}`, {
       method: "POST",
       headers: {
         Accept: "application/json",
@@ -260,6 +266,51 @@ export async function triggerScraperRefresh({ type = "vehicular", mode = "update
   }
 
   return payload;
+}
+
+export async function triggerFullScraperRefreshBySource({ type = "vehicular", onSourceStart } = {}) {
+  const sources = await listScraperSources();
+  const activeSources = asRows(sources).filter((source) => source.active !== false);
+  const targets = activeSources.length ? activeSources : sources;
+  const totals = {
+    success: true,
+    mode: "full",
+    source_count: targets.length,
+    sources_checked: 0,
+    pages_checked: 0,
+    articles_checked: 0,
+    new_incidents: 0,
+    merged_incidents: 0,
+    duplicates_skipped: 0,
+    failed_requests: 0,
+    failed_sources: [],
+    data: [],
+  };
+
+  for (const [index, source] of targets.entries()) {
+    const sourceKey = source.source_key || source.key;
+    onSourceStart?.({ source, index: index + 1, total: targets.length });
+    try {
+      const result = await triggerScraperRefresh({ type, mode: "full", sourceKey });
+      totals.sources_checked += result.sources_checked || 0;
+      totals.pages_checked += result.pages_checked || 0;
+      totals.articles_checked += result.articles_checked || 0;
+      totals.new_incidents += result.new_incidents || 0;
+      totals.merged_incidents += result.merged_incidents || 0;
+      totals.duplicates_skipped += result.duplicates_skipped || 0;
+      totals.failed_requests += result.failed_requests || 0;
+      if (Array.isArray(result.data)) totals.data.push(...result.data);
+    } catch (error) {
+      totals.success = false;
+      totals.failed_sources.push({
+        source_key: sourceKey,
+        name: source.name || sourceKey,
+        error: error.message || "Source scrape failed.",
+      });
+    }
+  }
+
+  return totals;
 }
 
 export async function getScraperProgress() {

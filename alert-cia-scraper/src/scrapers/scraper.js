@@ -137,8 +137,11 @@ async function processSource(source, mode, stats, seenUrls) {
   return records;
 }
 
-export async function scrapeSources({ mode = "update" } = {}) {
+export async function scrapeSources({ mode = "update", sourceKey = null } = {}) {
   const safeMode = mode === "full" ? "full" : "update";
+  const targetSources = sourceKey
+    ? ENABLED_SOURCES.filter((source) => source.key === sourceKey)
+    : ENABLED_SOURCES;
   const stats = {
     sources_checked: 0,
     pages_checked: 0,
@@ -148,16 +151,16 @@ export async function scrapeSources({ mode = "update" } = {}) {
   };
   const records = [];
   const seenUrls = new Set();
-  startScraperProgress({ mode: safeMode, sourcesTotal: ENABLED_SOURCES.length });
+  startScraperProgress({ mode: safeMode, sourcesTotal: targetSources.length });
 
-  for (const [sourceIndex, source] of ENABLED_SOURCES.entries()) {
+  for (const [sourceIndex, source] of targetSources.entries()) {
     stats.sources_checked += 1;
     updateScraperProgress({
       phase: "pages",
       source_key: source.key,
       source_name: source.name,
       source_index: sourceIndex + 1,
-      sources_total: ENABLED_SOURCES.length,
+      sources_total: targetSources.length,
       page: 0,
       max_pages: safeMode === "full" ? source.maxPagesFull : source.maxPagesUpdate,
       page_url: source.firstPageUrl,
@@ -171,7 +174,7 @@ export async function scrapeSources({ mode = "update" } = {}) {
     }
   }
   updateScraperProgress({ phase: "saving", page_url: null, article: 0, articles_total: records.length });
-  return { mode: safeMode, records, stats };
+  return { mode: safeMode, source_key: sourceKey, records, stats };
 }
 
 // Compatibility export for callers from the original one-source scraper.

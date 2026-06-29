@@ -5,7 +5,7 @@ import {
   RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, listScraperSources, supabase, triggerScraperRefresh } from '../services/supabase';
+import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, listScraperSources, supabase, triggerFullScraperRefreshBySource, triggerScraperRefresh } from '../services/supabase';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
 
@@ -196,11 +196,27 @@ export default function MapMonitoring() {
           } : current);
         })
         .catch(() => {});
-      const result = await triggerScraperRefresh({ type: 'vehicular', mode });
+      const result = mode === 'full'
+        ? await triggerFullScraperRefreshBySource({
+            type: 'vehicular',
+            onSourceStart: ({ source, index, total }) => {
+              setScraperProgress(current => ({
+                ...(current || buildLocalScraperProgress(mode, total)),
+                source_name: source.name || source.source_key || 'News source',
+                source_index: index,
+                sources_total: total,
+                phase: 'pages',
+                page: 0,
+                max_pages: source.metadata?.max_pages_full || 'all',
+              }));
+            },
+          })
+        : await triggerScraperRefresh({ type: 'vehicular', mode });
       const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
       const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
       const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
-      setScraperMessage(`${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
+      const failedSources = result.failed_sources?.length || 0;
+      setScraperMessage(`${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped${failedSources ? `, ${failedSources} source${failedSources === 1 ? '' : 's'} failed` : ''}.`);
       setReloadKey(key => key + 1);
     } catch (error) {
       setScraperError(error.message || 'Unable to refresh scraper data.');

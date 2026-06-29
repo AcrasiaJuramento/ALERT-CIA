@@ -2,6 +2,8 @@ import { requireAuthorizedScraperUser } from "../alert-cia-scraper/src/lib/auth.
 import { getCorsHeaders } from "../alert-cia-scraper/src/lib/cors.js";
 import { runScraper } from "../alert-cia-scraper/src/lib/runScraper.js";
 
+const runtimeEnv = globalThis.process?.env || {};
+
 export const config = {
   maxDuration: 300,
 };
@@ -36,8 +38,13 @@ function getMode(request, { cron = false } = {}) {
   return searchParams.get("mode") === "full" ? "full" : "update";
 }
 
+function getSourceKey(request) {
+  const { searchParams } = new URL(request.url);
+  return searchParams.get("source") || searchParams.get("sourceKey") || null;
+}
+
 function isCronAuthorized(request) {
-  const secret = process.env.CRON_SECRET || process.env.SCRAPER_CRON_SECRET;
+  const secret = runtimeEnv.CRON_SECRET || runtimeEnv.SCRAPER_CRON_SECRET;
   if (!secret) return false;
   return request.headers.get("authorization") === `Bearer ${secret}` ||
     request.headers.get("x-scraper-cron-secret") === secret;
@@ -49,7 +56,7 @@ async function handleRun(req, res, { allowCron = false } = {}) {
   applyHeaders(res, headers);
 
   if (allowCron && isCronAuthorized(request)) {
-    const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }) });
+    const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }), sourceKey: getSourceKey(request) });
     res.status(200).json({ ...result, triggeredBy: "cron" });
     return;
   }
@@ -60,7 +67,7 @@ async function handleRun(req, res, { allowCron = false } = {}) {
     return;
   }
 
-  const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request) });
+  const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request), sourceKey: getSourceKey(request) });
   res.status(200).json({
     ...result,
     triggeredBy: "user",
