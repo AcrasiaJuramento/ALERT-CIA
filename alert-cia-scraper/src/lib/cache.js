@@ -1,7 +1,12 @@
 import fs from "fs";
 import path from "path";
 
-const CACHE_DIR = path.join(process.cwd(), "src/cache");
+const runtimeEnv = globalThis.process?.env || {};
+const cwd = globalThis.process?.cwd?.() || ".";
+const isServerless = Boolean(runtimeEnv.VERCEL || runtimeEnv.AWS_LAMBDA_FUNCTION_NAME);
+const CACHE_DIR = isServerless
+  ? path.join("/tmp", "alert-cia-cache")
+  : path.join(cwd, "src/cache");
 
 const INCIDENTS_FILE = path.join(CACHE_DIR, "incidents.json");
 const VEHICULAR_FILE = path.join(CACHE_DIR, "vehicular.json");
@@ -21,7 +26,18 @@ function readJSON(file) {
 }
 
 function writeJSON(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+function safeWriteJSON(file, data) {
+  try {
+    writeJSON(file, data);
+    return true;
+  } catch (error) {
+    console.warn("[alert-cia-scraper] cache write skipped:", error.message);
+    return false;
+  }
 }
 
 function isExpired(meta) {
@@ -57,15 +73,15 @@ function mergeRecords(existing = [], incoming = []) {
 export function saveCache({ incidents, vehicular } = {}, { replace = false } = {}) {
   if (incidents !== undefined) {
     const existing = replace ? [] : readJSON(INCIDENTS_FILE) || [];
-    writeJSON(INCIDENTS_FILE, mergeRecords(existing, incidents));
+    safeWriteJSON(INCIDENTS_FILE, mergeRecords(existing, incidents));
   }
 
   if (vehicular !== undefined) {
     const existing = replace ? [] : readJSON(VEHICULAR_FILE) || [];
-    writeJSON(VEHICULAR_FILE, mergeRecords(existing, vehicular));
+    safeWriteJSON(VEHICULAR_FILE, mergeRecords(existing, vehicular));
   }
 
-  writeJSON(META_FILE, {
+  safeWriteJSON(META_FILE, {
     timestamp: Date.now(),
     incidents_count: (readJSON(INCIDENTS_FILE) || []).length,
     vehicular_count: (readJSON(VEHICULAR_FILE) || []).length,
