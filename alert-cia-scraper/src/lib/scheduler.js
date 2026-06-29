@@ -1,4 +1,4 @@
-import { runScraper } from "./runScraper";
+import { runScraper } from "./runScraper.js";
 
 const TEN_MINUTES = 10 * 60 * 1000;
 const globalKey = "__alertCiaScraperScheduler";

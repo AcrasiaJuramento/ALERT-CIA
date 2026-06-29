@@ -1,5 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
-import { getSupabaseAdminClient, getSupabaseUrl, getSupabasePublishableKey } from "./supabase";
+import { getSupabaseAdminClient, getSupabaseUrl, getSupabasePublishableKey } from "./supabase.js";
 
 const AUTHORIZED_ROLES = new Set(["administrator", "dispatcher", "field_responder"]);
 

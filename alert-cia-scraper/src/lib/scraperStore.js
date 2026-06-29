@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
-import { SOURCES } from "../constants/sources";
-import { similarityScore } from "./deduplication";
-import { getSupabaseAdminClient, isSupabaseEnabled } from "./supabase";
+import { SOURCES } from "../constants/sources.js";
+import { similarityScore } from "./deduplication.js";
+import { getSupabaseAdminClient, isSupabaseEnabled } from "./supabase.js";
 
 const hash = (value = "") => crypto.createHash("sha256").update(value).digest("hex");
 

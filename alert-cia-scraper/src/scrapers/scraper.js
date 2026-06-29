@@ -1,15 +1,15 @@
-import { ENABLED_SOURCES } from "../constants/sources";
-import { classify, incidentTypeLabel } from "../lib/classify";
-import { extractVictimCount, incidentKey } from "../lib/deduplication";
-import { extractArticle } from "../lib/extractArticle";
-import { extractLinks, extractNextPage } from "../lib/extractLinks";
-import { fetchHTML, fetchHTMLBatch } from "../lib/fetchHTML";
-import { isRelevant } from "../lib/filters";
-import { geocode } from "../lib/geocode";
-import { extractLocation, isValidLocation } from "../lib/locations";
-import { startScraperProgress, updateScraperProgress } from "../lib/progress";
-import { findExistingSourceUrls } from "../lib/scraperStore";
-import { normalizeUrl } from "../lib/urls";
+import { ENABLED_SOURCES } from "../constants/sources.js";
+import { classify, incidentTypeLabel } from "../lib/classify.js";
+import { extractVictimCount, incidentKey } from "../lib/deduplication.js";
+import { extractArticle } from "../lib/extractArticle.js";
+import { extractLinks, extractNextPage } from "../lib/extractLinks.js";
+import { fetchHTML, fetchHTMLBatch } from "../lib/fetchHTML.js";
+import { isAccidentRelevant } from "../lib/filters.js";
+import { geocode } from "../lib/geocode.js";
+import { extractLocation, isValidLocation } from "../lib/locations.js";
+import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
+import { findExistingSourceUrls } from "../lib/scraperStore.js";
+import { normalizeUrl } from "../lib/urls.js";
 
 const UPDATE_DUPLICATE_THRESHOLD = 0.8;
 
@@ -82,8 +82,9 @@ async function processSource(source, mode, stats, seenUrls) {
     if (!sourceUrl || seenUrls.has(`${sourceUrl}:canonical`)) continue;
     seenUrls.add(`${sourceUrl}:canonical`);
     const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || ""}`;
-    if (!article.title || !isRelevant(combined)) continue;
+    if (!article.title || !isAccidentRelevant(combined)) continue;
     const incidentType = classify(combined);
+    if (incidentType !== "vehicular") continue;
     const location = extractLocation(article.title, article.snippet, article.body);
     if (!incidentType || !isValidLocation(location)) continue;
     const geo = await geocode(location);

@@ -1,8 +1,8 @@
-import { saveCache } from "@/lib/cache";
-import { getFetchMetrics, resetFetchMetrics } from "@/lib/fetchHTML";
-import { getScrapedIncidentSnapshot, saveScrapedRecords } from "@/lib/scraperStore";
-import { completeScraperProgress } from "@/lib/progress";
-import { scrapeSources } from "@/scrapers/scraper";
+import { saveCache } from "./cache.js";
+import { getFetchMetrics, resetFetchMetrics } from "./fetchHTML.js";
+import { getScrapedIncidentSnapshot, saveScrapedRecords } from "./scraperStore.js";
+import { completeScraperProgress } from "./progress.js";
+import { scrapeSources } from "../scrapers/scraper.js";
 
 export async function runScraper({ mode = "update", endpointType = "all" } = {}) {
   const safeMode = mode === "full" ? "full" : "update";
@@ -26,12 +26,17 @@ export async function runScraper({ mode = "update", endpointType = "all" } = {})
   }
   const fetchMetrics = getFetchMetrics();
   const failedRequests = Math.max(scraped.stats.failed_urls.length, fetchMetrics.failures);
-  const data = records.map(({ body, location, ...record }) => ({
-    ...record,
-    municipality: location?.municipality || null,
-    barangay: location?.barangay || null,
-    road_place: location?.road || null,
-  }));
+  const data = records.map((record) => {
+    const item = { ...record };
+    delete item.body;
+    delete item.location;
+    return {
+      ...item,
+      municipality: record.location?.municipality || null,
+      barangay: record.location?.barangay || null,
+      road_place: record.location?.road || null,
+    };
+  });
   console.info("[alert-cia-scraper] run complete", {
     mode: safeMode,
     pages: scraped.stats.pages_checked,
@@ -45,6 +50,8 @@ export async function runScraper({ mode = "update", endpointType = "all" } = {})
   return {
     success: database.enabled ? database.saved : true,
     mode: safeMode,
+    endpoint_type: endpointType,
+    accident_only: true,
     fetched_at: new Date().toISOString(),
     sources_checked: scraped.stats.sources_checked,
     pages_checked: scraped.stats.pages_checked,

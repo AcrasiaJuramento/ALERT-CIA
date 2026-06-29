@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { normalizeUrl } from "./urls";
+import { normalizeUrl } from "./urls.js";
 
 function validDate(value) {
   if (!value) return null;

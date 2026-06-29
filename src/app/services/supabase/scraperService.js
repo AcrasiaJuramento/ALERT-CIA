@@ -29,8 +29,53 @@ const ECHAGUE_BOUNDS = {
   east: 121.74,
 };
 
+const SCRAPER_MAP_CACHE_TTL_MS = 30 * 60 * 1000;
+
 function asRows(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function readBrowserCache(key) {
+  if (typeof window === "undefined" || !window.localStorage) return null;
+  try {
+    const cached = JSON.parse(window.localStorage.getItem(key) || "null");
+    if (!cached?.savedAt || Date.now() - cached.savedAt > SCRAPER_MAP_CACHE_TTL_MS) return null;
+    return Array.isArray(cached.value) ? cached.value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBrowserCache(key, value) {
+  if (typeof window === "undefined" || !window.localStorage) return value;
+  try {
+    window.localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), value }));
+  } catch {
+    // Storage can be unavailable in private mode; the live response is still usable.
+  }
+  return value;
+}
+
+function isAccidentMapRow(row = {}) {
+  const values = [
+    row.category,
+    row.incident_type,
+    row.incident_type_key,
+    row.title,
+    row.snippet,
+    row.location_text,
+  ].map(value => String(value || "").toLowerCase());
+
+  return values.some(value => (
+    value === "vehicular" ||
+    value.includes("accident") ||
+    value.includes("vehicular") ||
+    value.includes("vehicle") ||
+    value.includes("collision") ||
+    value.includes("crash") ||
+    value.includes("bangga") ||
+    value.includes("aksidente")
+  ));
 }
 
 function scraperRecordToApp(row = {}) {
@@ -179,7 +224,7 @@ export async function listScraperSources() {
   "Unable to load scraper sources.");
 }
 
-export async function triggerScraperRefresh({ type = "all", mode = "update" } = {}) {
+export async function triggerScraperRefresh({ type = "vehicular", mode = "update" } = {}) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase authentication is required to refresh scraper data.");
   }
@@ -260,35 +305,49 @@ export async function listScraperRecords({ status, category, sourceId, limit = 1
 
 export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   if (!isSupabaseConfigured) return [];
+  const cacheKey = `alert-cia:public-scraped-map:${limit}`;
 
-  const rows = await runSupabaseRequest(client =>
-    client
-      .from("scraper_records")
-      .select("*, barangay:barangays(id, name, municipality, province, centroid)")
-      .eq("public_visible", true)
-      .in("status", ["approved", "promoted", "matched", "imported"])
-      .is("deleted_at", null)
-      .order("scraped_at", { ascending: false })
-      .limit(limit),
-  "Unable to load public scraper map incidents.");
-
-  return scraperRowsToMapIncidents(asRows(rows));
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("scraper_records")
+        .select("*, barangay:barangays(id, name, municipality, province, centroid)")
+        .eq("public_visible", true)
+        .in("status", ["approved", "promoted", "matched", "imported"])
+        .is("deleted_at", null)
+        .order("scraped_at", { ascending: false })
+        .limit(limit),
+    "Unable to load public scraper map incidents.");
+    const mapped = await scraperRowsToMapIncidents(asRows(rows).filter(isAccidentMapRow));
+    return writeBrowserCache(cacheKey, mapped);
+  } catch (error) {
+    const cached = readBrowserCache(cacheKey);
+    if (cached) return cached;
+    throw error;
+  }
 }
 
 export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
   if (!isSupabaseConfigured) return [];
+  const cacheKey = `alert-cia:officer-scraped-map:${limit}`;
 
-  const rows = await runSupabaseRequest(client =>
-    client
-      .from("scraper_records")
-      .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
-      .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
-      .is("deleted_at", null)
-      .order("scraped_at", { ascending: false })
-      .limit(limit),
-  "Unable to load officer scraper map incidents.");
-
-  return scraperRowsToMapIncidents(asRows(rows));
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("scraper_records")
+        .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
+        .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
+        .is("deleted_at", null)
+        .order("scraped_at", { ascending: false })
+        .limit(limit),
+    "Unable to load officer scraper map incidents.");
+    const mapped = await scraperRowsToMapIncidents(asRows(rows).filter(isAccidentMapRow));
+    return writeBrowserCache(cacheKey, mapped);
+  } catch (error) {
+    const cached = readBrowserCache(cacheKey);
+    if (cached) return cached;
+    throw error;
+  }
 }
 
 export async function updateScraperRecordStatus(recordId, status, errorMessage = null) {

@@ -4,14 +4,18 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const spawnOptions = (cwd) => ({
+  cwd,
+  stdio: "inherit",
+  shell: process.platform === "win32",
+});
+
 const children = [
   spawn(npm, ["run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"], {
-    cwd: root,
-    stdio: "inherit",
+    ...spawnOptions(root),
   }),
   spawn(npm, ["run", "dev", "--", "--hostname", "127.0.0.1", "--port", "3000"], {
-    cwd: path.join(root, "alert-cia-scraper"),
-    stdio: "inherit",
+    ...spawnOptions(path.join(root, "alert-cia-scraper")),
   }),
 ];
 

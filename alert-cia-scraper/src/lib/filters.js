@@ -1,4 +1,4 @@
-import { ISABELA_PLACES } from "./locations";
+import { ISABELA_PLACES } from "./locations.js";
 
 export const INCIDENT_KEYWORDS = [
   "accident", "aksidente", "disgrasya", "nadisgrasya", "banggaan", "nagbanggaan", "nagkabanggaan",
@@ -15,10 +15,27 @@ export const INCIDENT_KEYWORDS = [
   "nasaksak", "drowned", "nalunod", "missing person", "nawawala",
 ];
 
+export const ACCIDENT_KEYWORDS = [
+  "accident", "aksidente", "disgrasya", "nadisgrasya", "banggaan", "nagbanggaan", "nagkabanggaan",
+  "salpukan", "sumalpok", "nasalpok", "nabangga", "bumangga", "tumaob", "tumagilid", "tumilapon",
+  "nasagasaan", "sagasaan", "inararo", "nahulog sa bangin", "nawalan ng preno",
+  "road crash", "vehicular accident", "motorcycle accident", "truck accident", "bus accident",
+  "collision", "crash", "hit and run", "hit-and-run", "vehicular", "vehicle", "motorcycle",
+  "motorsiklo", "truck", "bus",
+];
+
+function hasIsabelaLocation(text) {
+  return /\bisabela\b/i.test(text) || ISABELA_PLACES.some((place) =>
+    new RegExp(`\\b${place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text));
+}
+
 export function isRelevant(text) {
   const low = String(text || "").toLowerCase();
   const hasIncident = INCIDENT_KEYWORDS.some((word) => low.includes(word));
-  const hasIsabela = /\bisabela\b/i.test(low) || ISABELA_PLACES.some((place) =>
-    new RegExp(`\\b${place.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(low));
-  return hasIncident && hasIsabela;
+  return hasIncident && hasIsabelaLocation(low);
+}
+
+export function isAccidentRelevant(text) {
+  const low = String(text || "").toLowerCase();
+  return ACCIDENT_KEYWORDS.some((word) => low.includes(word)) && hasIsabelaLocation(low);
 }

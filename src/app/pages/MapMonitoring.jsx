@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
@@ -43,40 +43,6 @@ function getSourceGroup(incident) {
   if (incident.sourceKind === 'pcr_report') return 'pcr_report';
   if (String(incident.sourceKind || '').includes('scraped')) return 'scraper';
   return 'official';
-}
-
-function isAccidentRecord(record = {}) {
-  const values = [
-    record.type,
-    record.classification,
-    record.incidentType,
-    record.category,
-    record.title,
-    record.description,
-  ].map(value => String(value || '').toLowerCase());
-
-  return values.some(value => (
-    value.includes('accident') ||
-    value.includes('vehicular') ||
-    value.includes('vehicle') ||
-    value.includes('collision') ||
-    value.includes('crash') ||
-    value === 'mvc'
-  ));
-}
-
-function mergeMapRecords(records = []) {
-  const byKey = new Map();
-
-  records.forEach(record => {
-    const key = record.relatedIncidentId || record.recordId || record.id;
-
-    if (!key || byKey.has(key)) return;
-
-    byKey.set(key, record);
-  });
-
-  return [...byKey.values()];
 }
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
@@ -182,11 +148,11 @@ export default function MapMonitoring() {
     setScraperMessage('');
     setScraperProgress(null);
     try {
-      const result = await triggerScraperRefresh({ type: 'all', mode });
+      const result = await triggerScraperRefresh({ type: 'vehicular', mode });
       const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
       const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
       const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
-      setScraperMessage(`${mode === 'full' ? 'Full scrape' : 'Latest update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
+      setScraperMessage(`${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped.`);
       setReloadKey(key => key + 1);
     } catch (error) {
       setScraperError(error.message || 'Unable to refresh scraper data.');
@@ -245,16 +211,16 @@ export default function MapMonitoring() {
             className="flex items-center gap-1.5 bg-blue-600/95 border border-blue-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${scraperRefreshing ? 'animate-spin' : ''}`} />
-            {scraperMode === 'update' ? 'Fetching latest...' : 'Fetch latest incidents'}
+            {scraperMode === 'update' ? 'Checking pages 1-3...' : 'Update scrape'}
           </button>
           <button
             onClick={() => refreshScraperData('full')}
             disabled={scraperRefreshing}
-            title="Scrape every available page from all enabled news sources"
+            title="Scrape every configured page from all enabled news websites"
             className="flex items-center gap-1.5 bg-purple-600/95 border border-purple-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
           >
             <Database className={`w-3.5 h-3.5 ${scraperMode === 'full' ? 'animate-pulse' : ''}`} />
-            {scraperMode === 'full' ? 'Full scraping...' : 'Full scrape'}
+            {scraperMode === 'full' ? 'Scraping all pages...' : 'Full scrape'}
           </button>
         </div>
 
@@ -306,7 +272,7 @@ export default function MapMonitoring() {
                   activeLayer === key ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-secondary'
                 }`}
               >
-                <Icon className={`w-3 h-3 ${color}`} />
+                {createElement(Icon, { className: `w-3 h-3 ${color}` })}
                 <span className="text-foreground/80">{label}</span>
               </button>
             ))}
@@ -411,6 +377,25 @@ export default function MapMonitoring() {
                 <span className="text-sm font-semibold text-foreground">Operational Records</span>
               </div>
               <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
+              <div className="mt-3 grid grid-cols-2 gap-1.5">
+                {sourceFilters.map(({ key, label, icon: Icon }) => (
+                  <button
+                    key={key}
+                    onClick={() => setActiveSource(key)}
+                    className={`flex min-h-8 items-center justify-between gap-2 rounded-lg border px-2 py-1 text-[10px] font-semibold transition-all ${
+                      activeSource === key
+                        ? 'border-blue-500/50 bg-blue-500/15 text-blue-300'
+                        : 'border-border bg-background/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                    }`}
+                  >
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {createElement(Icon, { className: 'h-3 w-3 shrink-0' })}
+                      <span className="truncate">{label}</span>
+                    </span>
+                    <span className="shrink-0">{sourceCounts[key] || 0}</span>
+                  </button>
+                ))}
+              </div>
               {loading && <p className="mt-1 text-[10px] text-muted-foreground">Loading map records...</p>}
               {scraperMessage && <p className="mt-1 text-[10px] text-green-400">{scraperMessage}</p>}
               {scraperError && <p className="mt-1 text-[10px] text-orange-400">{scraperError}</p>}

@@ -1,5 +1,5 @@
 import * as cheerio from "cheerio";
-import { isArticleUrl, normalizeUrl } from "./urls";
+import { isArticleUrl, normalizeUrl } from "./urls.js";
 
 export function extractLinks(html, base, source) {
   const $ = cheerio.load(html);
