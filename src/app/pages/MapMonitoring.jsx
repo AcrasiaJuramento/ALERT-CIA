@@ -197,6 +197,8 @@ export default function MapMonitoring() {
           hideLayerControl
           onMarkerClick={(id) => setSelectedIncident(id)}
           selectedIncidentId={selectedIncident || undefined}
+          clusterMarkers={false}
+          spreadOverlappingMarkers
         />
 
         {/* Top overlay bar */}

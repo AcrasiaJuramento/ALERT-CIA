@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, CheckCircle2, MapPin, Clock, ChevronRight,
@@ -69,7 +69,7 @@ export default function PublicDashboard() {
       setLoading(true);
       setError('');
       try {
-        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 200, scrapedLimit: 100 });
+        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 200, pcrLimit: 200 });
         if (mounted) setIncidents(publicIncidents);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incident data.');
@@ -161,10 +161,10 @@ export default function PublicDashboard() {
             { label: 'Critical Alerts', value: criticalCount, icon: Activity, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10', border: 'border-orange-100 dark:border-orange-500/20' },
             { label: 'Teams Responding', value: new Set(activeIncidents.map(item => item.assignedTeam).filter(Boolean)).size, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
             { label: 'Completed Today', value: resolvedToday, icon: CheckCircle2, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-100 dark:border-green-500/20' },
-          ].map(({ label, value, icon: Icon, color, bg, border }) => (
+          ].map(({ label, value, icon, color, bg, border }) => (
             <div key={label} className={`p-4 rounded-2xl border ${bg} ${border} transition-colors duration-300`}>
               <div className={`w-9 h-9 ${bg} rounded-xl flex items-center justify-center mb-3`}>
-                <Icon className={`w-5 h-5 ${color}`} />
+                {createElement(icon, { className: `w-5 h-5 ${color}` })}
               </div>
               <div className={`text-2xl font-bold ${color}`}>{value}</div>
               <div className="text-muted-foreground text-xs mt-0.5">{label}</div>

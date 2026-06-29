@@ -1,8 +1,9 @@
 import {
   listIncidents,
-  listPublicPCRMapIncidents,
-  listPublicScrapedMapIncidents,
+  listOfficerScrapedMapIncidents,
+  listPCRMapIncidents,
 } from '../services/supabase';
+import { hasValidLatLng, isWithinEchagueMapArea } from './mapData';
 
 function isAccidentRecord(record = {}) {
   const values = [
@@ -50,27 +51,32 @@ function sanitizeForPublic(record = {}) {
   };
 }
 
-export async function loadPublicAccidentIncidents({ officialLimit = 300, scrapedLimit = 200, pcrLimit = 100 } = {}) {
+export async function loadPublicAccidentIncidents({ officialLimit = 500, scrapedLimit = 200, pcrLimit = 200 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
-      listIncidents({ publicOnly: true, limit: officialLimit }).catch(() => []),
+      listIncidents({ limit: officialLimit }).catch(() => []),
     ]),
-    listPublicPCRMapIncidents({ limit: pcrLimit }).catch(() => []),
+    listPCRMapIncidents({ limit: pcrLimit }).catch(() => []),
     Promise.all([
-      listPublicScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
+      listOfficerScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
     ]),
   ]);
 
   const official = mergeMapRecords((Array.isArray(officialSets) ? officialSets : []).flat());
   const [publicScraped = [], reviewedScraped = []] = Array.isArray(scrapedSets) ? scrapedSets : [];
-  const publicAndAccidentReports = official.filter(item => item.publicVisible || isAccidentRecord(item));
+  const publicAndAccidentReports = official.filter(isAccidentRecord);
   const scrapedAccidents = mergeMapRecords([
     ...(Array.isArray(publicScraped) ? publicScraped : []),
     ...(Array.isArray(reviewedScraped) ? reviewedScraped : []),
   ])
-    .filter(item => item.publicVisible || isAccidentRecord(item));
+    .filter(isAccidentRecord);
   const officialIds = new Set(publicAndAccidentReports.map(item => item.id));
-  const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : []).filter(item => !officialIds.has(item.relatedIncidentId));
+  const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : [])
+    .filter(isAccidentRecord)
+    .filter(item => !officialIds.has(item.relatedIncidentId));
 
-  return mergeMapRecords([...publicAndAccidentReports, ...pcrOnly, ...scrapedAccidents]).map(sanitizeForPublic);
+  return mergeMapRecords([...publicAndAccidentReports, ...pcrOnly, ...scrapedAccidents])
+    .filter(hasValidLatLng)
+    .filter(isWithinEchagueMapArea)
+    .map(sanitizeForPublic);
 }

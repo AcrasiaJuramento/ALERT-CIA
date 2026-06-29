@@ -88,11 +88,32 @@ function createReactDivIcon(content, className, size = [34, 34], anchor = [17, 3
   });
 }
 
+function coordinateKey(incident) {
+  const [lat, lng] = getIncidentLatLng(incident);
+  return `${Number(lat).toFixed(5)},${Number(lng).toFixed(5)}`;
+}
+
+function getSpreadLatLng(incident, indexByCoordinate, totalByCoordinate) {
+  const base = getIncidentLatLng(incident);
+  const key = coordinateKey(incident);
+  const total = totalByCoordinate.get(key) || 1;
+  if (total <= 1) return base;
+
+  const index = indexByCoordinate.get(incident.id) || 0;
+  const angle = (Math.PI * 2 * index) / total;
+  const radius = 0.00018 + Math.floor(index / 8) * 0.00008;
+  return [
+    base[0] + Math.sin(angle) * radius,
+    base[1] + Math.cos(angle) * radius,
+  ];
+}
+
 export function ClusteredIncidentMarkers({
   incidents = [],
   selectedIncidentId,
   onMarkerClick,
   enabled = true,
+  spreadOverlapping = false,
 }) {
   const map = useMap();
 
@@ -113,11 +134,32 @@ export function ClusteredIncidentMarkers({
         })
       : L.layerGroup();
 
+    const coordinateCounts = new Map();
+    const coordinateIndexes = new Map();
+    const seenByCoordinate = new Map();
+    if (spreadOverlapping && !enabled) {
+      incidents.forEach((incident) => {
+        const key = coordinateKey(incident);
+        coordinateCounts.set(key, (coordinateCounts.get(key) || 0) + 1);
+      });
+      incidents.forEach((incident) => {
+        const key = coordinateKey(incident);
+        const nextIndex = seenByCoordinate.get(key) || 0;
+        coordinateIndexes.set(incident.id, nextIndex);
+        seenByCoordinate.set(key, nextIndex + 1);
+      });
+    }
+
     incidents.forEach((incident) => {
-      const marker = L.marker(getIncidentLatLng(incident), {
+      const marker = L.marker(
+        spreadOverlapping && !enabled
+          ? getSpreadLatLng(incident, coordinateIndexes, coordinateCounts)
+          : getIncidentLatLng(incident),
+        {
         icon: createReactDivIcon(<MarkerGlyph incident={incident} />, 'leaflet-incident-marker-shell'),
         riseOnHover: true,
-      });
+        }
+      );
 
       const popup = document.createElement('div');
       createRoot(popup).render(<PopupContent incident={incident} />);
@@ -131,7 +173,7 @@ export function ClusteredIncidentMarkers({
     return () => {
       map.removeLayer(layer);
     };
-  }, [enabled, incidents, map, onMarkerClick]);
+  }, [enabled, incidents, map, onMarkerClick, spreadOverlapping]);
 
   useEffect(() => {
     if (!selectedIncidentId) return;

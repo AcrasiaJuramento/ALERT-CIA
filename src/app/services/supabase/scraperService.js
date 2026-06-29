@@ -377,8 +377,7 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
       client
         .from("scraper_records")
         .select("*, barangay:barangays(id, name, municipality, province, centroid)")
-        .eq("public_visible", true)
-        .in("status", ["approved", "promoted", "matched", "imported"])
+        .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
         .limit(limit),

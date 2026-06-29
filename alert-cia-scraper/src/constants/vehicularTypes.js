@@ -8,6 +8,9 @@ export const VEHICULAR_TYPES = {
     "sumalpok ang motorsiklo",
   ],
   traffic_accident: [
+    "collided",
+    "crashed",
+    "hit by a vehicle",
     "accident",
     "collision",
     "crash",

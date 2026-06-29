@@ -6,14 +6,12 @@ import {
 import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
 import {
   listPublishedAdvisories,
-  listIncidents,
   listPublicHazardZones,
-  listPublicPCRMapIncidents,
-  listPublicScrapedMapIncidents,
   supabase,
 } from '../../services/supabase';
 import { ECHAGUE_CENTER, getIncidentLatLng, getZoneLatLng, hasValidLatLng } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
+import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
 
 const quickDestinations = [
   { label: 'Echague Municipal Hall', latLng: [16.705, 121.676] },
@@ -29,51 +27,6 @@ const severityTone = {
   moderate: 'border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-300',
   resolved: 'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300',
 };
-
-function sanitizeForPublic(record = {}) {
-  const type = record.type || record.classification || 'incident';
-  const fromScraper = String(record.sourceKind || '').includes('scraped');
-  return {
-    ...record,
-    status: fromScraper ? 'scraped' : record.status,
-    sourceLabel: record.sourceKind === 'pcr_report' ? 'Verified emergency response' : record.sourceLabel || 'Approved public report',
-    assignedTeam: 'Emergency responders',
-    title: record.title || `${type} alert`,
-    description: record.sourceKind === 'pcr_report'
-      ? 'Emergency response activity has been verified in this area. Keep distance and follow official guidance.'
-      : record.description || 'Use caution near this area and consider another route if conditions are unsafe.',
-  };
-}
-
-function isAccidentRecord(record = {}) {
-  const values = [
-    record.type,
-    record.classification,
-    record.incidentType,
-    record.category,
-    record.title,
-    record.description,
-  ].map(value => String(value || '').toLowerCase());
-
-  return values.some(value => (
-    value.includes('accident')
-    || value.includes('vehicular')
-    || value.includes('vehicle')
-    || value.includes('collision')
-    || value.includes('crash')
-    || value === 'mvc'
-  ));
-}
-
-function mergeMapRecords(records = []) {
-  const byKey = new Map();
-  records.forEach(record => {
-    const key = record.relatedIncidentId || record.recordId || record.id;
-    if (!key || byKey.has(key)) return;
-    byKey.set(key, record);
-  });
-  return [...byKey.values()];
-}
 
 function distanceKm(from, to) {
   if (!from || !to) return 0;
@@ -255,24 +208,12 @@ export default function PublicMap() {
     setLoading(true);
     setError('');
     try {
-      const [officialSets, pcrLinked, scraped, zones] = await Promise.all([
-        Promise.all([
-          listIncidents({ publicOnly: true, limit: 300 }),
-        ]),
-        listPublicPCRMapIncidents({ limit: 100 }),
-        Promise.all([
-          listPublicScrapedMapIncidents({ limit: 100 }),
-        ]),
+      const [publicIncidents, zones, activeAdvisories] = await Promise.all([
+        loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 200, pcrLimit: 200 }),
         listPublicHazardZones({ limit: 100 }),
+        listPublishedAdvisories({ limit: 100 }),
       ]);
-      const activeAdvisories = await listPublishedAdvisories({ limit: 100 });
-      const official = mergeMapRecords(officialSets.flat());
-      const [publicScraped] = scraped;
-      const accidentReports = official.filter(item => item.publicVisible || isAccidentRecord(item));
-      const accidentScraped = mergeMapRecords(publicScraped).filter(item => item.publicVisible || isAccidentRecord(item));
-      const officialIds = new Set(accidentReports.map(item => item.id));
-      const pcrOnly = pcrLinked.filter(item => !officialIds.has(item.relatedIncidentId));
-      setIncidents(mergeMapRecords([...accidentReports, ...pcrOnly, ...accidentScraped]).filter(hasValidLatLng).map(sanitizeForPublic));
+      setIncidents(publicIncidents.filter(hasValidLatLng));
       setAdvisories(activeAdvisories.filter(item => item.coordinates));
       setHazardZones(zones);
     } catch (requestError) {

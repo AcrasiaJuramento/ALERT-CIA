@@ -261,6 +261,7 @@ export function LeafletIncidentMap({
   externalLayers,
   onExternalLayersChange,
   hideLayerControl = false,
+  spreadOverlappingMarkers = false,
 }) {
   const [layers, setLayers] = useState({
     heatmap: showHeatmap,
@@ -320,6 +321,7 @@ export function LeafletIncidentMap({
           selectedIncidentId={selectedIncidentId}
           onMarkerClick={onMarkerClick}
           enabled={clusterMarkers}
+          spreadOverlapping={spreadOverlappingMarkers}
         />
         {!clusterMarkers && effectiveLayers.incidents && (
           <ClusteredIncidentMarkers
@@ -327,6 +329,7 @@ export function LeafletIncidentMap({
             selectedIncidentId={selectedIncidentId}
             onMarkerClick={onMarkerClick}
             enabled={false}
+            spreadOverlapping={spreadOverlappingMarkers}
           />
         )}
         <AdvisoryMarkersLayer

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createElement, useEffect, useMemo, useState } from 'react';
 import { Search, MapPin, Clock, Filter, Flame, Droplets, Car, Heart, AlertTriangle } from 'lucide-react';
 import { getIncidentStatusLabel, INCIDENT_STATUS } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
@@ -45,7 +45,7 @@ export default function PublicIncidentList() {
       setLoading(true);
       setError('');
       try {
-        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 300, scrapedLimit: 100 });
+        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 200, pcrLimit: 200 });
         if (mounted) setIncidents(Array.isArray(publicIncidents) ? publicIncidents : []);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incidents.');
@@ -99,7 +99,7 @@ export default function PublicIncidentList() {
             { key: 'medical', label: 'Medical', icon: Heart, count: typeCounts.medical },
             { key: 'flood', label: 'Flood', icon: Droplets, count: typeCounts.flood },
             { key: 'crime', label: 'Crime', icon: AlertTriangle, count: typeCounts.crime },
-          ].map(({ key, label, icon: Icon, count }) => (
+          ].map(({ key, label, icon, count }) => (
             <button
               key={key}
               onClick={() => setFilterType(key)}
@@ -109,7 +109,7 @@ export default function PublicIncidentList() {
                   : 'bg-card text-muted-foreground border-border hover:border-red-300 hover:text-red-600 dark:hover:text-red-400'
               }`}
             >
-              <Icon className="w-3.5 h-3.5" />
+              {createElement(icon, { className: 'w-3.5 h-3.5' })}
               {label}
               <span className={`text-xs px-1.5 py-0.5 rounded-full ${filterType === key ? 'bg-red-500' : 'bg-secondary text-muted-foreground'}`}>
                 {count}
