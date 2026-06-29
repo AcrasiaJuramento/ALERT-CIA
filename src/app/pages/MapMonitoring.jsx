@@ -2,12 +2,12 @@ import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
-  RefreshCw, ChevronRight, Zap, Clock, Database, FileText, Radio
+  RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { getScraperProgress, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase, triggerScraperRefresh } from '../services/supabase';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
-import { hasValidLatLng } from '../utils/mapData';
+import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
@@ -54,6 +54,16 @@ export default function MapMonitoring() {
   const [activeLayer, setActiveLayer] = useState(null);
   const [activeSource, setActiveSource] = useState('all');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
+  const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
+  const [layerMenuOpen, setLayerMenuOpen] = useState(false);
+  const [mapLayerMenuOpen, setMapLayerMenuOpen] = useState(false);
+  const [mapLayers, setMapLayers] = useState({
+    incidents: true,
+    advisories: false,
+    heatmap: true,
+    dangerZones: true,
+    routes: true,
+  });
   const [incidents, setIncidents] = useState([]);
   const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
@@ -142,6 +152,7 @@ export default function MapMonitoring() {
   }, [scraperRefreshing]);
 
   const refreshScraperData = async (mode = 'update') => {
+    setScrapeMenuOpen(false);
     setScraperRefreshing(true);
     setScraperMode(mode);
     setScraperError('');
@@ -165,6 +176,7 @@ export default function MapMonitoring() {
   const mapIncidents = useMemo(
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
       .filter(hasValidLatLng)
+      .filter(isWithinEchagueMapArea)
       .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource),
     [activeSource, incidents, pcrIncidents, scrapedIncidents]
   );
@@ -176,6 +188,19 @@ export default function MapMonitoring() {
     pcr_report: pcrIncidents.length,
     scraper: scrapedIncidents.length,
   };
+  const layerOptions = [
+    { key: 'incidents', label: 'Incidents' },
+    { key: 'advisories', label: 'Advisories' },
+    { key: 'heatmap', label: 'Heatmap' },
+    { key: 'dangerZones', label: 'Geofences' },
+    { key: 'routes', label: 'Routes' },
+  ];
+  const mapLayerOptions = [
+    { key: 'hotspot', label: 'Accident Hotspot', color: 'text-red-400', icon: AlertTriangle },
+    { key: 'flood', label: 'Flood Risk Area', color: 'text-blue-400', icon: Droplets },
+    { key: 'traffic', label: 'Traffic Hazard', color: 'text-yellow-400', icon: Car },
+    { key: 'heatmap', label: 'Heatmap', color: 'text-orange-400', icon: Zap },
+  ];
 
   return (
     <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
@@ -187,45 +212,161 @@ export default function MapMonitoring() {
           showControls={true}
           showHeatmap={true}
           showDangerZones={true}
+          externalLayers={mapLayers}
+          onExternalLayersChange={setMapLayers}
+          hideLayerControl
           onMarkerClick={(id) => setSelectedIncident(id)}
           selectedIncidentId={selectedIncident || undefined}
         />
 
         {/* Top overlay bar */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 flex items-center gap-2 z-1001">
-          <div className="flex items-center gap-2 bg-card/95 border border-border rounded-xl px-4 py-2 shadow-lg">
-            <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-            <span className="text-xs text-foreground font-semibold">OPERATIONS MAP MONITOR</span>
-            <span className="text-[10px] text-muted-foreground">Echague, Isabela</span>
+        <div className="absolute left-6 right-6 top-5 z-[500] flex items-start justify-between gap-4 pointer-events-none">
+          <div className="pointer-events-auto flex min-h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 py-2.5 text-slate-950 shadow-xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-white dark:ring-white/10">
+            <div className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_0_5px_rgba(239,68,68,0.12)]" />
+            <div>
+              <div className="text-xs font-bold uppercase leading-tight">Operations Map</div>
+              <div className="text-xs text-slate-500 dark:text-slate-300">Echague, Isabela</div>
+            </div>
           </div>
-          <button
-            onClick={() => setReloadKey(key => key + 1)}
-            className="flex items-center gap-1.5 bg-card/95 border border-border rounded-xl px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-all shadow-lg"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Refresh
-          </button>
-          <button
-            onClick={() => refreshScraperData('update')}
-            disabled={scraperRefreshing}
-            className="flex items-center gap-1.5 bg-blue-600/95 border border-blue-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${scraperRefreshing ? 'animate-spin' : ''}`} />
-            {scraperMode === 'update' ? 'Checking pages 1-3...' : 'Update scrape'}
-          </button>
-          <button
-            onClick={() => refreshScraperData('full')}
-            disabled={scraperRefreshing}
-            title="Scrape every configured page from all enabled news websites"
-            className="flex items-center gap-1.5 bg-purple-600/95 border border-purple-500/40 rounded-xl px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:opacity-70 transition-all shadow-lg"
-          >
-            <Database className={`w-3.5 h-3.5 ${scraperMode === 'full' ? 'animate-pulse' : ''}`} />
-            {scraperMode === 'full' ? 'Scraping all pages...' : 'Full scrape'}
-          </button>
+
+          <div className="pointer-events-auto flex items-start gap-4">
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setLayerMenuOpen(current => !current);
+                  setScrapeMenuOpen(false);
+                  setMapLayerMenuOpen(false);
+                }}
+                className="flex h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl ring-1 ring-slate-900/10 hover:bg-slate-100 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10 dark:hover:bg-slate-800"
+              >
+                <Layers className="h-4 w-4 text-blue-400" />
+                Layers
+                <ChevronDown className={`h-4 w-4 transition-transform ${layerMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {layerMenuOpen && (
+                <div className="absolute left-0 top-14 w-52 rounded-xl bg-white/95 p-4 text-slate-900 shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
+                  <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400">
+                    <Layers className="h-3.5 w-3.5 text-blue-400" />
+                    Layers
+                  </div>
+                  <div className="space-y-3">
+                    {layerOptions.map(({ key, label }) => (
+                      <label key={key} className="flex cursor-pointer items-center gap-2.5 text-sm font-bold text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(mapLayers[key])}
+                          onChange={(event) => setMapLayers(current => ({ ...current, [key]: event.target.checked }))}
+                          className="h-4 w-4 accent-blue-500"
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setReloadKey(key => key + 1);
+                  setScrapeMenuOpen(false);
+                  setLayerMenuOpen(false);
+                  setMapLayerMenuOpen(false);
+                }}
+                className="flex h-12 items-center gap-2.5 rounded-xl bg-blue-600 px-4 text-xs font-bold text-white shadow-xl hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-75"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setScrapeMenuOpen(current => !current);
+                  setLayerMenuOpen(false);
+                  setMapLayerMenuOpen(false);
+                }}
+                disabled={scraperRefreshing}
+                className="flex h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl ring-1 ring-slate-900/10 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-75 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10 dark:hover:bg-slate-800"
+                title="Scraping actions"
+              >
+                <Database className={`h-4 w-4 text-purple-300 ${scraperRefreshing ? 'animate-pulse' : ''}`} />
+                {scraperMode === 'update' ? 'Updating...' : scraperMode === 'full' ? 'Full scrape...' : 'Scraping'}
+                <ChevronDown className={`h-4 w-4 transition-transform ${scrapeMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {scrapeMenuOpen && (
+                <div className="absolute right-0 top-14 w-64 rounded-xl bg-white/95 p-3 text-slate-900 shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
+                  <div className="mb-1.5 flex items-center gap-2 px-2 py-1.5 text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400">
+                    <Database className="h-3.5 w-3.5 text-purple-300" />
+                    Scraping
+                  </div>
+                  <button
+                    onClick={() => refreshScraperData('update')}
+                    className="flex w-full items-center gap-3 rounded-lg px-2.5 py-3 text-left text-base font-bold text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:text-blue-300 dark:hover:bg-slate-800 dark:hover:text-blue-200"
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    <span>
+                      Update scrape
+                      <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">Pages 1-3 per news site</span>
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => refreshScraperData('full')}
+                    className="flex w-full items-center gap-3 rounded-lg px-2.5 py-3 text-left text-base font-bold text-purple-600 hover:bg-purple-50 hover:text-purple-700 dark:text-purple-300 dark:hover:bg-slate-800 dark:hover:text-purple-200"
+                  >
+                    <Database className="h-4 w-4" />
+                    <span>
+                      Full scrape
+                      <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">All configured pages</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => {
+                  setMapLayerMenuOpen(current => !current);
+                  setLayerMenuOpen(false);
+                  setScrapeMenuOpen(false);
+                }}
+                className="flex h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 text-xs font-bold uppercase text-slate-700 shadow-xl ring-1 ring-slate-900/10 hover:bg-slate-100 hover:text-slate-950 dark:bg-slate-900/95 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 dark:hover:text-white"
+              >
+                <Layers className="h-4 w-4 text-blue-400" />
+                Map Layers
+                <ChevronDown className={`h-4 w-4 transition-transform ${mapLayerMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {mapLayerMenuOpen && (
+                <div className="absolute right-0 top-14 w-56 rounded-xl bg-white/95 p-4 text-slate-900 shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
+                  <div className="mb-4 flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400">
+                    <Layers className="h-3.5 w-3.5 text-blue-400" />
+                    Map Layers
+                  </div>
+                  <div className="space-y-3">
+                    {mapLayerOptions.map(({ key, label, color, icon: Icon }) => (
+                      <button
+                        key={key}
+                        onClick={() => setActiveLayer(activeLayer === key ? null : key)}
+                        className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left text-base font-bold transition-all ${
+                          activeLayer === key ? 'text-slate-950 dark:text-white' : 'text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200'
+                        }`}
+                      >
+                        {createElement(Icon, { className: `h-4 w-4 ${color}` })}
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {scraperRefreshing && scraperProgress && (
-          <div className="absolute top-14 left-1/2 -translate-x-1/2 z-1001 min-w-80 max-w-xl rounded-xl border border-blue-500/30 bg-card/95 px-4 py-3 shadow-lg backdrop-blur">
+          <div className="absolute top-24 left-1/2 -translate-x-1/2 z-[501] min-w-80 max-w-xl rounded-xl border border-blue-500/30 bg-white/95 px-4 py-3 shadow-lg backdrop-blur dark:bg-slate-900/95">
             <div className="flex items-center justify-between gap-4 text-xs">
               <span className="font-semibold text-foreground">
                 {scraperProgress.source_name || 'Preparing scraper'}
@@ -251,33 +392,6 @@ export default function MapMonitoring() {
             </div>
           </div>
         )}
-
-        {/* Layer Control (top right) */}
-        <div className="absolute top-14 right-14 z-1001">
-          <div className="bg-card/95 border border-border rounded-xl p-3 shadow-lg min-w-36">
-            <div className="flex items-center gap-1.5 mb-2">
-              <Layers className="w-3.5 h-3.5 text-blue-400" />
-              <span className="text-[10px] text-muted-foreground font-medium uppercase">Map Layers</span>
-            </div>
-            {[
-              { key: 'hotspot', label: 'Accident Hotspot', color: 'text-red-400', icon: AlertTriangle },
-              { key: 'flood', label: 'Flood Risk Area', color: 'text-blue-400', icon: Droplets },
-              { key: 'traffic', label: 'Traffic Hazard', color: 'text-yellow-400', icon: Car },
-              { key: 'heatmap', label: 'Heatmap', color: 'text-orange-400', icon: Zap },
-            ].map(({ key, label, color, icon: Icon }) => (
-              <button
-                key={key}
-                onClick={() => setActiveLayer(activeLayer === key ? null : key)}
-                className={`flex items-center gap-2 w-full px-2 py-1.5 rounded-lg text-[10px] transition-all mb-0.5 ${
-                  activeLayer === key ? 'bg-blue-600/20 border border-blue-500/30' : 'hover:bg-secondary'
-                }`}
-              >
-                {createElement(Icon, { className: `w-3 h-3 ${color}` })}
-                <span className="text-foreground/80">{label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
 
         {/* Selected Incident Popup */}
         {selectedInc && (
@@ -359,7 +473,7 @@ export default function MapMonitoring() {
       {/* Right Incidents Panel */}
       <div
         className={`shrink-0 bg-card border-l border-border flex flex-col transition-all duration-300 overflow-hidden ${
-          incidentPanelOpen ? 'w-72' : 'w-10'
+          incidentPanelOpen ? 'w-[420px]' : 'w-10'
         }`}
       >
         <button
@@ -377,12 +491,12 @@ export default function MapMonitoring() {
                 <span className="text-sm font-semibold text-foreground">Operational Records</span>
               </div>
               <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
-              <div className="mt-3 grid grid-cols-2 gap-1.5">
+              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                 {sourceFilters.map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
                     onClick={() => setActiveSource(key)}
-                    className={`flex min-h-8 items-center justify-between gap-2 rounded-lg border px-2 py-1 text-[10px] font-semibold transition-all ${
+                    className={`flex min-h-9 shrink-0 items-center justify-between gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold transition-all ${
                       activeSource === key
                         ? 'border-blue-500/50 bg-blue-500/15 text-blue-300'
                         : 'border-border bg-background/40 text-muted-foreground hover:bg-secondary hover:text-foreground'

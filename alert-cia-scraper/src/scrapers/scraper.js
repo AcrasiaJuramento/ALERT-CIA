@@ -12,6 +12,24 @@ import { findExistingSourceUrls } from "../lib/scraperStore.js";
 import { normalizeUrl } from "../lib/urls.js";
 
 const UPDATE_DUPLICATE_THRESHOLD = 0.8;
+const DEFAULT_ARTICLE_CONCURRENCY = 8;
+const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
+const DEFAULT_DOMAIN_DELAY_MS = 125;
+const runtimeEnv = globalThis.process?.env || {};
+
+function envNumber(name, fallback, { min = 1, max = 60_000 } = {}) {
+  const parsed = Number(runtimeEnv[name]);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(Math.round(parsed), min), max);
+}
+
+function scraperFetchOptions(mode) {
+  return {
+    timeoutMs: envNumber("SCRAPER_REQUEST_TIMEOUT_MS", DEFAULT_REQUEST_TIMEOUT_MS, { min: 3000, max: 30000 }),
+    domainDelayMs: envNumber("SCRAPER_DOMAIN_DELAY_MS", DEFAULT_DOMAIN_DELAY_MS, { min: 0, max: 2000 }),
+    cacheTtlMs: mode === "full" ? 60 * 60 * 1000 : 15 * 60 * 1000,
+  };
+}
 
 async function listPages(source, mode, stats) {
   const maxPages = mode === "full" ? source.maxPagesFull : source.maxPagesUpdate;
@@ -28,7 +46,7 @@ async function listPages(source, mode, stats) {
     if (!pageUrl || visitedPages.has(pageUrl)) break;
     visitedPages.add(pageUrl);
     updateScraperProgress({ phase: "pages", page, max_pages: maxPages, page_url: pageUrl, article: 0, articles_total: 0 });
-    const html = await fetchHTML(pageUrl, { cacheTtlMs: mode === "full" ? 30 * 60 * 1000 : 3 * 60 * 1000 });
+    const html = await fetchHTML(pageUrl, scraperFetchOptions(mode));
     stats.pages_checked += 1;
     if (!html) {
       stats.failed_urls.push(pageUrl);
@@ -69,7 +87,10 @@ async function processSource(source, mode, stats, seenUrls) {
   // Full mode re-fetches known URLs so improved extraction can repair stored mappings.
   const pending = mode === "full" ? normalizedLinks : normalizedLinks.filter((url) => !existing.has(url));
   updateScraperProgress({ phase: "downloading_articles", article: 0, articles_total: pending.length });
-  const pages = await fetchHTMLBatch(pending, { concurrency: 5, cacheTtlMs: 15 * 60 * 1000 });
+  const pages = await fetchHTMLBatch(pending, {
+    ...scraperFetchOptions(mode),
+    concurrency: envNumber("SCRAPER_ARTICLE_CONCURRENCY", DEFAULT_ARTICLE_CONCURRENCY, { min: 1, max: 20 }),
+  });
   const records = [];
 
   for (const [articleIndex, url] of pending.entries()) {

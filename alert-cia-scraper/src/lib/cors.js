@@ -9,7 +9,7 @@ function configuredOrigins() {
     .map((value) => value.trim().replace(/\/$/, ""))
     .filter(Boolean);
 
-  if (process.env.NODE_ENV !== "production") values.push(...localDevelopmentOrigins);
+  values.push(...localDevelopmentOrigins);
   return new Set(values);
 }
 
