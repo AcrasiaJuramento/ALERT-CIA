@@ -23,6 +23,7 @@ export default function Layout() {
   const { notifications, unreadCount, markAsRead } = useNotifications();
   const navItems = getAuthorizedNavigation(user.role);
   const currentPage = getCurrentPage(location.pathname);
+  const showGlobalScraperJob = scraperJob.running && !location.pathname.startsWith('/admin/map');
 
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(new Date()), 1000);
@@ -137,7 +138,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="relative z-0 flex-1 overflow-auto bg-background"><Outlet /></main>
-        {scraperJob.running && (
+        {showGlobalScraperJob && (
           <div className="fixed bottom-4 right-4 z-[2200] w-80 rounded-xl border border-blue-500/30 bg-card/95 p-3 shadow-2xl backdrop-blur">
             <div className="flex items-start gap-3">
               <div className="mt-0.5 grid h-8 w-8 place-items-center rounded-lg bg-blue-500/15 text-blue-500">

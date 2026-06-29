@@ -255,7 +255,8 @@ export async function triggerScraperRefresh({ type = "vehicular", mode = "update
       },
       signal,
     });
-  } catch {
+  } catch (error) {
+    if (error?.name === "AbortError") throw error;
     throw new Error(
       `Scraper API at ${apiBaseUrl} could not be reached. Check the deployment URL, CORS allowlist, and service status.`,
     );
@@ -310,6 +311,7 @@ export async function triggerFullScraperRefreshBySource({ type = "vehicular", on
         totals.failed_requests += result.failed_requests || 0;
         if (Array.isArray(result.data)) totals.data.push(...result.data);
       } catch (error) {
+        if (error?.name === "AbortError" || signal?.aborted) throw error;
         totals.success = false;
         totals.failed_sources.push({
           source_key: sourceKey,
