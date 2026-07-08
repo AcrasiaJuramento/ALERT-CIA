@@ -1,11 +1,11 @@
 import { runSupabaseRequest } from "./errors";
-import { pcrPayloadFromRecord, pcrToApp, toDbPCRStatus } from "./mappers";
+import { pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
 
 const PCR_SELECT = `
   *,
   response:responses(
     *,
-    barangay:barangays(id, name, normalized_name),
+    barangay:barangays(id, name, normalized_name, municipality, province, centroid),
     responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
     assigned_unit:ambulance_units(id, call_sign, plate_number)
   ),
@@ -17,6 +17,9 @@ const PCR_SELECT = `
   pcr_interventions(*),
   pcr_attachments(*)
 `;
+
+const ADMIN_PCR_MAP_STATUSES = ["in_progress", "submitted", "verified", "completed"];
+const PUBLIC_PCR_MAP_STATUSES = ["verified", "completed"];
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
@@ -51,24 +54,47 @@ function classificationToType(classification = "other") {
   return "other";
 }
 
+function geographyPoint(value) {
+  if (value?.type === "Point" && Array.isArray(value.coordinates)) {
+    return { lat: Number(value.coordinates[1]), lng: Number(value.coordinates[0]) };
+  }
+  if (typeof value === "string") {
+    const match = value.match(/POINT\s*\(\s*(-?[\d.]+)\s+(-?[\d.]+)\s*\)/i);
+    if (match) return { lat: Number(match[2]), lng: Number(match[1]) };
+  }
+  return null;
+}
+
+function isVerifiedMapStatus(status = "") {
+  return ["verified", "completed", "resolved", "approved"].includes(String(status || "").trim().toLowerCase());
+}
+
 function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {}) {
   const response = row.response || {};
-  const lat = incident.latitude ?? incident.lat ?? null;
-  const lng = incident.longitude ?? incident.lon ?? null;
-  const type = classificationToType(incident.classification || response.type_of_incident);
+  const barangayPoint = geographyPoint(response.barangay?.centroid);
+  const lat = incident.latitude ?? incident.lat ?? response.latitude ?? barangayPoint?.lat ?? null;
+  const lng = incident.longitude ?? incident.lon ?? response.longitude ?? barangayPoint?.lng ?? null;
+  const type = classificationToType(incident.classification || row.incident_nature || response.type_of_incident);
   const dateValue = response.date_of_incident || row.completed_at || row.submitted_at || row.created_at;
   const date = dateValue ? new Date(dateValue) : new Date();
+  const relatedIncidentId = incident.id || null;
+  const isCompleted = incident.status === "pcr_completed" || row.status === "completed";
 
   return {
-    id: publicSafe ? `INC-${String(incident.id).slice(0, 8)}` : `PCR-${String(row.id).slice(0, 8)}`,
+    id: publicSafe ? `PCR-${String(row.id).slice(0, 8)}` : `PCR-${String(row.id).slice(0, 8)}`,
     recordId: row.id,
-    relatedIncidentId: incident.id,
+    relatedIncidentId,
     responseId: row.response_id,
     sourceKind: "pcr_report",
+    source_type: "pcr_report",
+    report_type: "Patient Care Report",
     sourceLabel: publicSafe ? "Verified response record" : "Patient Care Report",
     type,
-    severity: priorityToSeverity(incident.priority),
-    location: incident.location_text || response.place_of_incident || response.barangay?.name || "Mapped PCR response",
+    incident_type: type,
+    severity: priorityToSeverity(incident.priority || row.triage),
+    severity_level: priorityToSeverity(incident.priority || row.triage),
+    location: incident.location_text || response.location_text || response.place_of_incident || response.barangay?.name || "Mapped PCR response",
+    location_name: incident.location_text || response.location_text || response.place_of_incident || response.barangay?.name || "Mapped PCR response",
     barangay: response.barangay?.name || "",
     lat,
     lng,
@@ -76,14 +102,19 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
     longitude: lng,
     date: date.toISOString().slice(0, 10),
     time: String(response.time_of_incident || "").slice(0, 5),
-    status: incident.status === "pcr_completed" ? "completed" : "on_scene",
+    incident_datetime: `${date.toISOString().slice(0, 10)} ${String(response.time_of_incident || "").slice(0, 5)}`.trim(),
+    status: isCompleted ? "completed" : "on_scene",
+    pcrStatusLabel: row.status,
     assignedTeam: publicSafe ? "Emergency responders" : response.responding_team?.name || "PCR response",
-    title: publicSafe ? `${type} safety alert` : row.response?.response_number || "PCR-linked incident",
+    title: publicSafe ? `${type} safety alert` : response.response_number || "PCR-linked incident",
     description: publicSafe
       ? "Emergency response activity has been confirmed in this area. Use caution nearby."
       : row.chief_complaint || row.incident_nature || response.initial_assessment || "PCR report linked to this response.",
-    publicVisible: Boolean(incident.public_visible),
+    publicVisible: publicSafe || Boolean(incident.public_visible) || ["verified", "completed"].includes(row.status),
+    is_verified: isVerifiedMapStatus(row.status),
+    is_public_visible: publicSafe || Boolean(incident.public_visible) || isVerifiedMapStatus(row.status),
     pcrStatus: row.status,
+    locationPrecision: incident.latitude && incident.longitude ? "incident_coordinates" : response.latitude && response.longitude ? "response_pin" : barangayPoint ? "barangay_centroid" : "unknown",
   };
 }
 
@@ -93,7 +124,7 @@ export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = 
       .from("pcr_reports")
       .select(PCR_SELECT)
       .is("deleted_at", null)
-      .in("status", publicOnly ? ["verified", "completed"] : ["submitted", "verified", "completed"])
+      .in("status", publicOnly ? PUBLIC_PCR_MAP_STATUSES : ADMIN_PCR_MAP_STATUSES)
       .order("created_at", { ascending: false })
       .limit(limit);
     return query;
@@ -108,10 +139,7 @@ export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = 
       .from("incidents")
       .select("id, response_id, classification, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, status, deleted_at")
       .in("response_id", responseIds)
-      .is("deleted_at", null)
-      .not("latitude", "is", null)
-      .not("longitude", "is", null);
-    if (publicOnly) query = query.eq("public_visible", true);
+      .is("deleted_at", null);
     return query;
   }, "Unable to load PCR map locations.");
 
@@ -119,9 +147,9 @@ export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = 
   return pcrRows
     .map(row => {
       const incident = incidentByResponse.get(row.response_id);
-      return incident ? pcrMapRowToIncident(row, incident, { publicSafe: publicOnly }) : null;
+      return pcrMapRowToIncident(row, incident, { publicSafe: publicOnly });
     })
-    .filter(Boolean);
+    .filter(item => Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)));
 }
 
 export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
@@ -174,13 +202,22 @@ export async function getPCRReportByResponse(responseId) {
 }
 
 export async function savePCRReport(pcrId, record) {
-  return runSupabaseRequest(client =>
-    client
+  return runSupabaseRequest(async client => {
+    if (record.responseId && Number.isFinite(Number(record.latitude)) && Number.isFinite(Number(record.longitude))) {
+      const { error: responseError } = await client
+        .from("responses")
+        .update(responseLocationPayloadFromRecord(record))
+        .eq("id", record.responseId);
+      if (responseError) return { data: null, error: responseError };
+    }
+
+    return client
       .from("pcr_reports")
       .update(pcrPayloadFromRecord(record))
       .eq("id", pcrId)
       .select(PCR_SELECT)
-      .single(),
+      .single();
+  },
   "Unable to save PCR report.").then(pcrToApp);
 }
 

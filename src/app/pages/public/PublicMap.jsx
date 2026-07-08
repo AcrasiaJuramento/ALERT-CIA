@@ -12,6 +12,11 @@ import {
 import { ECHAGUE_CENTER, getIncidentLatLng, getZoneLatLng, hasValidLatLng } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
+import {
+  calculateAccidentProneAreas,
+  formatRiskLevel,
+  riskStyles,
+} from '../../utils/accidentProneAreas';
 
 const quickDestinations = [
   { label: 'Echague Municipal Hall', latLng: [16.705, 121.676] },
@@ -200,6 +205,7 @@ export default function PublicMap() {
   const [currentLocation, setCurrentLocation] = useState(null);
   const [routePlan, setRoutePlan] = useState(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [showModerateRisk, setShowModerateRisk] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [routeError, setRouteError] = useState('');
@@ -284,6 +290,10 @@ export default function PublicMap() {
   }, [destination, start]);
 
   const activeIncidents = useMemo(() => incidents.filter(item => !isIncidentCompleted(item.status)), [incidents]);
+  const publicRiskAreas = useMemo(() => {
+    const areas = calculateAccidentProneAreas(incidents, { publicOnly: true });
+    return showModerateRisk ? areas : areas.filter(area => ['High', 'Critical'].includes(area.risk_level));
+  }, [incidents, showModerateRisk]);
   const selectedIncident = incidents.find(item => item.id === selectedIncidentId);
   const routePoints = useMemo(() => routePlan?.positions || [], [routePlan]);
   const routeAlerts = useMemo(
@@ -401,6 +411,8 @@ export default function PublicMap() {
             incidents={incidents}
             advisoryMarkers={advisories}
             hazardZones={hazardZones}
+            accidentProneAreas={publicRiskAreas}
+            publicSafeRiskPopups
             routes={route}
             plannerPoints={{
               current: currentLocation ? { label: 'Current GPS location', latLng: currentLocation } : null,
@@ -436,6 +448,32 @@ export default function PublicMap() {
             </div>
           )}
 
+          <div className="absolute bottom-4 left-4 z-[520] max-w-md rounded-xl border border-border bg-card/95 p-3 text-xs shadow-xl backdrop-blur">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <div className="font-semibold text-foreground">Accident-Prone Areas</div>
+              <label className="flex cursor-pointer items-center gap-1.5 text-[10px] text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={showModerateRisk}
+                  onChange={event => setShowModerateRisk(event.target.checked)}
+                  className="accent-blue-600"
+                />
+                Show moderate
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Object.entries(riskStyles).map(([level, style]) => (
+                <span key={level} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/80 px-2 py-1 text-muted-foreground">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: style.color }} />
+                  {formatRiskLevel(level)}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-muted-foreground">
+              Accident-prone areas shown on this map are based on verified incident records and are intended for public safety awareness.
+            </p>
+          </div>
+
         </main>
 
         <aside className="border-l border-border bg-card lg:h-[calc(100vh-4rem)] lg:overflow-y-auto">
@@ -444,7 +482,7 @@ export default function PublicMap() {
               <Car className="h-4 w-4 text-blue-500" />
               <h2 className="text-sm font-bold text-foreground">Route Guidance</h2>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {advisories.length} advisories / {hazardZones.length} hazard zones</p>
+            <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {publicRiskAreas.length} accident-prone areas / {hazardZones.length} hazard zones</p>
             {error && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">{error}</div>}
           </div>
 

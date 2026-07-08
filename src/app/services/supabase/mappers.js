@@ -45,17 +45,51 @@ export function normalizeName(value = "") {
   return String(value).trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+function numericCoordinate(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function locationGeographyFromCoordinates(latitude, longitude) {
+  const lat = numericCoordinate(latitude);
+  const lng = numericCoordinate(longitude);
+  return lat === null || lng === null
+    ? null
+    : `SRID=4326;POINT(${lng.toFixed(7)} ${lat.toFixed(7)})`;
+}
+
+export function responseLocationPayloadFromRecord(record = {}) {
+  const latitude = numericCoordinate(record.latitude ?? record.lat);
+  const longitude = numericCoordinate(record.longitude ?? record.lng ?? record.lon);
+  const locationText = record.locationText || record.placeOfIncident || record.timeline?.placeOfIncident || null;
+
+  return {
+    place_of_incident: record.placeOfIncident || record.timeline?.placeOfIncident || locationText,
+    location_text: locationText,
+    latitude,
+    longitude,
+    location_geography: typeof record.locationGeography === "string"
+      ? record.locationGeography
+      : locationGeographyFromCoordinates(latitude, longitude),
+  };
+}
+
 export function responseToApp(response = {}) {
   const barangayName = response.barangay?.name || response.barangays?.name || response.barangay_name || "";
   const teamName = response.responding_team?.name || response.responding_teams?.name || response.responding_team_name || "";
   const unitName = response.assigned_unit?.call_sign || response.ambulance_units?.call_sign || response.assigned_unit_name || "";
+  const locationText = response.location_text || response.place_of_incident || "";
 
   return {
     id: response.id,
     responseNumber: response.response_number,
     dateOfIncident: response.date_of_incident || "",
     timeOfIncident: response.time_of_incident || "",
-    placeOfIncident: response.place_of_incident || "",
+    placeOfIncident: locationText,
+    locationText,
+    latitude: response.latitude ?? "",
+    longitude: response.longitude ?? "",
+    locationGeography: response.location_geography || "",
     barangayId: response.barangay_id || null,
     barangay: barangayName,
     typeOfIncident: response.type_of_incident || "",
@@ -165,7 +199,7 @@ export function responsePayloadFromDispatch(form = {}, ids = {}) {
   return {
     date_of_incident: form.dateOfIncident || form.date || null,
     time_of_incident: form.timeOfIncident || null,
-    place_of_incident: form.placeOfIncident || null,
+    ...responseLocationPayloadFromRecord(form),
     barangay_id: ids.barangayId || form.barangayId || null,
     type_of_incident: form.typeOfIncident || [...(form.natureTypes || []), form.otherMedical, form.otherTrauma].filter(Boolean).join(", ") || null,
     caller_name: form.callerName || null,

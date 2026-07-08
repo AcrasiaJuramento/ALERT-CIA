@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Activity, ArrowLeft, ArrowRight, Camera, CheckCircle2, ClipboardList, Download, FileText, Maximize2, MapPin, Minus, Plus, RotateCcw, Save, Shield, Trash2, User, X } from "lucide-react";
 import { AnatomyEditor, AnatomyFigure, PrintablePCR, SignaturePad } from "../components/PCRWidgets";
+import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import { DISPATCH_EDIT_KEY } from "../utils/dispatchWorkflow";
 import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newVital, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
 import { getDispatchRecord, getPCRReport, replacePCRVitals, savePCRReport, submitPCRReport } from "../services/supabase";
@@ -11,6 +12,7 @@ const steps = [["Response & Patient", <Shield key="shield"/>], ["Assessment", <A
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
 const emergencyTypes = ["Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
 const traumaTypes = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Assault", "Animal Bite", "Motor Vehicle Crash"];
+const PIN_REQUIRED_MESSAGE = "Please pin the exact incident location on the map before saving this report.";
 const medicalHistory = ["None", "Heart Disease", "Hypertension", "Seizure", "COPD", "Diabetes Mellitus", "Asthma", "Stroke"];
 const timelineLabels = [
   ["Date of Incident", "dateOfIncident"],
@@ -122,6 +124,20 @@ export default function PCRModule() {
   }, [dispatchId, editId]);
   const update = (key, value) => setForm(f => synchronizePCR({ ...f, [key]: value }));
   const updateTimeline = (key, value) => setForm(f => synchronizePCR({ ...f, [key]: value, timeline: { ...(f.timeline || {}), [key]: value } }));
+  const updateIncidentLocation = location => setForm(f => synchronizePCR({
+    ...f,
+    barangay: location.barangay || f.barangay,
+    placeOfIncident: location.locationText || f.placeOfIncident,
+    locationText: location.locationText || f.locationText || f.placeOfIncident,
+    latitude: location.latitude,
+    longitude: location.longitude,
+    locationGeography: location.locationGeography,
+    boundarySource: location.boundarySource,
+    timeline: {
+      ...(f.timeline || {}),
+      placeOfIncident: location.locationText || f.timeline?.placeOfIncident || f.placeOfIncident,
+    },
+  }));
   const updateHospitalArrival = value => setForm(f => synchronizePCR({
     ...f,
     timeline: { ...(f.timeline || {}), endorsementTime: value, arrivalHospital: value },
@@ -139,6 +155,11 @@ export default function PCRModule() {
   const hasDispatchSource = Boolean(params.get("edit") || params.get("dispatch") || form.dispatchId);
   const store = async status => {
     if (chronologyError) { setMessage(chronologyError); return; }
+    if (!Number.isFinite(Number(form.latitude)) || !Number.isFinite(Number(form.longitude))) {
+      setMessage(PIN_REQUIRED_MESSAGE);
+      toast.error(PIN_REQUIRED_MESSAGE);
+      return;
+    }
     try {
       const savedDraft = await savePCRReport(form.id, { ...form, status });
       await replacePCRVitals(savedDraft.id, form.vitals || []);
@@ -181,14 +202,14 @@ export default function PCRModule() {
     {loading && <div className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">Loading PCR report...</div>}
     <div className="flex flex-wrap items-center justify-between gap-3 mb-5"><div><button onClick={() => navigate("/admin/pcr")} className="text-xs text-blue-400 mb-2 flex items-center gap-1"><ArrowLeft size={13}/>Patient Care Records</button><h1 className="text-xl font-bold flex items-center gap-2"><FileText className="text-blue-500"/>Create PCR Report</h1><p className="text-xs text-muted-foreground">Create and submit a new Patient Care Report.</p></div><div className="flex gap-2"><button onClick={() => store("Draft")} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center"><Save size={15}/>Save Draft</button><button onClick={downloadPdf} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center"><Download size={15}/>Download PDF</button></div></div>
     {linkedDispatch && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm"><div><div className="font-semibold text-blue-300">Linked Dispatch Form</div><div className="text-xs text-muted-foreground">{linkedDispatch.responseNumber || linkedDispatch.id} · {linkedDispatch.placeOfIncident || "No location entered"}</div></div><button onClick={() => { sessionStorage.setItem(DISPATCH_EDIT_KEY, linkedDispatch.id); navigate(`/admin/dispatch/new?edit=${linkedDispatch.id}`); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Open Dispatch</button></div>}
-    {message && <div className={`mb-4 px-4 py-3 rounded-lg border text-sm ${chronologyError ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-green-500/10 border-green-500/30 text-green-500"}`}>{message}</div>}
+    {message && <div className={`mb-4 px-4 py-3 rounded-lg border text-sm ${chronologyError || message === PIN_REQUIRED_MESSAGE || message.startsWith("Unable") ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-green-500/10 border-green-500/30 text-green-500"}`}>{message}</div>}
     {chronologyError && <div className="mb-4 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm">{chronologyError}</div>}
     <div className="grid grid-cols-5 gap-1 mb-5">{steps.map(([name,icon],i)=><button key={name} onClick={()=>setStep(i)} className={`p-2 md:p-3 rounded-lg border text-center ${step===i?"bg-blue-600 border-blue-600 text-white":"bg-card border-border text-muted-foreground"}`}><span className="block w-4 h-4 mx-auto mb-1">{icon}</span><span className="text-[10px] md:text-xs font-semibold">{name}</span></button>)}</div>
     <div className="space-y-4">
       {step === 0 && <>
         <Section title="Response and Unit Details"><div className="grid md:grid-cols-3 gap-3"><Field label="Response No."><input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly/></Field><Field label="Responding Team"><input className={input} value={form.respondingTeam} onChange={e=>update("respondingTeam",e.target.value)}/></Field><Field label="Vehicle"><input className={input} value={form.vehicle} onChange={e=>update("vehicle",e.target.value)}/></Field><Field label="Driver"><input className={input} value={form.driver} onChange={e=>update("driver",e.target.value)}/></Field><Field label="Main Aider"><input className={input} value={form.mainAider} onChange={e=>update("mainAider",e.target.value)}/></Field><Field label="Assistant Aider"><input className={input} value={form.assistantAider} onChange={e=>update("assistantAider",e.target.value)}/></Field></div></Section>
         <Section title="Patient Information"><div className="grid md:grid-cols-4 gap-3"><Field label="Patient Name" wide><input className={input} value={form.patientName} onChange={e=>update("patientName",e.target.value)}/></Field><Field label="Age"><input type="number" className={input} value={form.age} onChange={e=>update("age",e.target.value)}/></Field><Field label="Birthday"><input type="date" className={input} value={form.birthday} onChange={e=>update("birthday",e.target.value)}/></Field><Field label="Gender"><select className={input} value={form.gender} onChange={e=>update("gender",e.target.value)}><option value="">Select</option>{["Male","Female","Other"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Civil Status"><select className={input} value={form.civilStatus} onChange={e=>update("civilStatus",e.target.value)}><option value="">Select</option>{["Single","Married","Widowed","Separated"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Address" wide><input className={input} value={form.address} onChange={e=>update("address",e.target.value)}/></Field><Field label="Contact Person"><input className={input} value={form.contactPerson} onChange={e=>update("contactPerson",e.target.value)}/></Field><Field label="Contact Number"><input className={input} value={form.contactNumber} onChange={e=>update("contactNumber",e.target.value)}/></Field></div></Section>
-        <Section title="Nature and Initial Incident Details"><div className="mb-3"><RadioButtons options={["Emergency","Conduction"]} value={form.natureOfCall} onChange={v=>update("natureOfCall",v)}/></div><div className="grid md:grid-cols-4 gap-3"><Field label="Date of Incident"><input type="date" className={input} value={form.timeline?.dateOfIncident || form.dateOfIncident} onChange={e=>updateTimeline("dateOfIncident",e.target.value)}/></Field><Field label="Time of Incident"><input type="time" className={input} value={form.timeline?.timeOfIncident || form.timeOfIncident} onChange={e=>updateTimeline("timeOfIncident",e.target.value)}/></Field><Field label="Place of Incident"><input className={input} value={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={e=>updateTimeline("placeOfIncident",e.target.value)}/></Field><Field label="Dispatch Time"><input type="time" className={input} value={form.timeline?.dispatchTime || form.dispatchTime} onChange={e=>updateTimeline("dispatchTime",e.target.value)}/></Field></div></Section>
+        <Section title="Nature and Initial Incident Details"><div className="mb-3"><RadioButtons options={["Emergency","Conduction"]} value={form.natureOfCall} onChange={v=>update("natureOfCall",v)}/></div><div className="grid md:grid-cols-4 gap-3"><Field label="Date of Incident"><input type="date" className={input} value={form.timeline?.dateOfIncident || form.dateOfIncident} onChange={e=>updateTimeline("dateOfIncident",e.target.value)}/></Field><Field label="Time of Incident"><input type="time" className={input} value={form.timeline?.timeOfIncident || form.timeOfIncident} onChange={e=>updateTimeline("timeOfIncident",e.target.value)}/></Field><Field label="Place of Incident"><input className={input} value={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={e=>setForm(f=>synchronizePCR({...f,placeOfIncident:e.target.value,locationText:e.target.value,timeline:{...(f.timeline||{}),placeOfIncident:e.target.value}}))}/></Field><Field label="Barangay"><input className={input} value={form.barangay || ""} onChange={e=>update("barangay",e.target.value)}/></Field><Field label="Dispatch Time"><input type="time" className={input} value={form.timeline?.dispatchTime || form.dispatchTime} onChange={e=>updateTimeline("dispatchTime",e.target.value)}/></Field><div className="md:col-span-4"><IncidentLocationPicker value={form} locationText={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={updateIncidentLocation}/></div></div></Section>
       </>}
       {step === 1 && <>
         <Section title="Scene Timeline"><div className="grid md:grid-cols-2 gap-3"><Field label="Arrival at Scene"><input type="time" className={`${input} ${chronologyError ? "border-red-500/50" : ""}`} value={form.timeline?.arrivalScene || form.arrivalScene} onChange={e=>updateTimeline("arrivalScene",e.target.value)}/></Field><Field label="Departure at Scene"><input type="time" className={`${input} ${chronologyError ? "border-red-500/50" : ""}`} value={form.timeline?.departureScene || form.departureScene} onChange={e=>updateTimeline("departureScene",e.target.value)}/></Field></div><div className="mt-3 rounded-lg bg-secondary p-2 text-xs text-muted-foreground">Scene to hospital travel: <b>{hospitalTravel || "Pending"}</b></div></Section>

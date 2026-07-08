@@ -12,7 +12,7 @@ const DISPATCH_SELECT = `
   *,
   response:responses(
     *,
-    barangay:barangays(id, name, normalized_name),
+    barangay:barangays(id, name, normalized_name, centroid),
     responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
     assigned_unit:ambulance_units(id, call_sign, plate_number)
   ),
@@ -31,6 +31,12 @@ async function resolveDispatchIds(form) {
     teamId: form.respondingTeamId || team?.id || null,
     unitId: form.vehicleId || unit?.id || null,
   };
+}
+
+function ensurePinnedLocation(form) {
+  if (!Number.isFinite(Number(form.latitude)) || !Number.isFinite(Number(form.longitude))) {
+    throw new Error("Please pin the exact incident location on the map before saving this report.");
+  }
 }
 
 async function replaceDispatchPatients(client, dispatchFormId, patients = []) {
@@ -87,6 +93,7 @@ export async function getDispatchRecord(dispatchId) {
 }
 
 export async function createDispatchRecord(form) {
+  ensurePinnedLocation(form);
   const ids = await resolveDispatchIds(form);
   if (!ids.teamId && !form.respondingTeamId) {
     throw new Error("A responding team is required before saving this dispatch.");
@@ -118,6 +125,7 @@ export async function createDispatchRecord(form) {
 }
 
 export async function updateDispatchRecord(dispatchId, form) {
+  ensurePinnedLocation(form);
   const ids = await resolveDispatchIds(form);
   if (!ids.teamId && !form.respondingTeamId) {
     throw new Error("A responding team is required before saving this dispatch.");

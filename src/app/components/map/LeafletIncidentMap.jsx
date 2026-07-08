@@ -6,6 +6,7 @@ import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadIsabelaBoundaryCollection } from '../../data/isabelaBarangayGeometry';
 import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
+import { AccidentProneAreasLayer } from './AccidentProneAreasLayer';
 import { ClusteredIncidentMarkers } from './ClusteredIncidentMarkers';
 import { HazardZonesLayer } from './HazardZonesLayer';
 import { HeatmapLayer } from './HeatmapLayer';
@@ -211,7 +212,7 @@ function LocalIsabelaBasemap({ enabled }) {
   );
 }
 
-function IncidentBarangayBoundaries({ incidents = [] }) {
+function IncidentBarangayBoundaries({ incidents = [], enabled = true }) {
   const collection = useMemo(() => {
     const unique = new Map();
     incidents.forEach((incident) => {
@@ -223,7 +224,7 @@ function IncidentBarangayBoundaries({ incidents = [] }) {
     return { type: 'FeatureCollection', features: [...unique.values()] };
   }, [incidents]);
 
-  if (!collection.features.length) return null;
+  if (!enabled || !collection.features.length) return null;
   const boundaryKey = collection.features.map(feature => feature.properties?.GID_3 || '').join('|');
   return (
     <GeoJSON
@@ -254,6 +255,8 @@ export function LeafletIncidentMap({
   clusterMarkers = true,
   routes = [],
   hazardZones = [],
+  accidentProneAreas = [],
+  publicSafeRiskPopups = false,
   plannerPoints = {},
   compact = false,
   autoFit = true,
@@ -270,6 +273,9 @@ export function LeafletIncidentMap({
     advisories: true,
     routes: true,
     locate: false,
+    accidentProneAreas: true,
+    criticalZones: true,
+    barangayBoundaries: true,
   });
   const [followUser, setFollowUser] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
@@ -287,6 +293,11 @@ export function LeafletIncidentMap({
     () => incidents.filter((incident) => !isIncidentCompleted(incident.status)),
     [incidents]
   );
+  const riskHeatPoints = useMemo(() => accidentProneAreas.map(area => ({
+    lat: Number(area.latitude),
+    lng: Number(area.longitude),
+    intensity: Math.min(Math.max(Number(area.total_risk_score || 1) / 12, 0.25), 1),
+  })), [accidentProneAreas]);
 
   return (
     <div className="relative w-full overflow-hidden border border-border bg-slate-950" style={{ height }}>
@@ -315,7 +326,19 @@ export function LeafletIncidentMap({
             selectedAdvisoryId={selectedAdvisoryId}
           />
         )}
-        <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} />
+        <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} enabled={effectiveLayers.barangayBoundaries !== false} />
+        <AccidentProneAreasLayer
+          areas={accidentProneAreas}
+          enabled={Boolean(effectiveLayers.accidentProneAreas)}
+          publicSafe={publicSafeRiskPopups}
+          excludeCritical={Boolean(effectiveLayers.criticalZones)}
+        />
+        <AccidentProneAreasLayer
+          areas={accidentProneAreas}
+          enabled={Boolean(effectiveLayers.criticalZones)}
+          publicSafe={publicSafeRiskPopups}
+          criticalOnly
+        />
         <ClusteredIncidentMarkers
           incidents={effectiveLayers.incidents ? incidents : []}
           selectedIncidentId={selectedIncidentId}
@@ -337,7 +360,7 @@ export function LeafletIncidentMap({
           selectedAdvisoryId={selectedAdvisoryId}
           onAdvisoryClick={onAdvisoryClick}
         />
-        <HeatmapLayer points={[]} enabled={effectiveLayers.heatmap} />
+        <HeatmapLayer points={riskHeatPoints} enabled={effectiveLayers.heatmap} />
         <HazardZonesLayer zones={hazardZones} enabled={effectiveLayers.dangerZones} />
         <RouteLayer routes={effectiveLayers.routes ? routes : []} />
         <PlannerPointsLayer points={plannerPoints} />
@@ -366,8 +389,11 @@ export function LeafletIncidentMap({
               {[
                 ['incidents', 'Incidents'],
                 ['advisories', 'Advisories'],
+                ['accidentProneAreas', 'Accident-Prone Areas'],
+                ['criticalZones', 'Critical Zones'],
                 ['heatmap', 'Heatmap'],
                 ['dangerZones', 'Geofences'],
+                ['barangayBoundaries', 'Barangay Boundaries'],
                 ['routes', 'Routes'],
               ].map(([key, label]) => (
                 <label key={key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-foreground/85 hover:bg-secondary">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { GeoJSON, MapContainer, useMap } from 'react-leaflet';
+import { CircleMarker, GeoJSON, MapContainer, Tooltip as LeafletTooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { Activity, AlertTriangle, ChevronDown, ChevronUp, Flame, Layers3, MapPin, RefreshCw } from 'lucide-react';
 import {
@@ -37,6 +37,13 @@ const heatColor = (count, max) => {
   if (ratio >= 0.55) return '#ef4444';
   if (ratio >= 0.3) return '#fb923c';
   return '#f7e58f';
+};
+
+const priorityRank = {
+  Critical: 4,
+  High: 3,
+  Medium: 2,
+  Low: 1,
 };
 
 const riskCategory = (count, max) => {
@@ -250,7 +257,15 @@ function RankingPanel({ rows, selectedName, onSelectName, initialVisible = 3 }) 
   );
 }
 
-function BarangayGeoJsonMap({ stats, selectedName, onSelectName, zoomBoost = 0.75, minZoom = 10 }) {
+function BarangayGeoJsonMap({
+  stats,
+  selectedName,
+  onSelectName,
+  zoomBoost = 0.75,
+  minZoom = 10,
+  incidents = [],
+  layerVisibility,
+}) {
   const [geoJson, setGeoJson] = useState(null);
   const [status, setStatus] = useState('loading');
   const [error, setError] = useState('');
@@ -324,15 +339,16 @@ function BarangayGeoJsonMap({ stats, selectedName, onSelectName, zoomBoost = 0.7
   const getFeatureStyle = useCallback((feature) => {
     const item = getFeatureStats(feature);
     const active = normalizeBarangayName(selectedNameRef.current) === normalizeBarangayName(item.name);
+    const hasCritical = item.priorities?.some((priority) => priority.name === 'Critical' && priority.count > 0);
 
     return {
-      color: active ? '#1d4ed8' : '#64748b',
-      weight: active ? 3 : 1.2,
+      color: layerVisibility.criticalZones && hasCritical ? '#dc2626' : active ? '#1d4ed8' : '#64748b',
+      weight: layerVisibility.criticalZones && hasCritical ? 3 : active ? 3 : 1.2,
       opacity: 0.95,
-      fillColor: heatColor(item.count, maxCount),
-      fillOpacity: item.count ? 0.76 : 0.68,
+      fillColor: layerVisibility.heatmap ? heatColor(item.count, maxCount) : '#e2e8f0',
+      fillOpacity: layerVisibility.heatmap ? (item.count ? 0.76 : 0.68) : 0.2,
     };
-  }, [getFeatureStats, maxCount]);
+  }, [getFeatureStats, layerVisibility.criticalZones, layerVisibility.heatmap, maxCount]);
 
   const createPopupHtml = (item) => `
     <div class="gis-popup">
@@ -458,17 +474,40 @@ function BarangayGeoJsonMap({ stats, selectedName, onSelectName, zoomBoost = 0.7
             attributionControl={false}
             className="echague-boundary-map h-full min-h-[610px] w-full"
           >
-            {geoJson && (
+            {geoJson && layerVisibility.boundary && (
               <>
                 <FitGeoJsonBounds data={geoJson} zoomBoost={zoomBoost} />
                 <GeoJSON
-                  key={stats.map((item) => `${item.name}:${item.count}`).join('|')}
+                  key={`${layerVisibility.heatmap}:${layerVisibility.criticalZones}:${stats.map((item) => `${item.name}:${item.count}`).join('|')}`}
                   data={geoJson}
                   style={getFeatureStyle}
                   onEachFeature={onEachFeature}
                 />
               </>
             )}
+            {layerVisibility.incidentMarkers && incidents
+              .filter((incident) => Number.isFinite(Number(incident.lat ?? incident.latitude)) && Number.isFinite(Number(incident.lng ?? incident.longitude)))
+              .map((incident) => {
+                const priority = incident.priority || 'Medium';
+                const rank = priorityRank[priority] || 2;
+                const color = priority === 'Critical' ? '#dc2626' : priority === 'High' ? '#f97316' : priority === 'Low' ? '#22c55e' : '#eab308';
+                return (
+                  <CircleMarker
+                    key={`incident-marker-${incident.id}`}
+                    center={[Number(incident.lat ?? incident.latitude), Number(incident.lng ?? incident.longitude)]}
+                    radius={4 + rank}
+                    pathOptions={{ color, fillColor: color, fillOpacity: 0.72, weight: 1.5 }}
+                  >
+                    <LeafletTooltip direction="top" offset={[0, -4]} opacity={0.95}>
+                      <div className="text-[11px]">
+                        <strong>{incident.classification || incident.type || 'Incident'}</strong>
+                        <br />
+                        {incident.barangay || incident.location || 'Mapped incident'}
+                      </div>
+                    </LeafletTooltip>
+                  </CircleMarker>
+                );
+              })}
           </MapContainer>
         </div>
       </div>
@@ -486,6 +525,12 @@ export function BarangayHeatmap({
   mapZoomBoost = 0.75,
   mapMinZoom = 10,
   showDetailsPanel = true,
+  layerVisibility = {
+    boundary: true,
+    incidentMarkers: true,
+    heatmap: true,
+    criticalZones: true,
+  },
 }) {
   const [selectedName, setSelectedName] = useState('');
 
@@ -550,6 +595,8 @@ export function BarangayHeatmap({
             onSelectName={setSelectedName}
             zoomBoost={mapZoomBoost}
             minZoom={mapMinZoom}
+            incidents={visibleIncidents}
+            layerVisibility={layerVisibility}
           />
         </div>
 

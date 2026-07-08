@@ -41,14 +41,22 @@ function MarkerGlyph({ incident }) {
 
 function PopupContent({ incident }) {
   const isExternal = incident.sourceKind && incident.sourceKind !== 'official';
+  const isPcr = incident.sourceKind === 'pcr_report' || incident.source_type === 'pcr_report';
 
   return (
     <div className="min-w-48 text-slate-900">
       <div className="font-mono text-xs font-bold text-blue-700 mb-1">{incident.id}</div>
-      <div className="text-sm font-semibold capitalize">{incident.type} Incident</div>
+      <div className="text-sm font-semibold capitalize">{isPcr ? 'Patient Care Report' : `${incident.type} Incident`}</div>
       {isExternal && (
         <div className="mt-1 inline-flex rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
           {incident.sourceKind.replaceAll('_', ' ')}
+        </div>
+      )}
+      {isPcr && (
+        <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] text-blue-800">
+          <div><strong>Incident type:</strong> {incident.incident_type || incident.type || 'Emergency response'}</div>
+          <div><strong>PCR status:</strong> {incident.pcrStatusLabel || incident.pcrStatus || getIncidentStatusLabel(incident.status)}</div>
+          <div><strong>Date/time:</strong> {incident.incident_datetime || `${incident.date || ''} ${incident.time || ''}`.trim() || '-'}</div>
         </div>
       )}
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>

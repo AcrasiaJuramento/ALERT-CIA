@@ -10,6 +10,7 @@ import {
   generateResponseNumber,
 } from "../utils/dispatchWorkflow";
 import { createDispatchRecord, getDispatchRecord, getPCRReportByResponse, listRespondingTeams, sendDispatchToRespondingTeam, updateDispatchRecord } from "../services/supabase";
+import IncidentLocationPicker from "../components/IncidentLocationPicker";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
@@ -103,6 +104,11 @@ function newDispatch() {
     ifFall: "",
     placeOfIncident: "",
     barangay: "",
+    locationText: "",
+    latitude: "",
+    longitude: "",
+    locationGeography: "",
+    boundarySource: "",
     timeOfIncident: "",
     dateOfIncident: "",
     assistanceNeeded: [],
@@ -308,6 +314,21 @@ export default function DispatchModule({ onBack }) {
   }, [editId]);
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
+  const updateIncidentLocation = location => setForm(f => ({
+    ...f,
+    barangay: location.barangay || f.barangay,
+    placeOfIncident: location.locationText || f.placeOfIncident,
+    locationText: location.locationText || f.locationText || f.placeOfIncident,
+    latitude: location.latitude,
+    longitude: location.longitude,
+    locationGeography: location.locationGeography,
+    boundarySource: location.boundarySource,
+  }));
+  const requirePinnedLocation = () => {
+    if (Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude))) return true;
+    toast.error("Please pin the exact incident location on the map before saving this report.");
+    return false;
+  };
   const toggleNature = (type) => {
     const current = form.natureTypes;
     update("natureTypes", current.includes(type) ? current.filter(x => x !== type) : [...current, type]);
@@ -328,6 +349,7 @@ export default function DispatchModule({ onBack }) {
   };
 
   const handleSave = async () => {
+    if (!requirePinnedLocation()) return;
     try {
       const next = form.dispatchId || editId
         ? await updateDispatchRecord(form.dispatchId || editId, form)
@@ -342,12 +364,15 @@ export default function DispatchModule({ onBack }) {
   };
 
   const handleSendToFieldOfficer = async () => {
+    if (!requirePinnedLocation()) return;
     if (!form.team) {
       toast.error("Please select a responding team before sending this dispatch.");
       return;
     }
     try {
-      const savedDispatch = form.dispatchId || editId ? form : await createDispatchRecord(form);
+      const savedDispatch = form.dispatchId || editId
+        ? await updateDispatchRecord(form.dispatchId || editId, form)
+        : await createDispatchRecord(form);
       const result = await sendDispatchToRespondingTeam(savedDispatch.dispatchId || savedDispatch.id);
       setForm({ ...newDispatch(), ...result, patients: result.patients?.length ? result.patients : [newPatient()] });
       setSaved("Dispatch sent to the selected responding team.");
@@ -566,11 +591,18 @@ export default function DispatchModule({ onBack }) {
           {/* Incident location, time, assistance */}
           <div className="grid md:grid-cols-3 gap-3 mt-4">
             <Field label="Place of Incident" wide>
-              <input className={input} value={form.placeOfIncident} onChange={e => update("placeOfIncident", e.target.value)} />
+              <input className={input} value={form.placeOfIncident} onChange={e => setForm(f => ({ ...f, placeOfIncident: e.target.value, locationText: e.target.value }))} />
             </Field>
             <Field label="Barangay">
               <input className={input} value={form.barangay || ""} onChange={e => update("barangay", e.target.value)} />
             </Field>
+            <div className="md:col-span-3">
+              <IncidentLocationPicker
+                value={form}
+                locationText={form.placeOfIncident}
+                onChange={updateIncidentLocation}
+              />
+            </div>
             <Field label="Time of Incident">
               <input type="time" className={input} value={form.timeOfIncident} onChange={e => update("timeOfIncident", e.target.value)} />
             </Field>

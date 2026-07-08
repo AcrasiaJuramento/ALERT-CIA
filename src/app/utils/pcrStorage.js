@@ -8,6 +8,7 @@ export const createPCR = () => ({
   status: "Draft", archived: false, createdBy: null, updatedBy: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   respondingTeam: "", vehicle: "", driver: "", mainAider: "", assistantAider: "", natureOfCall: "Emergency",
   dateOfIncident: new Date().toISOString().slice(0, 10), timeOfIncident: "", placeOfIncident: "",
+  barangay: "", locationText: "", latitude: "", longitude: "", locationGeography: "", boundarySource: "",
   dispatchTime: "", arrivalScene: "", departureScene: "", arrivalHospital: "", departureHospital: "", backToBase: "",
   timeline: {
     dateOfIncident: new Date().toISOString().slice(0, 10), timeOfIncident: "", placeOfIncident: "",

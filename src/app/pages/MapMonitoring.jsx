@@ -9,6 +9,11 @@ import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, sup
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
+import {
+  calculateAccidentProneAreas,
+  formatRiskLevel,
+  riskStyles,
+} from '../utils/accidentProneAreas';
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
@@ -48,6 +53,16 @@ function getSourceGroup(incident) {
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 
+const DEFAULT_RISK_FILTERS = {
+  startDate: '',
+  endDate: '',
+  incidentType: 'all',
+  severity: 'all',
+  barangay: 'all',
+  sourceType: 'all',
+  timeOfDay: 'all',
+};
+
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
@@ -60,11 +75,18 @@ export default function MapMonitoring() {
   const [mapLayerMenuOpen, setMapLayerMenuOpen] = useState(false);
   const [mapLayers, setMapLayers] = useState({
     incidents: true,
+    verifiedMdrrmo: true,
+    pcrReports: true,
+    verifiedScraped: true,
     advisories: false,
+    accidentProneAreas: true,
+    criticalZones: true,
     heatmap: true,
     dangerZones: true,
+    barangayBoundaries: true,
     routes: true,
   });
+  const riskFilters = DEFAULT_RISK_FILTERS;
   const [incidents, setIncidents] = useState([]);
   const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
@@ -157,9 +179,27 @@ export default function MapMonitoring() {
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
       .filter(hasValidLatLng)
       .filter(isWithinEchagueMapArea)
-      .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource),
-    [activeSource, incidents, pcrIncidents, scrapedIncidents]
+      .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource)
+      .filter(item => {
+        const group = getSourceGroup(item);
+        if (group === 'scraper') return mapLayers.verifiedScraped;
+        if (group === 'pcr_report') return mapLayers.pcrReports;
+        if (group === 'official') return mapLayers.verifiedMdrrmo;
+        return true;
+      }),
+    [activeSource, incidents, mapLayers.pcrReports, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, pcrIncidents, scrapedIncidents]
   );
+  const riskSourceRecords = useMemo(
+    () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
+      .filter(hasValidLatLng)
+      .filter(isWithinEchagueMapArea),
+    [incidents, pcrIncidents, scrapedIncidents]
+  );
+  const accidentProneAreas = useMemo(
+    () => calculateAccidentProneAreas(riskSourceRecords, { publicOnly: false, filters: riskFilters }),
+    [riskFilters, riskSourceRecords]
+  );
+  const highRiskAreas = accidentProneAreas.filter(area => ['High', 'Critical'].includes(area.risk_level));
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
   const sourceCounts = {
@@ -169,9 +209,14 @@ export default function MapMonitoring() {
     scraper: scrapedIncidents.length,
   };
   const layerOptions = [
-    { key: 'incidents', label: 'Incidents' },
+    { key: 'verifiedMdrrmo', label: 'Verified MDRRMO Incidents' },
+    { key: 'pcrReports', label: 'PCR Reports' },
+    { key: 'verifiedScraped', label: 'Verified Web-Scraped Accidents' },
+    { key: 'accidentProneAreas', label: 'Accident-Prone Areas' },
+    { key: 'criticalZones', label: 'Critical Zones' },
     { key: 'advisories', label: 'Advisories' },
     { key: 'heatmap', label: 'Heatmap' },
+    { key: 'barangayBoundaries', label: 'Barangay Boundaries' },
     { key: 'dangerZones', label: 'Geofences' },
     { key: 'routes', label: 'Routes' },
   ];
@@ -189,6 +234,7 @@ export default function MapMonitoring() {
         <LeafletIncidentMap
           height="100%"
           incidents={mapIncidents}
+          accidentProneAreas={accidentProneAreas}
           showControls={true}
           showHeatmap={true}
           showDangerZones={true}
@@ -393,6 +439,21 @@ export default function MapMonitoring() {
           </div>
         )}
 
+        <div className="absolute bottom-4 left-6 z-[500] max-w-xl rounded-xl border border-border bg-card/95 p-3 text-xs shadow-xl backdrop-blur">
+          <div className="mb-2 font-semibold text-foreground">Risk Legend</div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(riskStyles).map(([level, style]) => (
+              <span key={level} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/80 px-2 py-1 text-muted-foreground">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: style.color }} />
+                {formatRiskLevel(level)}
+              </span>
+            ))}
+          </div>
+          <p className="mt-2 max-w-lg text-[10px] leading-relaxed text-muted-foreground">
+            Accident-prone areas are identified using a weighted threshold based on incident frequency, severity, recency, and source reliability. MDRRMO verified incidents carry higher weight, while verified web-scraped accident reports are used as supporting external data.
+          </p>
+        </div>
+
         {/* Selected Incident Popup */}
         {selectedInc && (
           <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-1001 w-96">
@@ -472,7 +533,7 @@ export default function MapMonitoring() {
 
       {/* Right Incidents Panel */}
       <div
-        className={`shrink-0 bg-card border-l border-border flex flex-col transition-all duration-300 overflow-hidden ${
+        className={`min-h-0 shrink-0 bg-card border-l border-border flex flex-col transition-all duration-300 overflow-hidden ${
           incidentPanelOpen ? 'w-[420px]' : 'w-10'
         }`}
       >
@@ -484,7 +545,7 @@ export default function MapMonitoring() {
         </button>
 
         {incidentPanelOpen && (
-          <>
+          <div className="flex min-h-0 flex-1 flex-col">
             <div className="px-4 py-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2 mb-1">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
@@ -515,7 +576,52 @@ export default function MapMonitoring() {
               {(mapError || scraperError) && <p className="mt-1 text-[10px] text-orange-400">{scraperError || mapError}</p>}
             </div>
 
-            <div className="flex-1 overflow-y-auto">
+            <div className="max-h-[38vh] shrink-0 overflow-y-auto border-b border-border p-4">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Accident-Prone Areas</div>
+                  <div className="text-[10px] text-muted-foreground">{highRiskAreas.length} high or critical / {accidentProneAreas.length} scored areas</div>
+                </div>
+              </div>
+              <div className="space-y-2">
+                {accidentProneAreas.slice(0, 5).map(area => (
+                  <div key={area.area_id} className="rounded-lg border border-border bg-background/50 p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold text-foreground">{area.barangay}</div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">{area.most_common_incident_type} / peak {area.peak_time}</div>
+                      </div>
+                      <span className="rounded-md px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: riskStyles[area.risk_level]?.color }}>
+                        {area.risk_level}
+                      </span>
+                    </div>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
+                      <span>Score <strong className="text-foreground">{area.total_risk_score}</strong></span>
+                      <span>MDRRMO <strong className="text-foreground">{area.mdrrmo_incident_count}</strong></span>
+                      <span>Web <strong className="text-foreground">{area.web_scraped_verified_count}</strong></span>
+                    </div>
+                    <div className="mt-2 max-h-20 overflow-y-auto border-t border-border/60 pt-2">
+                      {area.records.slice(0, 4).map(record => (
+                        <button
+                          key={record.id || record.recordId}
+                          onClick={() => {
+                            if (!record.sourceKind || record.sourceKind === 'official' || record.sourceKind === 'promoted_scraped') {
+                              navigate(`/admin/incidents/${record.relatedIncidentId || record.id}`);
+                            }
+                          }}
+                          className="block w-full truncate rounded px-1 py-0.5 text-left text-[10px] text-blue-400 hover:bg-secondary/60"
+                        >
+                          {record.title || record.description || record.id}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                {!accidentProneAreas.length && <div className="rounded-lg border border-border bg-background/50 p-3 text-xs text-muted-foreground">No accident-prone areas match the filters.</div>}
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               {activeIncidents.map((inc) => {
                 const TypeIcon = typeIcons[inc.type] || AlertTriangle;
                 return (
@@ -569,7 +675,7 @@ export default function MapMonitoring() {
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
