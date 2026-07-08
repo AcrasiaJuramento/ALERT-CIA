@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
@@ -14,6 +14,11 @@ import {
   formatRiskLevel,
   riskStyles,
 } from '../utils/accidentProneAreas';
+
+function SafeIcon({ icon: Icon, fallback: Fallback = AlertTriangle, className = '' }) {
+  const Component = Icon || Fallback;
+  return <Component className={className} />;
+}
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
@@ -382,7 +387,7 @@ export default function MapMonitoring() {
                           activeLayer === key ? 'text-slate-950 dark:text-white' : 'text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200'
                         }`}
                       >
-                        {createElement(Icon, { className: `h-4 w-4 ${color}` })}
+                        <SafeIcon icon={Icon} className={`h-4 w-4 ${color}`} />
                         <span>{label}</span>
                       </button>
                     ))}
@@ -564,7 +569,7 @@ export default function MapMonitoring() {
                     }`}
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
-                      {createElement(Icon, { className: 'h-3 w-3 shrink-0' })}
+                      <SafeIcon icon={Icon} fallback={Database} className="h-3 w-3 shrink-0" />
                       <span className="truncate">{label}</span>
                     </span>
                     <span className="shrink-0">{sourceCounts[key] || 0}</span>

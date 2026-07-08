@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, Ambulance, Users, CheckCircle2, Clock, TrendingUp,
@@ -91,6 +91,11 @@ const initialAmbulanceForm = {
 };
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
+
+function SafeIcon({ icon: Icon, fallback: Fallback = AlertTriangle, className = '' }) {
+  const Component = Icon || Fallback;
+  return <Component className={className} />;
+}
 
 const AnalyticsTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
@@ -505,7 +510,7 @@ export default function Dashboard() {
           <div key={label} className={`p-4 rounded-xl border ${bg} ${border} bg-card`}>
             <div className="flex items-start justify-between mb-3">
               <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${bg}`}>
-                {createElement(icon, { className: `w-4 h-4 ${color}` })}
+                <SafeIcon icon={icon} className={`w-4 h-4 ${color}`} />
               </div>
               <TrendingUp className={`w-3.5 h-3.5 ${trend === 'up' ? 'text-red-400' : trend === 'down' ? 'text-green-400 rotate-180' : 'text-muted-foreground'}`} />
             </div>
@@ -725,7 +730,7 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {activeIncidents.map((incident) => {
-                const TypeIcon = typeIcons[incident.type];
+                const TypeIcon = typeIcons[incident.type] || AlertTriangle;
                 return (
                   <tr
                     key={incident.id}
