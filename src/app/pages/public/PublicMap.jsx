@@ -290,6 +290,42 @@ function isBetterSafetyRoute(candidateAlerts = [], currentAlerts = []) {
   return routeAlertScore(candidateAlerts) < routeAlertScore(currentAlerts);
 }
 
+function routeDirectnessRatio(route, directDistanceKm) {
+  if (!route?.distanceKm || !Number.isFinite(directDistanceKm) || directDistanceKm <= 0) return Infinity;
+  return route.distanceKm / directDistanceKm;
+}
+
+function hasBacktrackSpur(route, startPoint, destinationPoint) {
+  const positions = route?.positions || [];
+  if (positions.length < 6 || !startPoint?.latLng || !destinationPoint?.latLng) return false;
+
+  const totalDirect = distanceKm(startPoint.latLng, destinationPoint.latLng);
+  if (!Number.isFinite(totalDirect) || totalDirect <= 0) return false;
+  let previousProgress = -Infinity;
+  let backtrackCount = 0;
+
+  for (const point of positions) {
+    const fromStart = distanceKm(startPoint.latLng, point);
+    const toDestination = distanceKm(point, destinationPoint.latLng);
+    const progress = fromStart - toDestination;
+    if (previousProgress - progress > Math.max(0.18, totalDirect * 0.08)) {
+      backtrackCount += 1;
+    }
+    previousProgress = Math.max(previousProgress, progress);
+  }
+
+  return backtrackCount >= 2;
+}
+
+function isPracticalRoute(route, startPoint, destinationPoint, baseRoute) {
+  const directDistance = distanceKm(startPoint.latLng, destinationPoint.latLng);
+  const baseDistance = baseRoute?.distanceKm || directDistance;
+  if (routeDirectnessRatio(route, directDistance) > 2.6) return false;
+  if (route.distanceKm > Math.max(baseDistance * 1.65, baseDistance + 4)) return false;
+  if (hasBacktrackSpur(route, startPoint, destinationPoint)) return false;
+  return true;
+}
+
 export default function PublicMap() {
   const [incidents, setIncidents] = useState([]);
   const [advisories, setAdvisories] = useState([]);
@@ -522,7 +558,7 @@ export default function PublicMap() {
     const heading = Math.atan2(Math.sin(lon2 - lon1) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1));
     const sideHint = Math.sign(Math.sin(heading)) || 1;
     const candidates = [];
-    [350, 650, 1000, 1500, 2200].forEach(offsetMeters => {
+    [250, 400, 650, 900, 1200].forEach(offsetMeters => {
       [sideHint, -sideHint].forEach(side => {
         candidates.push({
           label: `${offsetMeters}m side road`,
@@ -689,26 +725,11 @@ export default function PublicMap() {
     try {
       const currentAlerts = routeAlerts;
       const baseAlternatives = await fetchRouteOptions(start, destination, 'Alternative road route')
-        .then(routes => routes.slice(1).map((route, index) => ({
-          route,
-          waypoints: [],
-          alerts: buildRouteAlerts({
-            incidents: activeIncidents,
-            hazardZones,
-            accidentProneAreas: publicRiskAreas,
-            routePoints: route.positions,
-            currentLocation,
-          }),
-          label: `OSRM alternative ${index + 1}`,
-        })))
-        .catch(() => []);
-
-      const detourRoutes = await Promise.all(detourCandidates.map(async candidate => {
-        try {
-          const routeOptions = await fetchRouteOptions({ ...start, waypoints: candidate.waypoints }, destination, 'Barangay/local-road detour');
-          return routeOptions.map(route => ({
-            ...candidate,
+        .then(routes => routes.slice(1)
+          .filter(route => isPracticalRoute(route, start, destination, routePlan))
+          .map((route, index) => ({
             route,
+            waypoints: [],
             alerts: buildRouteAlerts({
               incidents: activeIncidents,
               hazardZones,
@@ -716,7 +737,26 @@ export default function PublicMap() {
               routePoints: route.positions,
               currentLocation,
             }),
-          }));
+            label: `OSRM alternative ${index + 1}`,
+          })))
+        .catch(() => []);
+
+      const detourRoutes = await Promise.all(detourCandidates.map(async candidate => {
+        try {
+          const routeOptions = await fetchRouteOptions({ ...start, waypoints: candidate.waypoints }, destination, 'Barangay/local-road detour');
+          return routeOptions
+            .filter(route => isPracticalRoute(route, start, destination, routePlan))
+            .map(route => ({
+              ...candidate,
+              route,
+              alerts: buildRouteAlerts({
+                incidents: activeIncidents,
+                hazardZones,
+                accidentProneAreas: publicRiskAreas,
+                routePoints: route.positions,
+                currentLocation,
+              }),
+            }));
         } catch {
           return [];
         }
@@ -732,8 +772,8 @@ export default function PublicMap() {
       if (!best) {
         setContinuedAlertIds(current => [...new Set([...current, alertId])]);
         setAvoidancePrompt(null);
-        setRouteError('No alternate road route was found. Continue carefully or choose another destination.');
-        navVoice.speak('No alternate road route was found. Please continue carefully or choose another destination.');
+        setRouteError('No practical direct alternate road was found. The current route is the most direct available route, so continue carefully or choose another destination.');
+        navVoice.speak('No practical direct alternate road was found. Please continue carefully or choose another destination.');
         return;
       }
 
