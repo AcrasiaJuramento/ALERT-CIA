@@ -30,6 +30,17 @@ function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvis
   return null;
 }
 
+function FocusLocation({ location }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!location?.latLng?.every(Number.isFinite)) return;
+    map.flyTo(location.latLng, Math.max(map.getZoom(), 17), { duration: 0.7 });
+  }, [location, map]);
+
+  return null;
+}
+
 function MapClickHandler({ onMapClick }) {
   useMapEvents({
     click: (event) => {
@@ -258,6 +269,7 @@ export function LeafletIncidentMap({
   accidentProneAreas = [],
   publicSafeRiskPopups = false,
   plannerPoints = {},
+  focusedLocation = null,
   compact = false,
   autoFit = true,
   onMapClick,
@@ -317,6 +329,7 @@ export function LeafletIncidentMap({
         <LocalIsabelaBasemap enabled={basemapUnavailable} />
         <MapResizeHandler />
         <MapClickHandler onMapClick={onMapClick} />
+        <FocusLocation location={focusedLocation} />
         <ZoomControl position="bottomright" />
         {autoFit && (
           <FitMapToData

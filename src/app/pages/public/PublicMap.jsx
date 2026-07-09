@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Car, Clock, Crosshair, LocateFixed, MapPin,
-  Megaphone, Navigation, RefreshCw, Route, Search, ShieldAlert, X
+  Megaphone, Navigation, RefreshCw, Route, Search, ShieldAlert, X, Volume2, VolumeX
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
+import navVoice from '../../utils/navigationVoice';
 import {
   listPublishedAdvisories,
   listPublicHazardZones,
@@ -25,6 +26,8 @@ const quickDestinations = [
   { label: 'Isabela State University Main Campus', latLng: [16.7138, 121.6823] },
   { label: 'Cagayan Valley Road', latLng: [16.7008, 121.6844] },
 ];
+
+const ALERT_VOICE_DISTANCE_KM = 0.1;
 
 const severityTone = {
   critical: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
@@ -57,34 +60,30 @@ function parsePointInput(value = '', searchOptions = quickDestinations) {
   return { label: value.trim(), latLng: [lat, lng] };
 }
 
-async function searchPlaceInput(value = '') {
+async function searchPlaceSuggestions(value = '', limit = 6) {
   const query = value.trim();
-  if (!query) return null;
+  if (!query || query.length < 2) return [];
 
   const searchParams = new URLSearchParams({
-    format: 'jsonv2',
-    limit: '5',
-    countrycodes: 'ph',
-    q: `${query}, Echague, Isabela, Philippines`,
+    q: query,
+    limit: String(limit),
   });
-  const response = await fetch(`https://nominatim.openstreetmap.org/search?${searchParams.toString()}`, {
+  const response = await fetch(`/api/geocode?${searchParams.toString()}`, {
     headers: { Accept: 'application/json' },
   });
   if (!response.ok) throw new Error('Place search is unavailable.');
 
-  const results = await response.json();
-  const candidates = (Array.isArray(results) ? results : [])
-    .map(item => ({
-      label: item.name || item.display_name?.split(',')[0] || query,
-      latLng: [Number(item.lat), Number(item.lon)],
-      distance: distanceKm(ECHAGUE_CENTER, [Number(item.lat), Number(item.lon)]),
-    }))
-    .filter(item => item.latLng.every(Number.isFinite))
-    .sort((first, second) => first.distance - second.distance);
+  const payload = await response.json();
+  return (Array.isArray(payload.results) ? payload.results : [])
+    .filter(item => item.label && item.latLng?.every(Number.isFinite))
+    .slice(0, limit);
+}
 
+async function searchPlaceInput(value = '') {
+  const candidates = await searchPlaceSuggestions(value, 5);
   const best = candidates[0];
-  if (!best || best.distance > 25) return null;
-  return { label: best.label, latLng: best.latLng };
+  if (!best) return null;
+  return { label: best.label, latLng: best.latLng, type: best.type, source: best.source };
 }
 
 function nearestPointDistanceKm(point, routePoints = []) {
@@ -95,6 +94,55 @@ function nearestPointDistanceKm(point, routePoints = []) {
 function formatDistance(km) {
   if (!Number.isFinite(km)) return '-';
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
+function riskRadiusKm(area = {}) {
+  if (area.risk_level === 'Critical') return 0.52;
+  if (area.risk_level === 'High') return 0.42;
+  if (area.risk_level === 'Moderate') return 0.32;
+  return 0.24;
+}
+
+function riskSeverity(area = {}) {
+  if (area.risk_level === 'Critical') return 'critical';
+  if (area.risk_level === 'High') return 'warning';
+  return 'moderate';
+}
+
+function naturalInstruction(instruction = '') {
+  const text = String(instruction || '')
+    .replaceAll('_', ' ')
+    .replace(/\bturn\b/i, 'Turn')
+    .replace(/\bcontinue\b/i, 'Continue')
+    .replace(/\bdepart\b/i, 'Start')
+    .replace(/\barrive\b/i, 'You have arrived')
+    .replace(/\bon road\b/i, 'on this road')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!text) return 'Continue along the route.';
+  return text.endsWith('.') ? text : `${text}.`;
+}
+
+function routeReadyMessage(routePlan, alertsCount) {
+  const distance = Math.round(routePlan.distanceKm * 10) / 10;
+  const alertText = alertsCount
+    ? `${alertsCount} safety warning${alertsCount === 1 ? '' : 's'} along the way`
+    : 'no safety warnings along this route';
+  return `Route is ready. It is about ${distance} kilometers and should take around ${routePlan.durationMinutes} minutes. I found ${alertText}.`;
+}
+
+function approachingAlertMessage(alert) {
+  const label = alert?.label || 'Safety warning';
+  const description = alert?.description ? ` ${alert.description}` : '';
+  return `Heads up. ${label} ahead.${description}`;
+}
+
+function pointVoiceKey(point) {
+  if (!point?.latLng) return point?.label || '';
+  if (point.label === 'Current GPS location') return point.label;
+  const [lat, lng] = point.latLng.map(value => Number(value).toFixed(4));
+  return `${point.label || 'point'}:${lat},${lng}`;
 }
 
 function describePinnedLocation(latLng, kind, searchOptions = []) {
@@ -130,9 +178,14 @@ function fallbackRoute(start, destination) {
 }
 
 async function fetchRoute(start, destination) {
-  const startLngLat = `${start.latLng[1]},${start.latLng[0]}`;
-  const endLngLat = `${destination.latLng[1]},${destination.latLng[0]}`;
-  const url = `https://router.project-osrm.org/route/v1/driving/${startLngLat};${endLngLat}?overview=full&geometries=geojson&steps=true`;
+  // accept optional waypoints via start.waypoints or destination.waypoints
+  const waypoints = (start.waypoints || destination.waypoints || []);
+  const coords = [
+    `${start.latLng[1]},${start.latLng[0]}`,
+    ...waypoints.map(w => `${w[1]},${w[0]}`),
+    `${destination.latLng[1]},${destination.latLng[0]}`,
+  ].join(';');
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true&alternatives=true`;
   const response = await fetch(url);
   if (!response.ok) throw new Error('Routing service unavailable.');
   const payload = await response.json();
@@ -149,20 +202,23 @@ async function fetchRoute(start, destination) {
         ? `${step.maneuver.type} ${step.maneuver.modifier} on ${step.name || 'road'}`
         : `${step.maneuver?.type || 'Continue'} on ${step.name || 'road'}`,
       distance: step.distance,
-    }))).slice(0, 12),
+      latLng: step.maneuver?.location ? [step.maneuver.location[1], step.maneuver.location[0]] : null,
+    }))).slice(0, 64),
   };
 }
 
-function buildRouteAlerts({ incidents, hazardZones, routePoints, currentLocation }) {
+function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, routePoints, currentLocation }) {
   const incidentAlerts = incidents
     .map(item => {
-      const distance = nearestPointDistanceKm(getIncidentLatLng(item), routePoints);
-      const approach = currentLocation ? distanceKm(currentLocation, getIncidentLatLng(item)) : distance;
+      const latLng = getIncidentLatLng(item);
+      const distance = nearestPointDistanceKm(latLng, routePoints);
+      const approach = currentLocation ? distanceKm(currentLocation, latLng) : distance;
       return {
         id: item.id,
         label: item.title || `${item.type || 'Incident'} alert`,
         type: item.type || 'incident',
         severity: item.severity || 'moderate',
+        latLng,
         distance,
         approach,
         description: item.description,
@@ -180,6 +236,7 @@ function buildRouteAlerts({ incidents, hazardZones, routePoints, currentLocation
         label: zone.label,
         type: zone.type,
         severity: zone.severity === 'critical' ? 'critical' : zone.severity === 'high' ? 'warning' : 'moderate',
+        latLng: zonePoint,
         distance,
         approach,
         description: zone.description || 'Hazard zone near this route.',
@@ -187,9 +244,29 @@ function buildRouteAlerts({ incidents, hazardZones, routePoints, currentLocation
     })
     .filter(item => item.distance <= 0.8);
 
-  return [...incidentAlerts, ...zoneAlerts]
+  const accidentProneAlerts = accidentProneAreas
+    .map(area => {
+      const latLng = [Number(area.latitude), Number(area.longitude)];
+      const centerDistance = nearestPointDistanceKm(latLng, routePoints);
+      const routeDistance = Math.max(0, centerDistance - riskRadiusKm(area));
+      const approach = currentLocation ? distanceKm(currentLocation, latLng) : routeDistance;
+      return {
+        id: area.area_id,
+        label: `${formatRiskLevel(area.risk_level)}: ${area.barangay}`,
+        type: 'accident-prone-area',
+        severity: riskSeverity(area),
+        latLng,
+        distance: routeDistance,
+        approach,
+        description: `${area.most_common_incident_type || 'Road incident'} risk area near this route. Slow down and stay alert.`,
+      };
+    })
+    .filter(item => item.latLng.every(Number.isFinite))
+    .filter(item => item.distance <= 0.12);
+
+  return [...incidentAlerts, ...zoneAlerts, ...accidentProneAlerts]
     .sort((first, second) => first.approach - second.approach)
-    .slice(0, 8);
+    .slice(0, 12);
 }
 
 export default function PublicMap() {
@@ -202,13 +279,20 @@ export default function PublicMap() {
   const [destination, setDestination] = useState(null);
   const [startInput, setStartInput] = useState('');
   const [destinationInput, setDestinationInput] = useState('');
+  const [focusedLocation, setFocusedLocation] = useState(null);
   const [currentLocation, setCurrentLocation] = useState(null);
   const [routePlan, setRoutePlan] = useState(null);
   const [routeLoading, setRouteLoading] = useState(false);
+  const [navigationActive, setNavigationActive] = useState(false);
+  const [muted, setMuted] = useState(navVoice.isMuted());
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [lastRerouteAlertIds, setLastRerouteAlertIds] = useState([]);
   const [showModerateRisk, setShowModerateRisk] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [routeError, setRouteError] = useState('');
+  const spokenRouteKeyRef = useRef('');
+  const spokenAlertIdsRef = useRef(new Set());
 
   const loadMap = async () => {
     setLoading(true);
@@ -246,6 +330,10 @@ export default function PublicMap() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    navVoice.setMuted(muted);
+  }, [muted]);
 
   useEffect(() => {
     if (!navigator.geolocation) return undefined;
@@ -289,6 +377,8 @@ export default function PublicMap() {
     };
   }, [destination, start]);
 
+
+
   const activeIncidents = useMemo(() => incidents.filter(item => !isIncidentCompleted(item.status)), [incidents]);
   const publicRiskAreas = useMemo(() => {
     const areas = calculateAccidentProneAreas(incidents, { publicOnly: true });
@@ -297,26 +387,129 @@ export default function PublicMap() {
   const selectedIncident = incidents.find(item => item.id === selectedIncidentId);
   const routePoints = useMemo(() => routePlan?.positions || [], [routePlan]);
   const routeAlerts = useMemo(
-    () => buildRouteAlerts({ incidents: activeIncidents, hazardZones, routePoints, currentLocation }),
-    [activeIncidents, currentLocation, hazardZones, routePoints]
+    () => buildRouteAlerts({ incidents: activeIncidents, hazardZones, accidentProneAreas: publicRiskAreas, routePoints, currentLocation }),
+    [activeIncidents, currentLocation, hazardZones, publicRiskAreas, routePoints]
   );
+
+  // Announce when a route is calculated
+  useEffect(() => {
+    if (!routePlan) return;
+    const routeVoiceKey = `${pointVoiceKey(start)}>${pointVoiceKey(destination)}`;
+    if (spokenRouteKeyRef.current === routeVoiceKey) return;
+    spokenRouteKeyRef.current = routeVoiceKey;
+    spokenAlertIdsRef.current = new Set();
+    const alertsCount = routeAlerts.length || 0;
+    navVoice.speak(routeReadyMessage(routePlan, alertsCount), { interrupt: false });
+  }, [destination, routeAlerts.length, routePlan, start]);
+
+  // Advance turn-by-turn based on current GPS location
+  useEffect(() => {
+    if (!navigationActive || !routePlan || !currentLocation) return undefined;
+    const steps = routePlan.steps || [];
+    if (!steps.length) return undefined;
+
+    const nearestIndex = steps.reduce((best, step, idx) => {
+      if (!step.latLng) return best;
+      const d = distanceKm(currentLocation, step.latLng);
+      if (d < best.dist) return { idx, dist: d };
+      return best;
+    }, { idx: 0, dist: Infinity });
+
+    const nextIndex = Math.max(0, nearestIndex.idx);
+    if (nextIndex !== currentStepIndex) {
+      setCurrentStepIndex(nextIndex);
+      const instruction = naturalInstruction(steps[nextIndex]?.instruction || 'Continue on your route.');
+      navVoice.speak(instruction);
+    }
+
+    // speak alert warnings only inside 100 meters
+    if (routeAlerts && routeAlerts.length) {
+      const approaching = routeAlerts.find(a => a.approach <= ALERT_VOICE_DISTANCE_KM);
+      const approachingId = approaching ? `${approaching.type}:${approaching.id}` : '';
+      if (approaching && !spokenAlertIdsRef.current.has(approachingId)) {
+        navVoice.speak(approachingAlertMessage(approaching));
+        spokenAlertIdsRef.current.add(approachingId);
+      }
+    }
+
+    return undefined;
+  }, [navigationActive, currentLocation, routeAlerts, routePlan, currentStepIndex]);
+
+  // When incidents list updates, check for new alerts along active route and reroute
+  useEffect(() => {
+    if (!routePlan || !start || !destination) return;
+    const alerts = buildRouteAlerts({
+      incidents: incidents.filter(item => !isIncidentCompleted(item.status)),
+      hazardZones,
+      accidentProneAreas: publicRiskAreas,
+      routePoints,
+      currentLocation,
+    });
+    const alertIds = alerts.map(a => `${a.type}:${a.id}`);
+    const newAlerts = alertIds.filter(id => !lastRerouteAlertIds.includes(id));
+    if (newAlerts.length && alerts.length) {
+      // pick first alert to avoid
+      const first = alerts.find(a => `${a.type}:${a.id}` === newAlerts[0]);
+      if (first && first.distance <= 0.6) {
+        (async () => {
+          try {
+            const avoidance = computeAvoidanceWaypoint(routePoints, first);
+            if (avoidance) {
+              navVoice.speak('I found a safety issue ahead, so I am checking for a better route.');
+              const startWithWp = { ...start, waypoints: [avoidance] };
+              const next = await fetchRoute(startWithWp, destination);
+              setRoutePlan(next);
+              setLastRerouteAlertIds(alertIds);
+            }
+          } catch {
+            // ignore reroute failure
+          }
+        })();
+      }
+    }
+    // keep last list updated
+    setLastRerouteAlertIds(alertIds);
+  }, [incidents]);
+
+  // compute a simple avoidance waypoint by offsetting near the route point closest to alert
+  function computeAvoidanceWaypoint(routePts = [], alert) {
+    if (!routePts.length || !alert) return null;
+    const alertPoint = alert.latLng || null;
+    // use approach: find nearest route coordinate to alert coordinate
+    const alertLatLng = alertPoint || null;
+    if (!alertLatLng) return null;
+    let best = { idx: -1, dist: Infinity };
+    routePts.forEach((pt, idx) => {
+      const d = distanceKm(alertLatLng, pt);
+      if (d < best.dist) best = { idx, dist: d };
+    });
+    if (best.idx < 0) return null;
+    const idx = best.idx;
+    const pt = routePts[idx];
+    // choose adjacent point to estimate heading
+    const next = routePts[Math.min(routePts.length - 1, idx + 3)] || pt;
+    const lat1 = pt[0] * (Math.PI / 180);
+    const lon1 = pt[1] * (Math.PI / 180);
+    const lat2 = next[0] * (Math.PI / 180);
+    const lon2 = next[1] * (Math.PI / 180);
+    const heading = Math.atan2(Math.sin(lon2 - lon1) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1));
+    // perpendicular offset ~0.002 deg (~200m)
+    const offsetMeters = 220;
+    const offsetDegLat = offsetMeters / 111320;
+    const offsetDegLon = offsetMeters / (40075000 * Math.cos(pt[0] * Math.PI / 180) / 360);
+    // pick side based on heading
+    const side = Math.sign(Math.sin(heading)) || 1;
+    const avoidLat = pt[0] + side * offsetDegLat;
+    const avoidLon = pt[1] - side * offsetDegLon;
+    return [avoidLat, avoidLon];
+  }
   const searchableLocations = useMemo(() => {
     const options = [
       ...quickDestinations.map(item => ({ ...item, type: 'Place' })),
-      ...activeIncidents.map(item => ({
-        label: item.location ? `${item.title || item.type} - ${item.location}` : item.title || `${item.type || 'Incident'} alert`,
-        latLng: getIncidentLatLng(item),
-        type: 'Alert',
-      })),
-      ...hazardZones.map(zone => ({
-        label: zone.label || `${zone.type || 'Hazard'} zone`,
-        latLng: getZoneLatLng(zone),
-        type: 'Hazard',
-      })),
     ].filter(item => item.label && item.latLng?.every(Number.isFinite));
 
     return [...new Map(options.map(item => [item.label.toLowerCase(), item])).values()];
-  }, [activeIncidents, hazardZones]);
+  }, []);
   const nearestRisks = useMemo(
     () => [...activeIncidents]
       .map(item => ({ ...item, distance: distanceKm(currentLocation || ECHAGUE_CENTER, getIncidentLatLng(item)) }))
@@ -362,6 +555,20 @@ export default function PublicMap() {
       setDestination(parsed);
       setDestinationInput(parsed.label);
     }
+    setFocusedLocation(parsed);
+    setRouteError('');
+  };
+
+  const selectRoutePoint = (kind, item) => {
+    const point = { label: item.label, latLng: item.latLng, type: item.type, source: item.source };
+    if (kind === 'start') {
+      setStart(point);
+      setStartInput(point.label);
+    } else {
+      setDestination(point);
+      setDestinationInput(point.label);
+    }
+    setFocusedLocation(point);
     setRouteError('');
   };
 
@@ -372,6 +579,7 @@ export default function PublicMap() {
     }
     setStart({ label: 'Current GPS location', latLng: currentLocation });
     setStartInput('Current GPS location');
+    setFocusedLocation({ label: 'Current GPS location', latLng: currentLocation });
     setRouteError('');
   };
 
@@ -387,6 +595,7 @@ export default function PublicMap() {
       setDestination(point);
       setDestinationInput(label);
     }
+    setFocusedLocation(point);
     setPinMode(null);
     setRouteError('');
   };
@@ -397,6 +606,7 @@ export default function PublicMap() {
     setRoutePlan(null);
     setStartInput('');
     setDestinationInput('');
+    setFocusedLocation(null);
     setRouteError('');
   };
 
@@ -419,6 +629,7 @@ export default function PublicMap() {
               start,
               destination,
             }}
+            focusedLocation={focusedLocation}
             selectedIncidentId={selectedIncidentId || undefined}
             onMarkerClick={setSelectedIncidentId}
             onMapClick={handleMapClick}
@@ -504,11 +715,11 @@ export default function PublicMap() {
             routeAlerts={routeAlerts}
             selectedIncident={selectedIncident}
             searchOptions={searchableLocations}
-            onQuickDestination={(item) => {
-              setDestination(item);
-              setDestinationInput(item.label);
-              setRouteError('');
-            }}
+            onSelectRoutePoint={selectRoutePoint}
+            navigationActive={navigationActive}
+            onToggleNavigation={() => setNavigationActive(a => !a)}
+            muted={muted}
+            onToggleMute={() => setMuted(m => !m)}
           />
 
           <div className="grid grid-cols-3 gap-2 border-b border-border p-4">
@@ -592,14 +803,28 @@ function RoutePlanner({
   routeAlerts,
   selectedIncident,
   searchOptions,
-  onQuickDestination,
+  onSelectRoutePoint,
+  navigationActive,
+  onToggleNavigation,
+  muted,
+  onToggleMute,
 }) {
+  const [activeSearchId, setActiveSearchId] = useState(null);
+
   return (
     <section className="border-b border-border p-4">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Navigation className="h-4 w-4 text-blue-500" />
           <h3 className="text-sm font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Live Safety Navigation</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={onToggleMute} title={muted ? 'Unmute voice' : 'Mute voice'} className="rounded-md p-2 hover:bg-secondary">
+            {muted ? <VolumeX className="h-4 w-4 text-muted-foreground" /> : <Volume2 className="h-4 w-4 text-blue-500" />}
+          </button>
+          <button onClick={onToggleNavigation} title={navigationActive ? 'Stop navigation' : 'Start navigation'} className={`ml-1 inline-flex items-center gap-1 rounded-lg px-3 py-1 text-xs font-semibold ${navigationActive ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>
+            {navigationActive ? 'Stop' : 'Start'}
+          </button>
         </div>
       </div>
 
@@ -614,6 +839,11 @@ function RoutePlanner({
           onPin={onPinStart}
           active={pinMode === 'start'}
           searchOptions={searchOptions}
+          searchPlaces={searchPlaceSuggestions}
+          onSelect={item => onSelectRoutePoint('start', item)}
+          open={activeSearchId === 'start'}
+          onOpen={() => setActiveSearchId('start')}
+          onClose={() => setActiveSearchId(current => current === 'start' ? null : current)}
         />
         <RouteInput
           id="public-map-destination-search"
@@ -625,6 +855,11 @@ function RoutePlanner({
           onPin={onPinDestination}
           active={pinMode === 'destination'}
           searchOptions={searchOptions}
+          searchPlaces={searchPlaceSuggestions}
+          onSelect={item => onSelectRoutePoint('destination', item)}
+          open={activeSearchId === 'destination'}
+          onOpen={() => setActiveSearchId('destination')}
+          onClose={() => setActiveSearchId(current => current === 'destination' ? null : current)}
         />
       </div>
 
@@ -643,7 +878,7 @@ function RoutePlanner({
         {quickDestinations.map(item => (
           <button
             key={item.label}
-            onClick={() => onQuickDestination(item)}
+            onClick={() => onSelectRoutePoint('destination', { ...item, type: 'Place' })}
             className="flex items-center justify-between gap-2 rounded-lg border border-border bg-background/60 px-3 py-2 text-left text-[11px] text-muted-foreground hover:bg-secondary hover:text-foreground"
           >
             <span className="truncate">{item.label}</span>
@@ -684,8 +919,66 @@ function RoutePlanner({
   );
 }
 
-function RouteInput({ id, label, value, placeholder, onChange, onApply, onPin, active, searchOptions }) {
-  const listId = `${id}-options`;
+function RouteInput({
+  id,
+  label,
+  value,
+  placeholder,
+  onChange,
+  onApply,
+  onPin,
+  active,
+  searchOptions,
+  searchPlaces,
+  onSelect,
+  open,
+  onOpen,
+  onClose,
+}) {
+  const [suggestions, setSuggestions] = useState(searchOptions);
+  const [loading, setLoading] = useState(false);
+  const requestIdRef = useRef(0);
+  const trimmedValue = value.trim();
+
+  useEffect(() => {
+    const localMatches = searchOptions.filter(item => item.label.toLowerCase().includes(trimmedValue.toLowerCase()));
+    if (trimmedValue.length < 2) {
+      setSuggestions(searchOptions.slice(0, 6));
+      setLoading(false);
+      return undefined;
+    }
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+    setLoading(true);
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const remoteMatches = await searchPlaces(trimmedValue, 7);
+        if (requestIdRef.current !== requestId) return;
+        const combined = [...localMatches, ...remoteMatches]
+          .filter(item => item.label && item.latLng?.every(Number.isFinite));
+        setSuggestions([...new Map(combined.map(item => [item.label.toLowerCase(), item])).values()].slice(0, 8));
+      } catch {
+        if (requestIdRef.current === requestId) setSuggestions(localMatches.slice(0, 6));
+      } finally {
+        if (requestIdRef.current === requestId) setLoading(false);
+      }
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchOptions, searchPlaces, trimmedValue]);
+
+  const chooseSuggestion = (item) => {
+    onChange(item.label);
+    onSelect(item);
+    onClose();
+  };
+
+  const applyValue = () => {
+    onClose();
+    onApply();
+  };
 
   return (
     <div className="space-y-1.5">
@@ -702,20 +995,45 @@ function RouteInput({ id, label, value, placeholder, onChange, onApply, onPin, a
           <input
             id={id}
             value={value}
-            onChange={event => onChange(event.target.value)}
+            onChange={event => {
+              onChange(event.target.value);
+              onOpen();
+            }}
+            onFocus={onOpen}
+            onBlur={() => window.setTimeout(onClose, 120)}
             onKeyDown={event => {
-              if (event.key === 'Enter') onApply();
+              if (event.key === 'Enter') applyValue();
+              if (event.key === 'Escape') onClose();
             }}
             placeholder={placeholder}
             className="h-10 w-full min-w-0 rounded-lg border border-border bg-background pl-8 pr-3 text-xs text-foreground outline-none focus:border-blue-500"
-            list={listId}
           />
+          {open && (
+            <div className="absolute left-0 right-0 top-[calc(100%+0.375rem)] z-[700] max-h-44 overflow-y-auto rounded-lg border border-border bg-card p-1 shadow-2xl">
+              {loading && <div className="px-3 py-2 text-[11px] text-muted-foreground">Searching map locations...</div>}
+              {!loading && suggestions.map(item => (
+                <button
+                  key={`${id}-${item.id || item.label}`}
+                  type="button"
+                  onMouseDown={event => event.preventDefault()}
+                  onClick={() => chooseSuggestion(item)}
+                  className="flex w-full items-start justify-between gap-3 rounded-md px-3 py-2 text-left hover:bg-secondary"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold text-foreground">{item.label}</span>
+                    <span className="block truncate text-[10px] text-muted-foreground">{item.source || 'Saved place'}{item.type ? ` - ${item.type}` : ''}</span>
+                  </span>
+                  <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" />
+                </button>
+              ))}
+              {!loading && trimmedValue.length >= 2 && !suggestions.length && (
+                <div className="px-3 py-2 text-[11px] text-muted-foreground">No matching map locations found.</div>
+              )}
+            </div>
+          )}
         </div>
-        <button onClick={onApply} className="h-10 rounded-lg bg-secondary px-3 text-xs font-semibold text-foreground hover:bg-secondary/80">Set</button>
+        <button onClick={applyValue} className="h-10 rounded-lg bg-secondary px-3 text-xs font-semibold text-foreground hover:bg-secondary/80">Set</button>
       </div>
-      <datalist id={listId}>
-        {searchOptions.map(item => <option key={`${id}-${item.label}`} value={item.label} label={item.type} />)}
-      </datalist>
     </div>
   );
 }
