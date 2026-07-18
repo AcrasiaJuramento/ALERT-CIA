@@ -25,6 +25,12 @@ const PCR_STATUS_FROM_DB = Object.fromEntries(
   Object.entries(PCR_STATUS_TO_DB).map(([label, value]) => [value, label])
 );
 
+const ECHAGUE_COORDINATE_BOUNDS = {
+  southWest: [16.60, 121.54],
+  northEast: [16.82, 121.80],
+  padding: 0.1,
+};
+
 export function toDbDispatchStatus(status = "Draft") {
   return DISPATCH_STATUS_TO_DB[status] || status || "draft";
 }
@@ -50,17 +56,31 @@ function numericCoordinate(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+export function isValidIncidentCoordinate(latitude, longitude) {
+  const lat = numericCoordinate(latitude);
+  const lng = numericCoordinate(longitude);
+  if (lat === null || lng === null) return false;
+  const { southWest, northEast, padding } = ECHAGUE_COORDINATE_BOUNDS;
+  return lat >= southWest[0] - padding
+    && lat <= northEast[0] + padding
+    && lng >= southWest[1] - padding
+    && lng <= northEast[1] + padding;
+}
+
 function locationGeographyFromCoordinates(latitude, longitude) {
   const lat = numericCoordinate(latitude);
   const lng = numericCoordinate(longitude);
-  return lat === null || lng === null
+  return !isValidIncidentCoordinate(lat, lng)
     ? null
     : `SRID=4326;POINT(${lng.toFixed(7)} ${lat.toFixed(7)})`;
 }
 
 export function responseLocationPayloadFromRecord(record = {}) {
-  const latitude = numericCoordinate(record.latitude ?? record.lat);
-  const longitude = numericCoordinate(record.longitude ?? record.lng ?? record.lon);
+  const rawLatitude = numericCoordinate(record.latitude ?? record.lat);
+  const rawLongitude = numericCoordinate(record.longitude ?? record.lng ?? record.lon);
+  const hasValidCoordinates = isValidIncidentCoordinate(rawLatitude, rawLongitude);
+  const latitude = hasValidCoordinates ? rawLatitude : null;
+  const longitude = hasValidCoordinates ? rawLongitude : null;
   const locationText = record.locationText || record.placeOfIncident || record.timeline?.placeOfIncident || null;
 
   return {
@@ -68,7 +88,7 @@ export function responseLocationPayloadFromRecord(record = {}) {
     location_text: locationText,
     latitude,
     longitude,
-    location_geography: typeof record.locationGeography === "string"
+    location_geography: hasValidCoordinates && typeof record.locationGeography === "string"
       ? record.locationGeography
       : locationGeographyFromCoordinates(latitude, longitude),
   };

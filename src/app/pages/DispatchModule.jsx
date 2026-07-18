@@ -10,6 +10,7 @@ import {
   generateResponseNumber,
 } from "../utils/dispatchWorkflow";
 import { createDispatchRecord, getDispatchRecord, getPCRReportByResponse, listRespondingTeams, sendDispatchToRespondingTeam, updateDispatchRecord } from "../services/supabase";
+import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
@@ -325,8 +326,8 @@ export default function DispatchModule({ onBack }) {
     boundarySource: location.boundarySource,
   }));
   const requirePinnedLocation = () => {
-    if (Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude))) return true;
-    toast.error("Please pin the exact incident location on the map before saving this report.");
+    if (isValidIncidentCoordinate(form.latitude, form.longitude)) return true;
+    toast.error("Please pin the exact incident location inside Echague before saving this report.");
     return false;
   };
   const toggleNature = (type) => {

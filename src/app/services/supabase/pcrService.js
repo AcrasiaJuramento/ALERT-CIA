@@ -1,5 +1,5 @@
 import { runSupabaseRequest } from "./errors";
-import { pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
+import { isValidIncidentCoordinate, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
 
 const PCR_SELECT = `
   *,
@@ -203,7 +203,7 @@ export async function getPCRReportByResponse(responseId) {
 
 export async function savePCRReport(pcrId, record) {
   return runSupabaseRequest(async client => {
-    if (record.responseId && Number.isFinite(Number(record.latitude)) && Number.isFinite(Number(record.longitude))) {
+    if (record.responseId && isValidIncidentCoordinate(record.latitude, record.longitude)) {
       const { error: responseError } = await client
         .from("responses")
         .update(responseLocationPayloadFromRecord(record))

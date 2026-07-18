@@ -2,6 +2,7 @@ import { runSupabaseRequest } from "./errors";
 import {
   dispatchPayloadFromForm,
   dispatchToApp,
+  isValidIncidentCoordinate,
   responsePayloadFromDispatch,
   toDbDispatchStatus,
 } from "./mappers";
@@ -34,8 +35,8 @@ async function resolveDispatchIds(form) {
 }
 
 function ensurePinnedLocation(form) {
-  if (!Number.isFinite(Number(form.latitude)) || !Number.isFinite(Number(form.longitude))) {
-    throw new Error("Please pin the exact incident location on the map before saving this report.");
+  if (!isValidIncidentCoordinate(form.latitude, form.longitude)) {
+    throw new Error("Please pin the exact incident location inside Echague before saving this report.");
   }
 }
 

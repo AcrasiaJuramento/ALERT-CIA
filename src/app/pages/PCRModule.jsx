@@ -6,13 +6,14 @@ import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import { DISPATCH_EDIT_KEY } from "../utils/dispatchWorkflow";
 import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newVital, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
 import { getDispatchRecord, getPCRReport, replacePCRVitals, savePCRReport, submitPCRReport } from "../services/supabase";
+import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import { toast } from "sonner";
 
 const steps = [["Response & Patient", <Shield key="shield"/>], ["Assessment", <Activity key="activity"/>], ["Clinical Details", <User key="user"/>], ["Treatment & Handover", <ClipboardList key="clipboard"/>], ["Review & Export", <FileText key="file"/>]];
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
 const emergencyTypes = ["Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
 const traumaTypes = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Assault", "Animal Bite", "Motor Vehicle Crash"];
-const PIN_REQUIRED_MESSAGE = "Please pin the exact incident location on the map before saving this report.";
+const PIN_REQUIRED_MESSAGE = "Please pin the exact incident location inside Echague before saving this report.";
 const medicalHistory = ["None", "Heart Disease", "Hypertension", "Seizure", "COPD", "Diabetes Mellitus", "Asthma", "Stroke"];
 const timelineLabels = [
   ["Date of Incident", "dateOfIncident"],
@@ -155,7 +156,7 @@ export default function PCRModule() {
   const hasDispatchSource = Boolean(params.get("edit") || params.get("dispatch") || form.dispatchId);
   const store = async status => {
     if (chronologyError) { setMessage(chronologyError); return; }
-    if (!Number.isFinite(Number(form.latitude)) || !Number.isFinite(Number(form.longitude))) {
+    if (!isValidIncidentCoordinate(form.latitude, form.longitude)) {
       setMessage(PIN_REQUIRED_MESSAGE);
       toast.error(PIN_REQUIRED_MESSAGE);
       return;
