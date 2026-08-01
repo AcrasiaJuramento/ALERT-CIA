@@ -9,9 +9,14 @@ import {
   DISPATCH_STATUSES,
   generateResponseNumber,
 } from "../utils/dispatchWorkflow";
-import { createDispatchRecord, getDispatchRecord, getPCRReportByResponse, listRespondingTeams, sendDispatchToRespondingTeam, updateDispatchRecord } from "../services/supabase";
+import { getDispatchRecord, getPCRReportByResponse, listRespondingTeams } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
+import SyncStatusPanel from "../components/SyncStatusPanel";
+import { hybridRepository } from "../api/hybrid-client";
+import { localServerClient } from "../api/local-server-client";
+import { checkConnection, getConnectionState } from "../network/connection-manager";
+import { randomUuid } from "../utils/uuid";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
@@ -54,11 +59,19 @@ function CB({ label, checked, onChange }) {
 const ASSISTANCE_OPTIONS = ["PNP", "BFP", "BRGY. OFFICIALS", "OTHERS"];
 const MEDICAL_TYPES = ["Conduction", "Transport", "Transfer", "Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
 const TRAUMA_TYPES = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Motor Vehicle Crash"];
+const MONTH_OPTIONS = [
+  ["01", "Jan"], ["02", "Feb"], ["03", "Mar"], ["04", "Apr"], ["05", "May"], ["06", "Jun"],
+  ["07", "Jul"], ["08", "Aug"], ["09", "Sep"], ["10", "Oct"], ["11", "Nov"], ["12", "Dec"],
+];
+const BIRTH_YEARS = Array.from({ length: 111 }, (_, index) => String(new Date().getFullYear() - index));
+const BIRTH_DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, "0"));
 
 // ─── Default patient record ──────────────────────────────────────────────────
 function newPatient() {
+  const id = randomUuid();
   return {
-    id: crypto.randomUUID(),
+    id,
+    patientClientId: id,
     name: "", age: "", birthdate: "", gender: "", address: "",
     assessmentFindings: "",
     bp: "", pr: "", rr: "", temp: "", o2Sat: "", gcs: "",
@@ -74,8 +87,14 @@ function newPatient() {
 
 // ─── Default dispatch form ───────────────────────────────────────────────────
 function newDispatch() {
+  const id = randomUuid();
+  const responseId = randomUuid();
   return {
-    id: crypto.randomUUID(),
+    id,
+    dispatchId: id,
+    responseId,
+    client_generated_id: id,
+    responseClientId: responseId,
     createdAt: new Date().toISOString(),
     status: DISPATCH_STATUSES.DRAFT,
     // Header
@@ -99,7 +118,7 @@ function newDispatch() {
     selfAccident: false,
     collision: false,
     vehicleInvolved: "",
-    incidentNature: "Self-Inflicted",
+    incidentNature: "",
     ifIngestion: "",
     quantity: "",
     ifFall: "",
@@ -145,9 +164,103 @@ function TimelineField({ label, value, onChange, error }) {
   );
 }
 
+function splitBirthdate(value = "") {
+  const [year = "", month = "", day = ""] = String(value || "").split("-");
+  return { year, month, day };
+}
+
+function composeBirthdate({ year, month, day }) {
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+
+function possibleBirthYears(age) {
+  const numericAge = Number(age);
+  if (!Number.isInteger(numericAge) || numericAge < 0 || numericAge > 120) return [];
+  const currentYear = new Date().getFullYear();
+  return [String(currentYear - numericAge), String(currentYear - numericAge - 1)];
+}
+
+function ageFromBirthdate(value) {
+  if (!value) return "";
+  const birthdate = new Date(`${value}T00:00:00`);
+  if (!Number.isFinite(birthdate.getTime())) return "";
+  const today = new Date();
+  let age = today.getFullYear() - birthdate.getFullYear();
+  const birthdayPassed = today.getMonth() > birthdate.getMonth()
+    || (today.getMonth() === birthdate.getMonth() && today.getDate() >= birthdate.getDate());
+  if (!birthdayPassed) age -= 1;
+  return age >= 0 && age <= 120 ? String(age) : "";
+}
+
+function PatientBirthdayField({ patient, onChange }) {
+  const birthdateParts = splitBirthdate(patient.birthdate);
+  const parts = {
+    year: patient.birthYear || birthdateParts.year,
+    month: patient.birthMonth || birthdateParts.month,
+    day: patient.birthDay || birthdateParts.day,
+  };
+  const yearHints = possibleBirthYears(patient.age);
+  const updatePart = (key, value) => {
+    const next = { ...parts, [key]: value };
+    const birthdate = composeBirthdate(next);
+    onChange({
+      ...patient,
+      birthYear: next.year,
+      birthMonth: next.month,
+      birthDay: next.day,
+      birthdate,
+      ...(birthdate ? { age: ageFromBirthdate(birthdate) } : {}),
+    });
+  };
+  return (
+    <div className="grid grid-cols-3 gap-2">
+      <Field label="Birth Year">
+        <select className={input} value={parts.year} onChange={e => updatePart("year", e.target.value)}>
+          <option value="">Year</option>
+          {BIRTH_YEARS.map(year => <option key={year} value={year}>{year}</option>)}
+        </select>
+      </Field>
+      <Field label="Month">
+        <select className={input} value={parts.month} onChange={e => updatePart("month", e.target.value)}>
+          <option value="">Month</option>
+          {MONTH_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </Field>
+      <Field label="Day">
+        <select className={input} value={parts.day} onChange={e => updatePart("day", e.target.value)}>
+          <option value="">Day</option>
+          {BIRTH_DAYS.map(day => <option key={day} value={day}>{day}</option>)}
+        </select>
+      </Field>
+    </div>
+  );
+}
+
+async function getCachedDispatch(editId) {
+  const rows = await hybridRepository.getLocalDispatchRecords().catch(() => []);
+  return rows.find(record => record.id === editId || record.dispatchId === editId) || null;
+}
+
 // ─── Patient card ────────────────────────────────────────────────────────────
 function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
   const up = (key, val) => onChange({ ...patient, [key]: val });
+  const updateAge = value => {
+    const yearHints = possibleBirthYears(value);
+    const currentParts = {
+      year: patient.birthYear || splitBirthdate(patient.birthdate).year,
+      month: patient.birthMonth || splitBirthdate(patient.birthdate).month,
+      day: patient.birthDay || splitBirthdate(patient.birthdate).day,
+    };
+    const nextParts = yearHints.length ? { ...currentParts, year: yearHints[0] } : currentParts;
+    onChange({
+      ...patient,
+      age: value,
+      birthYear: nextParts.year,
+      birthMonth: nextParts.month,
+      birthDay: nextParts.day,
+      birthdate: composeBirthdate(nextParts),
+    });
+  };
   const toggle = key => onChange({ ...patient, [key]: !patient[key] });
 
   return (
@@ -170,15 +283,13 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
             <input className={input} value={patient.name} onChange={e => up("name", e.target.value)} />
           </Field>
           <Field label="Age">
-            <input type="number" className={input} value={patient.age} onChange={e => up("age", e.target.value)} />
+            <input type="number" className={input} value={patient.age} onChange={e => updateAge(e.target.value)} />
           </Field>
-          <Field label="Birthday">
-            <input type="date" className={input} value={patient.birthdate} onChange={e => up("birthdate", e.target.value)} />
-          </Field>
+          <PatientBirthdayField patient={patient} onChange={onChange} />
           <Field label="Gender">
             <select className={input} value={patient.gender} onChange={e => up("gender", e.target.value)}>
               <option value="">Select</option>
-              {["Male", "Female", "Other"].map(x => <option key={x}>{x}</option>)}
+              {["Unknown", "Male", "Female", "Other"].map(x => <option key={x}>{x}</option>)}
             </select>
           </Field>
           <Field label="Patient Address" wide>
@@ -226,8 +337,9 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
                 <Field key={key} label={`${lbl} (+/-)`}>
                   <select className={smallInput} value={patient[key]} onChange={e => up(key, e.target.value)}>
                     <option value="" />
-                    <option>+</option>
-                    <option>-</option>
+                    <option value="+">Positive</option>
+                    <option value="-">Negative</option>
+                    <option>Unknown</option>
                   </select>
                 </Field>
               ))}
@@ -296,10 +408,15 @@ export default function DispatchModule({ onBack }) {
       if (!editId) return;
       setLoading(true);
       try {
-        const found = await getDispatchRecord(editId);
+        const mode = getConnectionState().mode;
+        const found = mode === "local"
+          ? await localServerClient.getDispatch(editId).catch(() => getCachedDispatch(editId))
+          : await getDispatchRecord(editId).catch(() => getCachedDispatch(editId));
         if (mounted && found) {
           setForm({ ...newDispatch(), ...found, responseNumber: found.responseNumber || generateResponseNumber(), patients: found.patients?.length ? found.patients : [newPatient()] });
-          const pcr = await getPCRReportByResponse(found.responseId);
+          const pcr = mode === "local"
+            ? await localServerClient.getPcrByResponse(found.responseId).catch(() => null)
+            : await getPCRReportByResponse(found.responseId).catch(() => null);
           if (mounted) setLinkedPCR(pcr);
         }
       } catch (error) {
@@ -334,6 +451,9 @@ export default function DispatchModule({ onBack }) {
     const current = form.natureTypes;
     update("natureTypes", current.includes(type) ? current.filter(x => x !== type) : [...current, type]);
   };
+  const toggleIncidentNature = (nature) => {
+    update("incidentNature", form.incidentNature === nature ? "" : nature);
+  };
   const toggleAssistance = (opt) => {
     const current = form.assistanceNeeded;
     update("assistanceNeeded", current.includes(opt) ? current.filter(x => x !== opt) : [...current, opt]);
@@ -353,15 +473,32 @@ export default function DispatchModule({ onBack }) {
     if (!requirePinnedLocation()) return;
     try {
       const next = form.dispatchId || editId
-        ? await updateDispatchRecord(form.dispatchId || editId, form)
-        : await createDispatchRecord(form);
+        ? await hybridRepository.updateDispatch(form.dispatchId || editId, form)
+        : await hybridRepository.createDispatch(form);
       setForm({ ...newDispatch(), ...next, patients: next.patients?.length ? next.patients : [newPatient()] });
-      setSaved("Dispatch form saved to Supabase.");
-      toast.success("Dispatch form saved.");
+      setSaved(next.hybridMessage || "Dispatch form saved to Supabase.");
+      toast.success(next.hybridMessage || "Dispatch form saved.");
       setTimeout(() => setSaved(""), 2500);
     } catch (error) {
       toast.error(error.message || "Unable to save dispatch form.");
     }
+  };
+
+  const mirrorSentDispatchToLan = async (record) => {
+    const state = await checkConnection({ force: true });
+    if (!state.localOnline) return null;
+    const dispatchId = record.dispatchId || record.id || form.dispatchId || editId;
+    if (!dispatchId) return null;
+    const payload = {
+      ...form,
+      ...record,
+      id: dispatchId,
+      dispatchId,
+      status: DISPATCH_STATUSES.SENT,
+      localStatus: "Sent to Responding Team Locally",
+    };
+    const localRecord = await localServerClient.updateDispatch(dispatchId, payload);
+    return localServerClient.sendDispatch(localRecord.dispatchId || localRecord.id || dispatchId);
   };
 
   const handleSendToFieldOfficer = async () => {
@@ -372,12 +509,14 @@ export default function DispatchModule({ onBack }) {
     }
     try {
       const savedDispatch = form.dispatchId || editId
-        ? await updateDispatchRecord(form.dispatchId || editId, form)
-        : await createDispatchRecord(form);
-      const result = await sendDispatchToRespondingTeam(savedDispatch.dispatchId || savedDispatch.id);
-      setForm({ ...newDispatch(), ...result, patients: result.patients?.length ? result.patients : [newPatient()] });
-      setSaved("Dispatch sent to the selected responding team.");
-      toast.success("Dispatch sent to responding team.");
+        ? await hybridRepository.updateDispatch(form.dispatchId || editId, form)
+        : await hybridRepository.createDispatch(form);
+      const result = await hybridRepository.sendDispatch(savedDispatch.dispatchId || savedDispatch.id);
+      const lanResult = await mirrorSentDispatchToLan(result);
+      const finalResult = lanResult || result;
+      setForm({ ...newDispatch(), ...finalResult, patients: finalResult.patients?.length ? finalResult.patients : [newPatient()] });
+      setSaved(lanResult ? "Dispatch sent to the local LAN server." : result.hybridMessage || "Dispatch sent to the selected responding team.");
+      toast.success(lanResult ? "Dispatch sent to local LAN. Field officer can receive it now." : result.hybridMessage || "Dispatch sent to responding team.");
       setTimeout(() => setSaved(""), 3000);
     } catch (error) {
       toast.error(error.message || "Unable to send dispatch.");
@@ -434,6 +573,10 @@ export default function DispatchModule({ onBack }) {
           <CheckCircle2 size={15} /> {saved}
         </div>
       )}
+
+      <div className="mb-4">
+        <SyncStatusPanel />
+      </div>
 
       <div className="mb-4 grid gap-3 md:grid-cols-3">
         <div className="rounded-xl border border-border bg-card p-4">
@@ -560,7 +703,7 @@ export default function DispatchModule({ onBack }) {
                 <div className="flex gap-3">
                   {["Self-Inflicted", "Accidental"].map(n => (
                     <label key={n} className="flex items-center gap-1.5 text-xs cursor-pointer">
-                      <input type="radio" name={`nature-${form.id}`} checked={form.incidentNature === n} onChange={() => update("incidentNature", n)} className="accent-blue-600" />
+                      <input type="checkbox" checked={form.incidentNature === n} onChange={() => toggleIncidentNature(n)} className="accent-blue-600" />
                       {n}
                     </label>
                   ))}

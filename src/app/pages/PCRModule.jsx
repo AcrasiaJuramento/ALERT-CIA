@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Activity, ArrowLeft, ArrowRight, Camera, CheckCircle2, ClipboardList, Download, FileText, Maximize2, MapPin, Minus, Plus, RotateCcw, Save, Shield, Trash2, User, X } from "lucide-react";
 import { AnatomyEditor, AnatomyFigure, PrintablePCR, SignaturePad } from "../components/PCRWidgets";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import { DISPATCH_EDIT_KEY } from "../utils/dispatchWorkflow";
-import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newVital, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
-import { getDispatchRecord, getPCRReport, replacePCRVitals, savePCRReport, submitPCRReport } from "../services/supabase";
+import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newGcsRow, newVital, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
+import { getDispatchRecord, getPCRReport, getPCRReportByResponse } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
+import { hybridRepository } from "../api/hybrid-client";
+import { localServerClient } from "../api/local-server-client";
+import { getConnectionState } from "../network/connection-manager";
+import { randomUuid } from "../utils/uuid";
 import { toast } from "sonner";
 
 const steps = [["Response & Patient", <Shield key="shield"/>], ["Assessment", <Activity key="activity"/>], ["Clinical Details", <User key="user"/>], ["Treatment & Handover", <ClipboardList key="clipboard"/>], ["Review & Export", <FileText key="file"/>]];
@@ -15,6 +20,12 @@ const emergencyTypes = ["Medical", "Pediatric", "Psychiatric", "Surgical", "Obst
 const traumaTypes = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Assault", "Animal Bite", "Motor Vehicle Crash"];
 const PIN_REQUIRED_MESSAGE = "Please pin the exact incident location inside Echague before saving this report.";
 const medicalHistory = ["None", "Heart Disease", "Hypertension", "Seizure", "COPD", "Diabetes Mellitus", "Asthma", "Stroke"];
+const MONTH_OPTIONS = [
+  ["01", "Jan"], ["02", "Feb"], ["03", "Mar"], ["04", "Apr"], ["05", "May"], ["06", "Jun"],
+  ["07", "Jul"], ["08", "Aug"], ["09", "Sep"], ["10", "Oct"], ["11", "Nov"], ["12", "Dec"],
+];
+const BIRTH_YEARS = Array.from({ length: 111 }, (_, index) => String(new Date().getFullYear() - index));
+const BIRTH_DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, "0"));
 const timelineLabels = [
   ["Date of Incident", "dateOfIncident"],
   ["Time of Incident", "timeOfIncident"],
@@ -39,6 +50,48 @@ function CheckGroup({ options, value = [], onChange, columns = 3 }) {
   return <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${minWidth}, 1fr))` }}>{options.map(option => <label key={option} className="flex gap-2 items-start min-w-0 text-xs leading-snug text-foreground p-2 rounded-lg border border-border bg-secondary/30"><input type="checkbox" checked={value.includes(option)} onChange={() => toggle(option)} className="accent-blue-600 shrink-0 mt-0.5" /><span className="min-w-0 whitespace-normal break-words">{option}</span></label>)}</div>;
 }
 function RadioButtons({ options, value, onChange }) { return <div className="flex flex-wrap gap-2">{options.map(option => <button type="button" key={option} onClick={() => onChange(option)} className={`px-3 py-2 rounded-lg border text-xs font-semibold ${value === option ? "bg-blue-600 border-blue-600 text-white" : "border-border text-muted-foreground"}`}>{option}</button>)}</div>; }
+function splitBirthdate(value = "") {
+  const [year = "", month = "", day = ""] = String(value || "").split("-");
+  return { year, month, day };
+}
+function composeBirthdate({ year, month, day }) {
+  return year && month && day ? `${year}-${month}-${day}` : "";
+}
+function possibleBirthYears(age) {
+  const numericAge = Number(age);
+  if (!Number.isInteger(numericAge) || numericAge < 0 || numericAge > 120) return [];
+  const currentYear = new Date().getFullYear();
+  return [String(currentYear - numericAge), String(currentYear - numericAge - 1)];
+}
+function ageFromBirthdate(value) {
+  if (!value) return "";
+  const birthdate = new Date(`${value}T00:00:00`);
+  if (!Number.isFinite(birthdate.getTime())) return "";
+  const today = new Date();
+  let age = today.getFullYear() - birthdate.getFullYear();
+  const birthdayPassed = today.getMonth() > birthdate.getMonth()
+    || (today.getMonth() === birthdate.getMonth() && today.getDate() >= birthdate.getDate());
+  if (!birthdayPassed) age -= 1;
+  return age >= 0 && age <= 120 ? String(age) : "";
+}
+function BirthdayInput({ form, update }) {
+  const birthdateParts = splitBirthdate(form.birthday);
+  const parts = {
+    year: form.birthYear || birthdateParts.year,
+    month: form.birthMonth || birthdateParts.month,
+    day: form.birthDay || birthdateParts.day,
+  };
+  const updatePart = (key, value) => {
+    const next = { ...parts, [key]: value };
+    const birthdate = composeBirthdate(next);
+    update("birthYear", next.year);
+    update("birthMonth", next.month);
+    update("birthDay", next.day);
+    update("birthday", birthdate);
+    if (birthdate) update("age", ageFromBirthdate(birthdate));
+  };
+  return <div className="grid grid-cols-3 gap-2"><Field label="Birth Year"><select className={input} value={parts.year} onChange={e=>updatePart("year",e.target.value)}><option value="">Year</option>{BIRTH_YEARS.map(year=><option key={year} value={year}>{year}</option>)}</select></Field><Field label="Month"><select className={input} value={parts.month} onChange={e=>updatePart("month",e.target.value)}><option value="">Month</option>{MONTH_OPTIONS.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></Field><Field label="Day"><select className={input} value={parts.day} onChange={e=>updatePart("day",e.target.value)}><option value="">Day</option>{BIRTH_DAYS.map(day=><option key={day} value={day}>{day}</option>)}</select></Field></div>;
+}
 function TriageButtons({ value, onChange }) {
   const active = {
     Red: "bg-red-600 border-red-600 text-white shadow-red-500/20",
@@ -54,6 +107,126 @@ function TriageButtons({ value, onChange }) {
   };
   return <div className="grid grid-cols-2 md:grid-cols-4 gap-2">{["Red","Yellow","Green","Black"].map(option => <button type="button" key={option} onClick={() => onChange(option)} className={`px-4 py-3 rounded-xl border-2 text-sm font-black uppercase tracking-wide shadow-sm transition-all ${value === option ? active[option] : inactive[option]}`}>{option}</button>)}</div>;
 }
+
+function isFilled(value) {
+  if (value === null || value === undefined || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).some(isFilled);
+  return true;
+}
+
+function mergeNonEmpty(base = {}, override = {}) {
+  const merged = { ...base };
+  Object.entries(override || {}).forEach(([key, value]) => {
+    if (!isFilled(value)) return;
+    if (
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && merged[key]
+      && typeof merged[key] === "object"
+      && !Array.isArray(merged[key])
+    ) {
+      merged[key] = mergeNonEmpty(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
+function timeFromTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 5);
+  return date.toTimeString().slice(0, 5);
+}
+
+function selectedIncidentTypes(dispatch = {}) {
+  if (Array.isArray(dispatch.natureTypes)) return dispatch.natureTypes;
+  return String(dispatch.typeOfIncident || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function pcrSeedFromDispatch(dispatch = {}, pcrShell = {}, freshPcr = createPCR()) {
+  const patient = dispatch.patients?.[0] || {};
+  const selectedTypes = selectedIncidentTypes(dispatch);
+  const seededEmergencyTypes = emergencyTypes.filter(type => selectedTypes.includes(type));
+  const seededTraumaTypes = traumaTypes.filter(type => selectedTypes.includes(type));
+  if (selectedTypes.includes("Medical") && !seededEmergencyTypes.includes("Medical")) seededEmergencyTypes.unshift("Medical");
+  if (selectedTypes.some(type => traumaTypes.includes(type)) && !seededTraumaTypes.includes("Trauma")) seededTraumaTypes.unshift("Trauma");
+  const dispatchTime = pcrShell.dispatchTime
+    || pcrShell.timeline?.dispatchTime
+    || timeFromTimestamp(dispatch.acceptedAt || dispatch.sentAt || dispatch.dispatchedTime || dispatch.dispatchTime);
+  const incidentDate = dispatch.dateOfIncident || dispatch.date || freshPcr.dateOfIncident;
+  const incidentTime = dispatch.timeOfIncident || freshPcr.timeOfIncident;
+  const incidentPlace = dispatch.placeOfIncident || dispatch.locationText || freshPcr.placeOfIncident;
+  return synchronizePCR({
+    ...freshPcr,
+    dispatchId: dispatch.dispatchId || dispatch.id,
+    responseId: dispatch.responseId,
+    responseNumber: dispatch.responseNumber || freshPcr.responseNumber,
+    patientId: patient.id || patient.patientClientId || dispatch.patientId || null,
+    dispatchPatientId: patient.id || dispatch.dispatchPatientId || null,
+    patients: dispatch.patients || [],
+    respondingTeam: dispatch.respondingTeam || dispatch.team || "",
+    respondingTeamId: dispatch.respondingTeamId || null,
+    vehicle: dispatch.vehicle || "",
+    vehicleId: dispatch.vehicleId || null,
+    driver: dispatch.driver || "",
+    mainAider: dispatch.mainAider || "",
+    groupLeader: dispatch.groupLeader || "",
+    assistantAider: dispatch.assistantAider || "",
+    natureOfCall: selectedTypes.includes("Conduction") ? "Conduction" : "Emergency",
+    dateOfIncident: incidentDate,
+    timeOfIncident: incidentTime,
+    placeOfIncident: incidentPlace,
+    locationText: dispatch.locationText || incidentPlace,
+    barangay: dispatch.barangay || "",
+    latitude: dispatch.latitude ?? "",
+    longitude: dispatch.longitude ?? "",
+    locationGeography: dispatch.locationGeography || "",
+    dispatchTime,
+    timeline: {
+      dateOfIncident: incidentDate,
+      timeOfIncident: incidentTime,
+      placeOfIncident: incidentPlace,
+      dispatchTime,
+      arrivalScene: dispatch.arrivalScene || "",
+      departureScene: dispatch.departureScene || "",
+      arrivalHospital: dispatch.arrivalHospital || "",
+      departureHospital: dispatch.departureHospital || "",
+      backToBase: dispatch.backToBase || "",
+    },
+    patientName: patient.name || dispatch.patientName || "",
+    age: patient.age ?? dispatch.age ?? "",
+    birthday: patient.birthdate || patient.birthday || dispatch.birthday || "",
+    gender: patient.gender || dispatch.gender || "",
+    address: patient.address || dispatch.address || "",
+    contactPerson: patient.contactPerson || dispatch.contactPerson || "",
+    contactNumber: patient.contactNumber || dispatch.contactNumber || "",
+    chiefComplaint: patient.assessmentFindings || dispatch.chiefComplaint || "",
+    emergencyTypes: seededEmergencyTypes,
+    traumaTypes: seededTraumaTypes,
+    emergencyOther: dispatch.otherMedical || dispatch.otherNature || "",
+    assaultDetails: dispatch.assaultDetails || "",
+    animalBiteDetails: dispatch.animalBiteDetails || "",
+    incidentNature: dispatch.incidentNature || "",
+    ingestionItem: dispatch.ingestionItem || dispatch.ifIngestion || dispatch.ingestionDetails || "",
+    ingestionQuantity: dispatch.ingestionQuantity || dispatch.quantity || "",
+    fallDetails: dispatch.fallDetails || dispatch.ifFall || "",
+    crash: {
+      ...freshPcr.crash,
+      ...(dispatch.crash || {}),
+      selfAccident: Boolean(dispatch.crash?.selfAccident || dispatch.selfAccident),
+      collision: Boolean(dispatch.crash?.collision || dispatch.collision),
+      vehicle: dispatch.crash?.vehicle || dispatch.vehicleInvolved || dispatch.vehicleInvolve || "",
+    },
+  });
+}
+
 function DetailedPCRReview({ record, onClose }) {
   const [zoom, setZoom] = useState(1);
   useEffect(() => {
@@ -73,8 +246,8 @@ function DetailedPCRReview({ record, onClose }) {
     transformOrigin: "top center",
     marginBottom: `${Math.max(0, zoom - 1) * 1200}px`,
   };
-  return <div className="fixed inset-0 z-50 bg-black/75 p-2 md:p-5 flex flex-col" role="dialog" aria-modal="true" aria-label="Detailed PCR report review">
-    <div className="bg-card border border-border rounded-t-xl px-3 py-2.5 flex flex-wrap items-center justify-between gap-2">
+  return createPortal(<div className="fixed inset-0 z-[5000] bg-black/75 p-2 md:p-5 flex flex-col" role="dialog" aria-modal="true" aria-label="Detailed PCR report review">
+    <div className="relative z-20 bg-card border border-border rounded-t-xl px-3 py-2.5 flex flex-wrap items-center justify-between gap-2">
       <div><h2 className="font-bold text-sm md:text-base">Detailed PCR Report</h2><p className="text-[11px] text-muted-foreground">Zoom and scroll to review every section before submission.</p></div>
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => changeZoom(-.25)} disabled={zoom <= .75} aria-label="Zoom out" className="p-2 rounded-lg bg-secondary disabled:opacity-40"><Minus size={16}/></button>
@@ -87,11 +260,11 @@ function DetailedPCRReview({ record, onClose }) {
     <div className="flex-1 overflow-auto bg-slate-200 rounded-b-xl p-2 md:p-6">
       <div className="mx-auto bg-white shadow-xl" style={reviewScaleStyle}><PrintablePCR record={record}/></div>
     </div>
-  </div>;
+  </div>, document.body);
 }
 
 export default function PCRModule() {
-  const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const editId = params.get("edit") || sessionStorage.getItem(PCR_EDIT_KEY); const dispatchId = params.get("dispatch"); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState("");
+  const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const editId = params.get("edit") || sessionStorage.getItem(PCR_EDIT_KEY); const dispatchId = params.get("dispatch"); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState(""); const [savingStatus, setSavingStatus] = useState("");
   useEffect(() => {
     sessionStorage.removeItem(PCR_EDIT_KEY);
     let mounted = true;
@@ -100,16 +273,40 @@ export default function PCRModule() {
       setLoading(true);
       try {
         if (editId) {
-          const record = await getPCRReport(editId);
+          const localMode = getConnectionState().mode === "local";
+          const record = localMode
+            ? await localServerClient.getPcr(editId)
+            : await getPCRReport(editId).catch(() => hybridRepository.getLocalPcrReport(editId));
           if (mounted && record) {
             setForm(synchronizePCR({ ...createPCR(), ...record, timeline: record.timeline || {} }));
-            if (record.dispatchId) setLinkedDispatch(await getDispatchRecord(record.dispatchId));
+            if (record.dispatchId) {
+              setLinkedDispatch(localMode
+                ? await localServerClient.getDispatch(record.dispatchId)
+                : await getDispatchRecord(record.dispatchId).catch(() => null));
+            }
           }
         } else if (dispatchId) {
-          const dispatch = await getDispatchRecord(dispatchId);
+          const localMode = getConnectionState().mode === "local";
+          const dispatch = localMode ? await localServerClient.getDispatch(dispatchId) : await getDispatchRecord(dispatchId);
           if (mounted && dispatch) {
+            const pcrShell = dispatch.responseId
+              ? localMode
+                ? await localServerClient.getPcrByResponse(dispatch.responseId).catch(() => null)
+                : await getPCRReportByResponse(dispatch.responseId).catch(() => null)
+              : null;
+            const freshPcr = createPCR();
             setLinkedDispatch(dispatch);
-            setForm(synchronizePCR({ ...createPCR(), ...dispatch, dispatchId: dispatch.id, responseId: dispatch.responseId }));
+            const dispatchSeed = pcrSeedFromDispatch(dispatch, pcrShell, freshPcr);
+            setForm(synchronizePCR(mergeNonEmpty(dispatchSeed, {
+              ...(pcrShell || {}),
+              id: pcrShell?.id || pcrShell?.pcrId || freshPcr.id,
+              pcrId: pcrShell?.pcrId || pcrShell?.id || freshPcr.id,
+              dispatchId: dispatch.dispatchId || dispatch.id,
+              responseId: dispatch.responseId,
+              responseNumber: dispatch.responseNumber || pcrShell?.responseNumber || freshPcr.responseNumber,
+              patients: dispatch.patients,
+              patientId: pcrShell?.patientId || dispatch.patients?.[0]?.id || dispatch.patientId || null,
+            })));
           }
         }
       } catch (error) {
@@ -124,6 +321,23 @@ export default function PCRModule() {
     };
   }, [dispatchId, editId]);
   const update = (key, value) => setForm(f => synchronizePCR({ ...f, [key]: value }));
+  const updateAge = value => setForm(f => {
+    const yearHints = possibleBirthYears(value);
+    const birthdateParts = splitBirthdate(f.birthday);
+    const nextParts = {
+      year: yearHints[0] || f.birthYear || birthdateParts.year,
+      month: f.birthMonth || birthdateParts.month,
+      day: f.birthDay || birthdateParts.day,
+    };
+    return synchronizePCR({
+      ...f,
+      age: value,
+      birthYear: nextParts.year,
+      birthMonth: nextParts.month,
+      birthDay: nextParts.day,
+      birthday: composeBirthdate(nextParts),
+    });
+  });
   const updateTimeline = (key, value) => setForm(f => synchronizePCR({ ...f, [key]: value, timeline: { ...(f.timeline || {}), [key]: value } }));
   const updateIncidentLocation = location => setForm(f => synchronizePCR({
     ...f,
@@ -149,27 +363,33 @@ export default function PCRModule() {
   }));
   const nested = (key, child, value) => setForm(f => ({ ...f, [key]: { ...f[key], [child]: value } }));
   const signature = (key, value) => nested("signatures", key, value); const signatureName = (key, value) => nested("signatureNames", key, value); const signatureDate = (key, value) => nested("signatureDates", key, value);
-  const gcsTotal = useMemo(() => Number(form.gcs.eye || 0) + Number(form.gcs.verbal || 0) + Number(form.gcs.motor || 0), [form.gcs]);
+  const gcsRows = form.gcsRows?.length ? form.gcsRows : [form.gcs];
+  const currentGcs = [...gcsRows].reverse().find(row => row?.eye || row?.verbal || row?.motor) || gcsRows[gcsRows.length - 1] || form.gcs;
+  const gcsTotal = useMemo(() => Number(currentGcs?.eye || 0) + Number(currentGcs?.verbal || 0) + Number(currentGcs?.motor || 0), [currentGcs]);
   const chronologyError = useMemo(() => validateChronology(form), [form]);
   const hospitalTravel = travelDuration(form.departureScene, form.arrivalHospital);
   const returnTravel = travelDuration(form.departureHospital, form.backToBase);
-  const hasDispatchSource = Boolean(params.get("edit") || params.get("dispatch") || form.dispatchId);
   const store = async status => {
+    if (savingStatus) return;
     if (chronologyError) { setMessage(chronologyError); return; }
     if (!isValidIncidentCoordinate(form.latitude, form.longitude)) {
       setMessage(PIN_REQUIRED_MESSAGE);
       toast.error(PIN_REQUIRED_MESSAGE);
       return;
     }
+    setSavingStatus(status);
     try {
-      const savedDraft = await savePCRReport(form.id, { ...form, status });
-      await replacePCRVitals(savedDraft.id, form.vitals || []);
-      const saved = status === "Draft" ? savedDraft : await submitPCRReport(savedDraft.id);
+      const payload = { ...form, status, id: form.id || randomUuid() };
+      const saved = status === "Draft"
+        ? await hybridRepository.savePcrDraft(payload)
+        : await hybridRepository.submitPcr(payload);
       setForm(synchronizePCR({ ...form, ...saved }));
-      setMessage(status === "Draft" ? "Draft saved." : "PCR submitted successfully.");
+      setMessage(saved.hybridMessage || (status === "Draft" ? "Draft saved." : "PCR submitted successfully."));
       if (status !== "Draft") setTimeout(() => navigate("/admin/pcr"), 800);
     } catch (error) {
       setMessage(error.message || "Unable to save PCR report.");
+    } finally {
+      setSavingStatus("");
     }
   };
   const downloadPdf = async () => {
@@ -181,36 +401,23 @@ export default function PCRModule() {
     }
   };
   const setVital = (id, key, value) => update("vitals", form.vitals.map(v => v.id === id ? { ...v, [key]: value } : v));
+  const setGcsRow = (id, key, value) => update("gcsRows", gcsRows.map(row => row.id === id ? { ...row, [key]: value } : row));
   const addMedication = () => update("medications", [...form.medications, { drug: "", dose: "", dateTime: "" }]);
   const setMedication = (index, key, value) => update("medications", form.medications.map((m,i)=>i===index?{...m,[key]:value}:m));
-  const upload = async e => { const files = [...e.target.files]; if (!files.length) return; const location = await new Promise(resolve => navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }), () => resolve(null), { enableHighAccuracy: true, timeout: 5000 }) : resolve(null)); const items = await Promise.all(files.map(file => new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve({ id: crypto.randomUUID(), name: file.name, type: file.type, size: file.size, data: reader.result, location, capturedAt: new Date().toISOString() }); reader.readAsDataURL(file); }))); update("attachments", [...form.attachments, ...items]); };
-
-  if (!hasDispatchSource) {
-    return <div className="p-4 md:p-6 max-w-3xl mx-auto text-foreground">
-      <div className="rounded-2xl border border-border bg-card p-6 text-center shadow-sm">
-        <FileText className="mx-auto mb-3 h-10 w-10 text-blue-500" />
-        <h1 className="text-xl font-bold">Start PCR from an Accepted Dispatch</h1>
-        <p className="mt-2 text-sm text-muted-foreground">PCR Reports are now created from dispatch records. Accept a received dispatch first so shared incident fields and the response number are filled automatically.</p>
-        <div className="mt-5 flex flex-wrap justify-center gap-2">
-          <button onClick={() => navigate("/admin/dispatch/received")} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white">Open Received Dispatches</button>
-          <button onClick={() => navigate("/admin/pcr")} className="rounded-lg bg-secondary px-4 py-2 text-sm font-semibold">Patient Care Records</button>
-        </div>
-      </div>
-    </div>;
-  }
+  const upload = async e => { const files = [...e.target.files]; if (!files.length) return; const location = await new Promise(resolve => navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }), () => resolve(null), { enableHighAccuracy: true, timeout: 5000 }) : resolve(null)); const items = await Promise.all(files.map(file => new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve({ id: randomUuid(), name: file.name, type: file.type, size: file.size, data: reader.result, location, capturedAt: new Date().toISOString() }); reader.readAsDataURL(file); }))); update("attachments", [...form.attachments, ...items]); };
 
   return <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
     {loading && <div className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">Loading PCR report...</div>}
-    <div className="flex flex-wrap items-center justify-between gap-3 mb-5"><div><button onClick={() => navigate("/admin/pcr")} className="text-xs text-blue-400 mb-2 flex items-center gap-1"><ArrowLeft size={13}/>Patient Care Records</button><h1 className="text-xl font-bold flex items-center gap-2"><FileText className="text-blue-500"/>Create PCR Report</h1><p className="text-xs text-muted-foreground">Create and submit a new Patient Care Report.</p></div><div className="flex gap-2"><button onClick={() => store("Draft")} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center"><Save size={15}/>Save Draft</button><button onClick={downloadPdf} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center"><Download size={15}/>Download PDF</button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-3 mb-5"><div><button onClick={() => navigate("/admin/pcr")} className="text-xs text-blue-400 mb-2 flex items-center gap-1"><ArrowLeft size={13}/>Patient Care Records</button><h1 className="text-xl font-bold flex items-center gap-2"><FileText className="text-blue-500"/>Create PCR Report</h1><p className="text-xs text-muted-foreground">Create and submit a new Patient Care Report.</p></div><div className="flex gap-2"><button onClick={() => store("Draft")} disabled={Boolean(savingStatus)} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center disabled:opacity-60"><Save size={15}/>{savingStatus === "Draft" ? "Saving..." : "Save Draft"}</button><button onClick={downloadPdf} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center"><Download size={15}/>Download PDF</button></div></div>
     {linkedDispatch && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm"><div><div className="font-semibold text-blue-300">Linked Dispatch Form</div><div className="text-xs text-muted-foreground">{linkedDispatch.responseNumber || linkedDispatch.id} · {linkedDispatch.placeOfIncident || "No location entered"}</div></div><button onClick={() => { sessionStorage.setItem(DISPATCH_EDIT_KEY, linkedDispatch.id); navigate(`/admin/dispatch/new?edit=${linkedDispatch.id}`); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Open Dispatch</button></div>}
     {message && <div className={`mb-4 px-4 py-3 rounded-lg border text-sm ${chronologyError || message === PIN_REQUIRED_MESSAGE || message.startsWith("Unable") ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-green-500/10 border-green-500/30 text-green-500"}`}>{message}</div>}
     {chronologyError && <div className="mb-4 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm">{chronologyError}</div>}
     <div className="grid grid-cols-5 gap-1 mb-5">{steps.map(([name,icon],i)=><button key={name} onClick={()=>setStep(i)} className={`p-2 md:p-3 rounded-lg border text-center ${step===i?"bg-blue-600 border-blue-600 text-white":"bg-card border-border text-muted-foreground"}`}><span className="block w-4 h-4 mx-auto mb-1">{icon}</span><span className="text-[10px] md:text-xs font-semibold">{name}</span></button>)}</div>
     <div className="space-y-4">
       {step === 0 && <>
-        <Section title="Response and Unit Details"><div className="grid md:grid-cols-3 gap-3"><Field label="Response No."><input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly/></Field><Field label="Responding Team"><input className={input} value={form.respondingTeam} onChange={e=>update("respondingTeam",e.target.value)}/></Field><Field label="Vehicle"><input className={input} value={form.vehicle} onChange={e=>update("vehicle",e.target.value)}/></Field><Field label="Driver"><input className={input} value={form.driver} onChange={e=>update("driver",e.target.value)}/></Field><Field label="Main Aider"><input className={input} value={form.mainAider} onChange={e=>update("mainAider",e.target.value)}/></Field><Field label="Assistant Aider"><input className={input} value={form.assistantAider} onChange={e=>update("assistantAider",e.target.value)}/></Field></div></Section>
-        <Section title="Patient Information"><div className="grid md:grid-cols-4 gap-3"><Field label="Patient Name" wide><input className={input} value={form.patientName} onChange={e=>update("patientName",e.target.value)}/></Field><Field label="Age"><input type="number" className={input} value={form.age} onChange={e=>update("age",e.target.value)}/></Field><Field label="Birthday"><input type="date" className={input} value={form.birthday} onChange={e=>update("birthday",e.target.value)}/></Field><Field label="Gender"><select className={input} value={form.gender} onChange={e=>update("gender",e.target.value)}><option value="">Select</option>{["Male","Female","Other"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Civil Status"><select className={input} value={form.civilStatus} onChange={e=>update("civilStatus",e.target.value)}><option value="">Select</option>{["Single","Married","Widowed","Separated"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Address" wide><input className={input} value={form.address} onChange={e=>update("address",e.target.value)}/></Field><Field label="Contact Person"><input className={input} value={form.contactPerson} onChange={e=>update("contactPerson",e.target.value)}/></Field><Field label="Contact Number"><input className={input} value={form.contactNumber} onChange={e=>update("contactNumber",e.target.value)}/></Field></div></Section>
-        <Section title="Nature and Initial Incident Details"><div className="mb-3"><RadioButtons options={["Emergency","Conduction"]} value={form.natureOfCall} onChange={v=>update("natureOfCall",v)}/></div><div className="grid md:grid-cols-4 gap-3"><Field label="Date of Incident"><input type="date" className={input} value={form.timeline?.dateOfIncident || form.dateOfIncident} onChange={e=>updateTimeline("dateOfIncident",e.target.value)}/></Field><Field label="Time of Incident"><input type="time" className={input} value={form.timeline?.timeOfIncident || form.timeOfIncident} onChange={e=>updateTimeline("timeOfIncident",e.target.value)}/></Field><Field label="Place of Incident"><input className={input} value={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={e=>setForm(f=>synchronizePCR({...f,placeOfIncident:e.target.value,locationText:e.target.value,timeline:{...(f.timeline||{}),placeOfIncident:e.target.value}}))}/></Field><Field label="Barangay"><input className={input} value={form.barangay || ""} onChange={e=>update("barangay",e.target.value)}/></Field><Field label="Dispatch Time"><input type="time" className={input} value={form.timeline?.dispatchTime || form.dispatchTime} onChange={e=>updateTimeline("dispatchTime",e.target.value)}/></Field><div className="md:col-span-4"><IncidentLocationPicker value={form} locationText={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={updateIncidentLocation}/></div></div></Section>
+        <Section title="Response and Unit Details"><div className="grid md:grid-cols-3 gap-3"><Field label="Response No."><input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly/></Field><Field label="Responding Team"><input className={input} value={form.respondingTeam} onChange={e=>update("respondingTeam",e.target.value)}/></Field><Field label="Vehicle"><input className={input} value={form.vehicle} onChange={e=>update("vehicle",e.target.value)}/></Field><Field label="Driver"><input className={input} value={form.driver} onChange={e=>update("driver",e.target.value)}/></Field><Field label="Main Aider"><input className={input} value={form.mainAider} onChange={e=>update("mainAider",e.target.value)}/></Field><Field label="Group Leader"><input className={input} value={form.groupLeader} onChange={e=>update("groupLeader",e.target.value)}/></Field><Field label="Assistant Aider"><input className={input} value={form.assistantAider} onChange={e=>update("assistantAider",e.target.value)}/></Field></div></Section>
+        <Section title="Patient Information"><div className="grid md:grid-cols-4 gap-3"><Field label="Patient Name" wide><input className={input} value={form.patientName} onChange={e=>update("patientName",e.target.value)}/></Field><Field label="Age"><input type="number" className={input} value={form.age} onChange={e=>updateAge(e.target.value)}/></Field><BirthdayInput form={form} update={update}/><Field label="Gender"><select className={input} value={form.gender} onChange={e=>update("gender",e.target.value)}><option value="">Select</option>{["Unknown","Male","Female","Other"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Civil Status"><select className={input} value={form.civilStatus} onChange={e=>update("civilStatus",e.target.value)}><option value="">Select</option>{["Unknown","Single","Married","Widowed","Separated"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Address" wide><input className={input} value={form.address} onChange={e=>update("address",e.target.value)}/></Field><Field label="Contact Person"><input className={input} value={form.contactPerson} onChange={e=>update("contactPerson",e.target.value)}/></Field><Field label="Contact Number"><input className={input} value={form.contactNumber} onChange={e=>update("contactNumber",e.target.value)}/></Field></div></Section>
+        <Section title="Nature and Initial Incident Details"><div className="mb-3"><RadioButtons options={["Emergency","Conduction"]} value={form.natureOfCall} onChange={v=>update("natureOfCall",v)}/></div><div className="grid md:grid-cols-4 gap-3"><Field label="Date of Incident"><input type="date" className={input} value={form.timeline?.dateOfIncident || form.dateOfIncident} onChange={e=>updateTimeline("dateOfIncident",e.target.value)}/></Field><Field label="Time of Incident"><input type="time" className={input} value={form.timeline?.timeOfIncident || form.timeOfIncident} onChange={e=>updateTimeline("timeOfIncident",e.target.value)}/></Field><Field label="Place of Incident"><input className={input} value={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={e=>setForm(f=>synchronizePCR({...f,placeOfIncident:e.target.value,locationText:e.target.value,timeline:{...(f.timeline||{}),placeOfIncident:e.target.value}}))}/></Field><Field label="Barangay"><input className={input} value={form.barangay || ""} onChange={e=>update("barangay",e.target.value)}/></Field><Field label="Dispatch Time"><input type="time" className={input} value={form.timeline?.dispatchTime || form.dispatchTime} readOnly/></Field><div className="md:col-span-4"><IncidentLocationPicker value={form} locationText={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={updateIncidentLocation}/></div></div></Section>
       </>}
       {step === 1 && <>
         <Section title="Scene Timeline"><div className="grid md:grid-cols-2 gap-3"><Field label="Arrival at Scene"><input type="time" className={`${input} ${chronologyError ? "border-red-500/50" : ""}`} value={form.timeline?.arrivalScene || form.arrivalScene} onChange={e=>updateTimeline("arrivalScene",e.target.value)}/></Field><Field label="Departure at Scene"><input type="time" className={`${input} ${chronologyError ? "border-red-500/50" : ""}`} value={form.timeline?.departureScene || form.departureScene} onChange={e=>updateTimeline("departureScene",e.target.value)}/></Field></div><div className="mt-3 rounded-lg bg-secondary p-2 text-xs text-muted-foreground">Scene to hospital travel: <b>{hospitalTravel || "Pending"}</b></div></Section>
@@ -266,7 +473,7 @@ export default function PCRModule() {
           </div>
         </Section>
         <Section title="Chief Complaint, Vital Signs and Body Map"><Field label="Chief Complaint / Initial Assessment"><textarea rows="3" className={input} value={form.chiefComplaint} onChange={e=>update("chiefComplaint",e.target.value)}/></Field><div className="grid lg:grid-cols-[1.35fr_.65fr] gap-4 mt-4"><div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr>{["Time","Blood Pressure","Pulse Rate","Respiratory Rate","Temperature °C","Oxygen Saturation %",""] .map(x=><th className="border border-border p-2" key={x}>{x}</th>)}</tr></thead><tbody>{form.vitals.map(v=><tr key={v.id}>{["time","bp","pulse","respiratory","temperature","oxygen"].map(k=><td className="border border-border p-1" key={k}><input type={k==="time"?"time":"text"} className={`${input} min-w-24`} value={v[k]} onChange={e=>setVital(v.id,k,e.target.value)}/></td>)}<td className="border border-border p-1"><button onClick={()=>form.vitals.length>1&&update("vitals",form.vitals.filter(x=>x.id!==v.id))} className="text-red-500"><Trash2 size={15}/></button></td></tr>)}</tbody></table><button onClick={()=>update("vitals",[...form.vitals,newVital()])} className="mt-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs flex gap-1 items-center"><Plus size={14}/>Add vital-sign time row</button></div><button type="button" onClick={()=>setBodyOpen(true)} className="border-2 border-dashed border-blue-400 rounded-xl bg-white overflow-hidden hover:ring-4 ring-blue-500/20"><AnatomyFigure marks={form.bodyMap.marks} className="w-full"/><span className="block text-xs text-blue-600 font-semibold pb-2">Click to open body mapping editor</span></button></div></Section>
-        <Section title="Glasgow Coma Scale"><div className="grid md:grid-cols-4 gap-3">{Object.entries(GCS_OPTIONS).map(([key,options])=><Field key={key} label={`${key.toUpperCase()} Response`}><select className={input} value={form.gcs[key]} onChange={e=>nested("gcs",key,e.target.value)}><option value="">Select</option>{options.map(([name,score])=><option key={score} value={score}>{name} - {score}</option>)}</select></Field>)}<div className="rounded-xl bg-blue-600 text-white p-4 text-center"><div className="text-xs">TOTAL GCS</div><div className="text-3xl font-bold">{gcsTotal || "-"}</div></div></div></Section>
+        <Section title="Glasgow Coma Scale"><div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr>{["Time","Eye Response","Verbal Response","Motor Response","Total",""].map(x=><th className="border border-border p-2" key={x}>{x}</th>)}</tr></thead><tbody>{gcsRows.map(row => { const rowTotal = Number(row.eye || 0) + Number(row.verbal || 0) + Number(row.motor || 0); return <tr key={row.id}>{["time","eye","verbal","motor"].map(key => <td className="border border-border p-1" key={key}>{key === "time" ? <input type="time" className={`${input} min-w-24`} value={row.time || ""} onChange={e=>setGcsRow(row.id,key,e.target.value)}/> : <select className={`${input} min-w-44`} value={row[key] || ""} onChange={e=>setGcsRow(row.id,key,e.target.value)}><option value="">Select</option>{GCS_OPTIONS[key].map(([name,score])=><option key={score} value={score}>{name} - {score}</option>)}</select>}</td>)}<td className="border border-border p-2 text-center font-black text-blue-500">{rowTotal || "-"}</td><td className="border border-border p-1"><button onClick={()=>gcsRows.length>1&&update("gcsRows",gcsRows.filter(item=>item.id!==row.id))} className="text-red-500 disabled:opacity-30" disabled={gcsRows.length<=1}><Trash2 size={15}/></button></td></tr>; })}</tbody></table><button onClick={()=>update("gcsRows",[...gcsRows,newGcsRow()])} className="mt-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs flex gap-1 items-center"><Plus size={14}/>Add GCS time row</button></div></Section>
       </>}
       {step === 2 && <>
         <Section title="Airway, Breathing and Circulation"><div className="space-y-4"><div><span className="text-xs font-semibold">Suspected spinal injury</span><RadioButtons options={["Yes","No"]} value={form.suspectedSpinal} onChange={v=>update("suspectedSpinal",v)}/></div><div className="grid md:grid-cols-2 gap-4"><div><span className="text-xs font-semibold">Airway</span><CheckGroup options={["Open Airway","Closed Airway","NT/OPA","Jaw Thrust","Suction","Finger Sweep","Abdominal Thrust"]} value={form.airway} onChange={v=>update("airway",v)} columns={2}/></div><div><span className="text-xs font-semibold">Breathing</span><CheckGroup options={["Positive","Negative","O2 Not Required","O2 Given","Nasal Cannula","Simple Mask","Non-Rebreather Mask","Others"]} value={form.breathing} onChange={v=>update("breathing",v)} columns={2}/><div className="grid grid-cols-2 gap-2 mt-2"><input className={input} placeholder="O2 LPM" value={form.oxygenLpm} onChange={e=>update("oxygenLpm",e.target.value)}/><input className={input} placeholder="O2 delivery / other" value={form.oxygenVia} onChange={e=>update("oxygenVia",e.target.value)}/></div></div></div><div className="grid md:grid-cols-2 gap-4"><div><span className="text-xs font-semibold">Pulse / Circulation</span><CheckGroup options={["Positive","Negative","Strong","Weak"]} value={form.pulseFindings} onChange={v=>update("pulseFindings",v)} columns={2}/></div><div className="grid grid-cols-3 gap-2"><Field label="Bleeding"><select className={input} value={form.bleeding} onChange={e=>update("bleeding",e.target.value)}><option/><option>Mild</option><option>Severe</option><option>None</option></select></Field><Field label="Location"><input className={input} value={form.bleedingLocation} onChange={e=>update("bleedingLocation",e.target.value)}/></Field><Field label="Controlled"><select className={input} value={form.bleedingControlled} onChange={e=>update("bleedingControlled",e.target.value)}><option/><option>Yes</option><option>No</option></select></Field></div></div><div className="grid md:grid-cols-3 gap-3"><div><span className="text-xs font-semibold">Capillary Refill</span><RadioButtons options={["Less than 2 seconds","More than 2 seconds"]} value={form.capillary} onChange={v=>update("capillary",v)}/></div><div><span className="text-xs font-semibold">Pupils</span><CheckGroup options={["Equal","Dilated","Constricted","No Reaction"]} value={form.pupils} onChange={v=>update("pupils",v)} columns={2}/></div><div><span className="text-xs font-semibold">Skin</span><CheckGroup options={["Warm","Cold","Dry","Moist","Pale","Flushed","Jaundiced"]} value={form.skin} onChange={v=>update("skin",v)} columns={2}/></div></div></div></Section>
@@ -280,7 +487,7 @@ export default function PCRModule() {
         <Section title="Waiver / Refusal of Treatment or Transport"><label className="flex gap-3 items-start p-3 border border-border rounded-lg"><input type="checkbox" checked={form.waiverAccepted} onChange={e=>update("waiverAccepted",e.target.checked)} className="mt-1 accent-blue-600"/><span className="text-xs leading-relaxed">The patient/victim acknowledges that refusal of treatment or transport may result in death or imperil health, assumes the risks and consequences, and releases the emergency services crew from liability arising from the refusal.</span></label><Field label="Reason for refusal"><textarea className={`${input} mt-3`} rows="2" value={form.waiverReason} onChange={e=>update("waiverReason",e.target.value)}/></Field><div className="grid md:grid-cols-3 gap-4 mt-4">{[["Patient","patient"],["Witness 1","witness1"],["Witness 2","witness2"]].map(([l,k])=><div key={k}><SignaturePad label={`${l} Signature`} value={form.signatures[k]} onChange={v=>signature(k,v)}/><input className={`${input} mt-2`} placeholder="Printed name" value={form.signatureNames[k]} onChange={e=>signatureName(k,e.target.value)}/><input type="datetime-local" className={`${input} mt-2`} value={form.signatureDates[k]} onChange={e=>signatureDate(k,e.target.value)}/></div>)}</div></Section>
         <Section title="Digital Documentation"><div className="grid md:grid-cols-2 gap-4"><div><SignaturePad label="Report Annotation (stylus / touch)" value={form.annotation} onChange={v=>update("annotation",v)}/></div><div><label className="h-36 border-2 border-dashed border-blue-400 rounded-xl flex flex-col items-center justify-center cursor-pointer bg-blue-500/5"><Camera className="text-blue-500 mb-2"/><span className="text-sm font-semibold">Upload geotagged photos or documents</span><span className="text-xs text-muted-foreground">Location is requested at upload time</span><input type="file" multiple accept="image/*,.pdf" onChange={upload} className="hidden"/></label><div className="mt-2 space-y-1">{form.attachments.map(a=><div key={a.id} className="text-xs flex justify-between border border-border rounded p-2"><span>{a.name}</span><span className="text-muted-foreground flex gap-1 items-center"><MapPin size={11}/>{a.location?`${a.location.lat.toFixed(5)}, ${a.location.lng.toFixed(5)}`:"No location"}</span></div>)}</div></div></div><Field label="Additional Notes"><textarea className={`${input} mt-3`} rows="3" value={form.notes} onChange={e=>update("notes",e.target.value)}/></Field><div className="grid md:grid-cols-3 gap-3 mt-3"><Field label="Back to Base"><input type="time" className={`${input} ${chronologyError ? "border-red-500/50" : ""}`} value={form.timeline?.backToBase || form.backToBase} onChange={e=>updateTimeline("backToBase",e.target.value)}/></Field><div className="md:col-span-2 rounded-lg bg-secondary p-2 text-xs text-muted-foreground self-end">Hospital to base travel: <b>{returnTravel || "Pending"}</b></div></div></Section>
       </>}
-      {step === 4 && <Section title="Review and Submit"><div className="grid md:grid-cols-3 gap-3 mb-4">{[["Response",form.responseNumber],["Patient",form.patientName],["Incident",`${form.dateOfIncident} ${form.timeOfIncident}`],["Triage",form.triage],["GCS",gcsTotal||"Not scored"],["Hospital",form.hospitalName||"Not specified"]].map(([l,v])=><div className="p-3 bg-secondary rounded-lg" key={l}><div className="text-[10px] uppercase text-muted-foreground">{l}</div><div className="font-semibold text-sm">{v||"Not entered"}</div></div>)}</div><div className="mb-4"><h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Complete Incident Timeline</h4><TimelineSummary timeline={form.timeline || form}/></div><button type="button" onClick={()=>setReviewOpen(true)} className="w-full group relative border border-border bg-white overflow-hidden rounded-xl max-h-[650px] cursor-zoom-in text-left" aria-label="Open detailed PCR report review"><div className="sticky top-3 z-10 flex justify-end px-3 pointer-events-none"><span className="flex items-center gap-2 rounded-lg bg-blue-600 text-white px-3 py-2 text-xs font-semibold shadow-lg group-hover:bg-blue-500"><Maximize2 size={15}/>Open detailed review</span></div><div className="origin-top scale-[.72] md:scale-90 -mt-8"><PrintablePCR record={form}/></div></button><p className="text-xs text-muted-foreground mt-2 text-center">Click the report preview to open it, zoom in, and review all details.</p><div className="flex flex-wrap justify-end gap-2 mt-4"><button onClick={()=>store("Draft")} className="px-4 py-2 bg-secondary rounded-lg flex gap-2 text-sm"><Save size={15}/>Save Draft</button><button onClick={downloadPdf} className="px-4 py-2 bg-blue-600 text-white rounded-lg flex gap-2 text-sm"><Download size={15}/>Download PDF</button><button onClick={()=>store("Submitted")} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm"><CheckCircle2 size={15}/>Submit PCR</button></div></Section>}
+      {step === 4 && <Section title="Review and Submit"><div className="grid md:grid-cols-3 gap-3 mb-4">{[["Response",form.responseNumber],["Patient",form.patientName],["Incident",`${form.dateOfIncident} ${form.timeOfIncident}`],["Triage",form.triage],["GCS",gcsTotal||"Not scored"],["Hospital",form.hospitalName||"Not specified"]].map(([l,v])=><div className="p-3 bg-secondary rounded-lg" key={l}><div className="text-[10px] uppercase text-muted-foreground">{l}</div><div className="font-semibold text-sm">{v||"Not entered"}</div></div>)}</div><div className="mb-4"><h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Complete Incident Timeline</h4><TimelineSummary timeline={form.timeline || form}/></div><button type="button" onClick={()=>setReviewOpen(true)} className="w-full group relative border border-border bg-white overflow-hidden rounded-xl max-h-[650px] cursor-zoom-in text-left" aria-label="Open detailed PCR report review"><div className="sticky top-3 z-10 flex justify-end px-3 pointer-events-none"><span className="flex items-center gap-2 rounded-lg bg-blue-600 text-white px-3 py-2 text-xs font-semibold shadow-lg group-hover:bg-blue-500"><Maximize2 size={15}/>Open detailed review</span></div><div className="origin-top scale-[.72] md:scale-90 -mt-8"><PrintablePCR record={form}/></div></button><p className="text-xs text-muted-foreground mt-2 text-center">Click the report preview to open it, zoom in, and review all details.</p><div className="flex flex-wrap justify-end gap-2 mt-4"><button onClick={()=>store("Draft")} disabled={Boolean(savingStatus)} className="px-4 py-2 bg-secondary rounded-lg flex gap-2 text-sm disabled:opacity-60"><Save size={15}/>{savingStatus === "Draft" ? "Saving..." : "Save Draft"}</button><button onClick={downloadPdf} className="px-4 py-2 bg-blue-600 text-white rounded-lg flex gap-2 text-sm"><Download size={15}/>Download PDF</button><button onClick={()=>store("Submitted")} disabled={Boolean(savingStatus)} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm disabled:opacity-60"><CheckCircle2 size={15}/>{savingStatus === "Submitted" ? "Submitting..." : "Submit PCR"}</button></div></Section>}
     </div>
     <div className="flex justify-between mt-5"><button disabled={step===0} onClick={()=>setStep(s=>s-1)} className="px-4 py-2 bg-secondary rounded-lg disabled:opacity-40 flex gap-2 items-center"><ArrowLeft size={15}/>Previous</button><button disabled={step===steps.length-1} onClick={()=>setStep(s=>s+1)} className="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:opacity-40 flex gap-2 items-center">Next<ArrowRight size={15}/></button></div>
     {bodyOpen&&<AnatomyEditor value={form.bodyMap} onClose={()=>setBodyOpen(false)} onSave={value=>{update("bodyMap",value);setBodyOpen(false);}}/>}{reviewOpen&&<DetailedPCRReview record={form} onClose={()=>setReviewOpen(false)}/>}<PrintablePCR record={form} printOnly/>

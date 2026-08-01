@@ -8,13 +8,30 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cancelScraperJob, getScraperJobState, subscribeScraperJob } from '../services/scraperJobService';
+import ConnectionIndicator from './ConnectionIndicator';
+import PwaStatusPrompts from './PwaStatusPrompts';
+
+function HeaderClock() {
+  const [currentTime, setCurrentTime] = useState(new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <div className="hidden md:block text-right">
+      <div className="text-sm font-mono text-foreground font-semibold">{currentTime.toLocaleTimeString('en-PH', { hour12: false })}</div>
+      <div className="text-[10px] text-muted-foreground">{currentTime.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+    </div>
+  );
+}
 
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const location = useLocation();
   const navigate = useNavigate();
@@ -24,11 +41,6 @@ export default function Layout() {
   const navItems = getAuthorizedNavigation(user.role);
   const currentPage = getCurrentPage(location.pathname);
   const showGlobalScraperJob = scraperJob.running && !location.pathname.startsWith('/admin/map');
-
-  useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(interval);
-  }, []);
 
   useEffect(() => subscribeScraperJob(setScraperJob), []);
 
@@ -98,10 +110,10 @@ export default function Layout() {
             <h1 className="text-sm font-semibold text-foreground truncate">{currentPage?.label ?? (location.pathname.includes('access-denied') ? 'Access Denied' : 'Command Center')}</h1>
             <div className="text-[10px] text-muted-foreground truncate">Command Center / {currentPage?.group ? `${currentPage.group} / ` : ''}{currentPage?.label ?? 'Restricted Page'}</div>
           </div>
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-green-500/10 border border-green-500/30 rounded-lg"><div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" /><span className="text-xs text-green-400 font-medium">SYSTEM ONLINE</span></div>
+          <ConnectionIndicator />
           <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-red-600/10 border border-red-500/30 rounded-lg"><Radio className="w-3 h-3 text-red-400" /><span className="text-xs text-red-400 font-medium">8 ACTIVE INCIDENTS</span></div>
           <div className="flex-1" />
-          <div className="hidden md:block text-right"><div className="text-sm font-mono text-foreground font-semibold">{currentTime.toLocaleTimeString('en-PH', { hour12: false })}</div><div className="text-[10px] text-muted-foreground">{currentTime.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</div></div>
+          <HeaderClock />
           <button onClick={toggleDarkMode} className="w-9 h-9 grid place-items-center rounded-lg text-muted-foreground hover:bg-secondary" title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}>{isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
 
           <div className="relative">
@@ -165,6 +177,7 @@ export default function Layout() {
           </div>
         )}
       </div>
+      <PwaStatusPrompts />
     </div>
   );
 }

@@ -1,14 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Bell, Map, Brain, User, Save, Shield, Volume2,
   Mail, Phone, Globe, Sliders, Radio, AlertTriangle
 } from 'lucide-react';
+import { checkLocalHealth } from '../network/health-checks';
+import { getLocalServerConfig, resetLocalServerConfig, saveLocalServerConfig } from '../services/device-service';
 
 const tabs = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'map', label: 'Map Config', icon: Map },
   { id: 'ai', label: 'AI Prediction', icon: Brain },
   { id: 'preferences', label: 'User Preferences', icon: User },
+  { id: 'local-server', label: 'Local Server', icon: Radio },
 ];
 
 function Toggle({ checked, onChange }) {
@@ -31,17 +34,18 @@ function Toggle({ checked, onChange }) {
 }
 
 function SettingRow({
-  icon: Icon,
+  icon,
   label,
   desc,
   checked,
   onChange,
 }) {
+  const IconComponent = icon;
   return (
     <div className="flex items-center justify-between py-3.5 border-b border-border/50 last:border-0">
       <div className="flex items-start gap-3">
         <div className="w-8 h-8 bg-secondary rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-          <Icon className="w-4 h-4 text-muted-foreground" />
+          <IconComponent className="w-4 h-4 text-muted-foreground" />
         </div>
         <div>
           <div className="text-sm font-medium text-foreground">{label}</div>
@@ -59,6 +63,8 @@ const labelClass = 'block text-xs font-medium text-muted-foreground mb-1.5';
 export default function SystemSettings() {
   const [activeTab, setActiveTab] = useState('notifications');
   const [saved, setSaved] = useState(false);
+  const [localServer, setLocalServer] = useState({ protocol: 'http', host: '192.168.1.10', port: '4000', timeoutMs: 2500, discoveryEnabled: false, lastSuccessfulConnection: null });
+  const [localTest, setLocalTest] = useState('');
   const [settings, setSettings] = useState({
     // Notifications
     criticalAlerts: true,
@@ -92,10 +98,34 @@ export default function SystemSettings() {
   });
 
   const update = (key, val) => setSettings(s => ({ ...s, [key]: val }));
+  const updateLocal = (key, val) => setLocalServer(s => ({ ...s, [key]: val }));
+
+  useEffect(() => {
+    getLocalServerConfig().then(setLocalServer).catch(() => undefined);
+  }, []);
 
   const handleSave = () => {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const saveLocal = async () => {
+    const next = await saveLocalServerConfig(localServer);
+    setLocalServer(next);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  const testLocal = async () => {
+    setLocalTest('Testing connection...');
+    const ok = await checkLocalHealth(localServer);
+    if (ok) {
+      const next = await saveLocalServerConfig({ ...localServer, lastSuccessfulConnection: new Date().toISOString() });
+      setLocalServer(next);
+      setLocalTest('Local ALERT-CIA server connected.');
+    } else {
+      setLocalTest('Local ALERT-CIA server is unreachable.');
+    }
   };
 
   return (
@@ -110,18 +140,20 @@ export default function SystemSettings() {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-secondary/50 border border-border rounded-xl p-1 mb-6">
-        {tabs.map(({ id, label, icon: Icon }) => (
+        {tabs.map(tab => {
+          const IconComponent = tab.icon;
+          return (
           <button
-            key={id}
-            onClick={() => setActiveTab(id)}
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
             className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-medium transition-all ${
-              activeTab === id ? 'bg-blue-600 text-white shadow' : 'text-muted-foreground hover:text-foreground'
+              activeTab === tab.id ? 'bg-blue-600 text-white shadow' : 'text-muted-foreground hover:text-foreground'
             }`}
           >
-            <Icon className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{label}</span>
+            <IconComponent className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">{tab.label}</span>
           </button>
-        ))}
+        )})}
       </div>
 
       {/* Tab Content */}
@@ -267,6 +299,51 @@ export default function SystemSettings() {
                 <select className={inputClass}>
                   <option>Asia/Manila (PHT, UTC+8)</option>
                 </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'local-server' && (
+          <div>
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-foreground mb-0.5">Local ALERT-CIA Server</h3>
+              <p className="text-xs text-muted-foreground">Configure LAN fallback used when Supabase cloud is unreachable.</p>
+            </div>
+            <div className="grid gap-4">
+              <div className="grid sm:grid-cols-3 gap-3">
+                <div>
+                  <label className={labelClass}>Protocol</label>
+                  <select className={inputClass} value={localServer.protocol} onChange={e => updateLocal('protocol', e.target.value)}>
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Hostname or IP Address</label>
+                  <input className={inputClass} value={localServer.host} onChange={e => updateLocal('host', e.target.value)} placeholder="192.168.1.10 or alertcia.local" />
+                </div>
+                <div>
+                  <label className={labelClass}>Port</label>
+                  <input className={inputClass} value={localServer.port} onChange={e => updateLocal('port', e.target.value)} />
+                </div>
+              </div>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={labelClass}>Connection Timeout</label>
+                  <input type="number" min="500" step="250" className={inputClass} value={localServer.timeoutMs} onChange={e => updateLocal('timeoutMs', e.target.value)} />
+                </div>
+                <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+                  <div className="font-semibold text-foreground">Last successful connection</div>
+                  <div className="mt-1">{localServer.lastSuccessfulConnection ? new Date(localServer.lastSuccessfulConnection).toLocaleString('en-PH', { hour12: false }) : 'Never'}</div>
+                </div>
+              </div>
+              <SettingRow icon={Radio} label="Automatic Discovery" desc="Try hostname discovery, while keeping manual IP fallback available" checked={Boolean(localServer.discoveryEnabled)} onChange={v => updateLocal('discoveryEnabled', v)} />
+              {localTest && <div className={`rounded-lg border px-3 py-2 text-xs ${localTest.includes('connected') ? 'border-green-500/30 bg-green-500/10 text-green-500' : localTest.includes('Testing') ? 'border-blue-500/30 bg-blue-500/10 text-blue-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}>{localTest}</div>}
+              <div className="flex flex-wrap justify-end gap-2">
+                <button onClick={testLocal} className="rounded-xl bg-secondary px-4 py-2.5 text-sm font-semibold">Test Connection</button>
+                <button onClick={async () => setLocalServer(await resetLocalServerConfig())} className="rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground">Reset Configuration</button>
+                <button onClick={saveLocal} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">Save Configuration</button>
               </div>
             </div>
           </div>

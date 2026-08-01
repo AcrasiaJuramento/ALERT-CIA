@@ -1,12 +1,15 @@
+import { randomUuid } from "./uuid";
+
 export const PCR_EDIT_KEY = "alert-cia-pcr-edit-id";
 
-export const newVital = () => ({ id: crypto.randomUUID(), time: "", bp: "", pulse: "", respiratory: "", temperature: "", oxygen: "" });
+export const newVital = () => ({ id: randomUuid(), time: "", bp: "", pulse: "", respiratory: "", temperature: "", oxygen: "" });
+export const newGcsRow = () => ({ id: randomUuid(), time: "", eye: "", verbal: "", motor: "" });
 
 export const createPCR = () => ({
   dispatchId: null,
-  id: crypto.randomUUID(), responseNumber: `PCR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
+  id: randomUuid(), responseNumber: `PCR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
   status: "Draft", archived: false, createdBy: null, updatedBy: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-  respondingTeam: "", vehicle: "", driver: "", mainAider: "", assistantAider: "", natureOfCall: "Emergency",
+  respondingTeam: "", vehicle: "", driver: "", mainAider: "", groupLeader: "", assistantAider: "", natureOfCall: "Emergency",
   dateOfIncident: new Date().toISOString().slice(0, 10), timeOfIncident: "", placeOfIncident: "",
   barangay: "", locationText: "", latitude: "", longitude: "", locationGeography: "", boundarySource: "",
   dispatchTime: "", arrivalScene: "", departureScene: "", arrivalHospital: "", departureHospital: "", backToBase: "",
@@ -20,7 +23,7 @@ export const createPCR = () => ({
   incidentNature: "", ingestionItem: "", ingestionQuantity: "", fallDetails: "",
   obstetric: { lmp: "", g: "", p: "", edc: "", bow: "", aog: "", baby: "", ie: "", placenta: "" },
   crash: { selfAccident: false, collision: false, vehicle: "", role: "", plate: "", alcohol: "", helmet: "", license: "" },
-  chiefComplaint: "", vitals: [newVital()], gcs: { eye: "", verbal: "", motor: "" },
+  chiefComplaint: "", vitals: [newVital()], gcs: { time: "", eye: "", verbal: "", motor: "" }, gcsRows: [newGcsRow()],
   bodyMap: { image: "", marks: [] }, suspectedSpinal: "", airway: [], breathing: [], oxygenLpm: "", oxygenVia: "",
   pulseFindings: [], bleeding: "", bleedingLocation: "", bleedingControlled: "", capillary: "", pupils: [], skin: [],
   painPositive: "", painScore: "", painOnset: "", painQuality: [], painOther: "",
@@ -54,6 +57,7 @@ export function synchronizePCR(record) {
     signatureNames: { ...template.signatureNames, ...(record.signatureNames || {}) },
     signatureDates: { ...template.signatureDates, ...(record.signatureDates || {}) },
     vitals: record.vitals?.length ? record.vitals : template.vitals,
+    gcsRows: record.gcsRows?.length ? record.gcsRows : record.gcs && Object.values(record.gcs).some(Boolean) ? [{ id: randomUuid(), ...template.gcs, ...record.gcs }] : template.gcsRows,
     emergencyTypes: record.emergencyTypes || template.emergencyTypes,
     traumaTypes: record.traumaTypes || template.traumaTypes,
     airway: record.airway || template.airway,
@@ -72,6 +76,7 @@ export function synchronizePCR(record) {
     next.timeline[key] = next.timeline[key] || next[key] || "";
     next[key] = next.timeline[key] ?? next[key] ?? "";
   });
+  next.gcs = next.gcsRows?.[0] ? { ...template.gcs, ...next.gcsRows[0] } : next.gcs;
   next.timeline.endorsementTime = next.timeline.endorsementTime || next.endorsementTime || next.hospitalTime || next.arrivalHospital || "";
   if (next.arrivalHospital) {
     next.hospitalTime = next.arrivalHospital;
@@ -104,6 +109,12 @@ export function travelDuration(start, end) {
   const [endHour, endMinute] = end.split(":").map(Number);
   const minutes = (endHour * 60 + endMinute) - (startHour * 60 + startMinute);
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function latestGcsTotal(record = {}) {
+  const rows = record.gcsRows?.length ? record.gcsRows : record.gcs ? [record.gcs] : [];
+  const current = [...rows].reverse().find(row => row?.eye || row?.verbal || row?.motor) || rows[rows.length - 1] || {};
+  return Number(current.eye || 0) + Number(current.verbal || 0) + Number(current.motor || 0);
 }
 
 export async function exportPCRToPdf(record) {
@@ -151,7 +162,7 @@ export async function exportPCRToDocx(record) {
     ["Report", [["Response Number", record.responseNumber], ["Status", record.status], ["Created By", record.createdBy], ["Incident Date", `${record.dateOfIncident} ${record.timeOfIncident}`]]],
     ["Patient", [["Name", record.patientName], ["Age / Gender", `${record.age} / ${record.gender}`], ["Address", record.address], ["Contact", record.contactNumber]]],
     ["Response Timeline", [["Dispatch", record.dispatchTime], ["Arrival Scene", record.arrivalScene], ["Departure Scene", record.departureScene], ["Arrival Hospital", record.arrivalHospital], ["Departure Hospital", record.departureHospital], ["Back to Base", record.backToBase]]],
-    ["Clinical Assessment", [["Triage", record.triage], ["Chief Complaint", record.chiefComplaint], ["GCS", Object.values(record.gcs || {}).reduce((sum, score) => sum + Number(score || 0), 0)], ["Interventions", Object.entries(record.interventions || {}).filter(([, value]) => value === "Yes").map(([name]) => name).join(", ")]]],
+    ["Clinical Assessment", [["Triage", record.triage], ["Chief Complaint", record.chiefComplaint], ["GCS", latestGcsTotal(record)], ["Interventions", Object.entries(record.interventions || {}).filter(([, value]) => value === "Yes").map(([name]) => name).join(", ")]]],
     ["Hospital Handover", [["Facility", record.hospitalName], ["Endorsed To", record.endorsedTo], ["Receiver", `${record.receiverName} - ${record.receiverPosition}`], ["Receiver Contact", record.receiverContact], ["Transfer Reason", record.transferReason]]],
   ];
   const children = [

@@ -14,6 +14,7 @@ import {
   summarizeBy,
 } from '../../data/analyticsModule';
 import { CACHE_TTL, getCache, setCache } from '../../utils/cache';
+import { calculateAccidentProneAreas, riskStyles } from '../../utils/accidentProneAreas';
 
 const rangeLabels = {
   today: 'Today',
@@ -30,15 +31,6 @@ const priorityColors = {
   Low: '#22c55e',
 };
 
-const heatColor = (count, max) => {
-  if (!count) return '#86efac';
-  const ratio = count / Math.max(max, 1);
-  if (ratio >= 0.8) return '#b91c1c';
-  if (ratio >= 0.55) return '#ef4444';
-  if (ratio >= 0.3) return '#fb923c';
-  return '#f7e58f';
-};
-
 const priorityRank = {
   Critical: 4,
   High: 3,
@@ -46,21 +38,34 @@ const priorityRank = {
   Low: 1,
 };
 
-const riskCategory = (count, max) => {
-  if (!count) return 'No recorded incidents';
-  const ratio = count / Math.max(max, 1);
-  if (ratio >= 0.8) return 'Critical risk';
-  if (ratio >= 0.55) return 'High risk';
-  if (ratio >= 0.3) return 'Moderate risk';
-  return 'Low risk';
+const riskOrder = {
+  Critical: 4,
+  High: 3,
+  Moderate: 2,
+  Low: 1,
+  Minimal: 0,
+};
+
+const riskFillColors = {
+  Minimal: '#bbf7d0',
+  Low: riskStyles.Low.color,
+  Moderate: riskStyles.Moderate.color,
+  High: riskStyles.High.color,
+  Critical: riskStyles.Critical.color,
+};
+
+const riskCategory = (item = {}) => {
+  if (!item.count) return 'No recorded incidents';
+  if (item.riskLabel) return item.riskLabel;
+  return `${item.riskLevel || 'Low'} Risk`;
 };
 
 const legendItems = [
   { label: 'No incidents', color: '#86efac' },
-  { label: 'Low', color: '#f7e58f' },
-  { label: 'Medium', color: '#fb923c' },
-  { label: 'High', color: '#ef4444' },
-  { label: 'Critical', color: '#b91c1c' },
+  { label: 'Low', color: riskFillColors.Low },
+  { label: 'Moderate', color: riskFillColors.Moderate },
+  { label: 'High', color: riskFillColors.High },
+  { label: 'Critical', color: riskFillColors.Critical },
 ];
 
 const getGeoJsonBarangayName = (feature) => {
@@ -148,6 +153,15 @@ function PriorityBreakdown({ items }) {
 }
 
 function SelectedBarangayPanel({ selected, periodBreakdown, range }) {
+  const riskTone = selected?.riskLevel === 'Critical'
+    ? 'border-red-200 bg-red-50 text-red-700'
+    : selected?.riskLevel === 'High'
+      ? 'border-orange-200 bg-orange-50 text-orange-700'
+      : selected?.riskLevel === 'Moderate'
+        ? 'border-yellow-200 bg-yellow-50 text-yellow-700'
+        : selected?.riskLevel === 'Low'
+          ? 'border-green-200 bg-green-50 text-green-700'
+          : 'border-slate-200 bg-slate-50 text-slate-600';
   return (
     <div className="border-b border-border p-4">
       <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-foreground">
@@ -160,6 +174,9 @@ function SelectedBarangayPanel({ selected, periodBreakdown, range }) {
           {selected?.count
             ? `${selected.count} incidents in ${rangeLabels[range]?.toLowerCase() || 'current range'}`
             : 'Select a bubble or ranking item to inspect details.'}
+        </div>
+        <div className={`mt-3 rounded-md border px-2.5 py-2 text-xs font-semibold ${riskTone}`}>
+          {riskCategory(selected)} / Score {selected?.riskScore ?? 0}
         </div>
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -184,7 +201,7 @@ function RankingPanel({ rows, selectedName, onSelectName, initialVisible = 3 }) 
           <Layers3 className="h-4 w-4 text-blue-400" />
           <div>
             <h3 className="text-sm font-semibold text-foreground">Top 3 Highest Accident Levels</h3>
-            <p className="text-[11px] text-muted-foreground">Barangays sorted by incident count</p>
+            <p className="text-[11px] text-muted-foreground">Barangays sorted by weighted accident-prone score</p>
           </div>
         </div>
       </div>
@@ -211,15 +228,21 @@ function RankingPanel({ rows, selectedName, onSelectName, initialVisible = 3 }) 
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-medium text-foreground">{row.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{row.percent}% of visible incidents</div>
+                      <div className="text-[11px] text-muted-foreground">{row.percent}% / score {row.riskScore ?? 0}</div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-bold text-foreground">{row.count}</div>
-                      <div className="text-[10px] text-muted-foreground">incidents</div>
+                      <div className="text-sm font-bold text-foreground">{row.riskLevel || 'Low'}</div>
+                      <div className="text-[10px] text-muted-foreground">{row.count} incidents</div>
                     </div>
                   </div>
                   <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary">
-                    <div className="h-full rounded-full bg-gradient-to-r from-green-500 via-yellow-500 to-red-600" style={{ width: `${Math.max(row.percent, 4)}%` }} />
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.max(Math.min((Number(row.riskScore || 0) / 12) * 100, 100), 4)}%`,
+                        backgroundColor: riskFillColors[row.riskLevel] || riskFillColors.Minimal,
+                      }}
+                    />
                   </div>
                 </div>
               </div>
@@ -271,7 +294,6 @@ function BarangayGeoJsonMap({
   const [error, setError] = useState('');
   const layerRefs = useRef(new Map());
   const selectedNameRef = useRef(selectedName);
-  const maxCount = Math.max(...stats.map((item) => item.count), 1);
   const statsByNormalizedName = useMemo(() => Object.fromEntries(
     stats.map((item) => [normalizeBarangayName(item.name), item])
   ), [stats]);
@@ -333,33 +355,39 @@ function BarangayGeoJsonMap({
         percent: 0,
         priorities: [],
         mostCommonIncidentType: 'No incidents',
+        riskLevel: 'Minimal',
+        riskScore: 0,
       };
   }, [statsByNormalizedName]);
 
   const getFeatureStyle = useCallback((feature) => {
     const item = getFeatureStats(feature);
     const active = normalizeBarangayName(selectedNameRef.current) === normalizeBarangayName(item.name);
-    const hasCritical = item.priorities?.some((priority) => priority.name === 'Critical' && priority.count > 0);
+    const riskLevel = item.riskLevel || (item.count ? 'Low' : 'Minimal');
+    const isHighRisk = ['High', 'Critical'].includes(riskLevel);
+    const fillColor = riskFillColors[riskLevel] || riskFillColors.Minimal;
 
     return {
-      color: layerVisibility.criticalZones && hasCritical ? '#dc2626' : active ? '#1d4ed8' : '#64748b',
-      weight: layerVisibility.criticalZones && hasCritical ? 3 : active ? 3 : 1.2,
+      color: layerVisibility.criticalZones && isHighRisk ? fillColor : active ? '#1d4ed8' : '#64748b',
+      weight: layerVisibility.criticalZones && isHighRisk ? 3 : active ? 3 : 1.2,
       opacity: 0.95,
-      fillColor: layerVisibility.heatmap ? heatColor(item.count, maxCount) : '#e2e8f0',
+      fillColor: layerVisibility.heatmap ? fillColor : '#e2e8f0',
       fillOpacity: layerVisibility.heatmap ? (item.count ? 0.76 : 0.68) : 0.2,
     };
-  }, [getFeatureStats, layerVisibility.criticalZones, layerVisibility.heatmap, maxCount]);
+  }, [getFeatureStats, layerVisibility.criticalZones, layerVisibility.heatmap]);
 
   const createPopupHtml = (item) => `
     <div class="gis-popup">
       <div class="gis-popup-title">${escapeHtml(item.name)}</div>
-      <div class="gis-popup-source">Municipality: Echague</div>
-      <div class="gis-popup-source">Province: Isabela</div>
+      <div class="gis-popup-source">Risk basis: frequency, severity, recency, source reliability</div>
       <div class="gis-popup-grid">
         <div class="gis-popup-card"><span>Total incidents</span><strong>${item.count}</strong></div>
-        <div class="gis-popup-card"><span>Risk category</span><strong>${riskCategory(item.count, maxCount)}</strong></div>
+        <div class="gis-popup-card"><span>Risk category</span><strong>${riskCategory(item)}</strong></div>
+        <div class="gis-popup-card"><span>Risk score</span><strong>${item.riskScore ?? 0}</strong></div>
+        <div class="gis-popup-card"><span>Latest incident</span><strong>${escapeHtml(item.latestIncidentDate || 'No date')}</strong></div>
       </div>
       <div class="gis-popup-most-common"><span>Most common incident type</span><strong>${escapeHtml(item.mostCommonIncidentType || 'No incidents')}</strong></div>
+      <div class="gis-popup-source">F ${item.frequencyScore ?? 0} / S ${item.severityScore ?? 0} / R ${item.recencyScore ?? 0} / Source ${item.sourceScore ?? 0}</div>
     </div>
   `;
 
@@ -540,8 +568,33 @@ export function BarangayHeatmap({
       : filterIncidentsByRange(allIncidents, range)
   ), [customRange, range, allIncidents]);
 
-  const stats = useMemo(() => getBarangayStats(visibleIncidents, ECHAGUE_BARANGAYS), [visibleIncidents]);
-  const rankedStats = useMemo(() => stats.filter((item) => item.count > 0), [stats]);
+  const weightedRiskAreas = useMemo(() => calculateAccidentProneAreas(visibleIncidents, { publicOnly: false }), [visibleIncidents]);
+  const weightedRiskByBarangay = useMemo(() => new Map(
+    weightedRiskAreas.map((area) => [normalizeBarangayName(area.barangay), area])
+  ), [weightedRiskAreas]);
+  const stats = useMemo(() => getBarangayStats(visibleIncidents, ECHAGUE_BARANGAYS).map((item) => {
+    const weightedArea = weightedRiskByBarangay.get(normalizeBarangayName(item.name));
+    return {
+      ...item,
+      mostCommonIncidentType: weightedArea?.most_common_incident_type || item.mostCommonIncidentType,
+      riskLevel: weightedArea?.risk_level || (item.count ? 'Low' : 'Minimal'),
+      riskLabel: weightedArea?.risk_label || (item.count ? 'Low Risk' : 'No recorded incidents'),
+      riskScore: weightedArea?.total_risk_score || 0,
+      frequencyScore: weightedArea?.frequency_score || 0,
+      severityScore: weightedArea?.severity_score || 0,
+      recencyScore: weightedArea?.recency_score || 0,
+      sourceScore: weightedArea?.source_reliability_score || 0,
+      latestIncidentDate: weightedArea?.latest_incident_date || null,
+      highestSeverity: weightedArea?.highest_severity || null,
+    };
+  }), [visibleIncidents, weightedRiskByBarangay]);
+  const rankedStats = useMemo(() => stats
+    .filter((item) => item.count > 0)
+    .sort((first, second) => (
+      (riskOrder[second.riskLevel] - riskOrder[first.riskLevel])
+      || Number(second.riskScore || 0) - Number(first.riskScore || 0)
+      || second.count - first.count
+    )), [stats]);
   const statsByName = useMemo(() => Object.fromEntries(stats.map((item) => [item.name, item])), [stats]);
   const prioritySummary = useMemo(() => summarizeBy(visibleIncidents, 'priority'), [visibleIncidents]);
   const selected = statsByName[selectedName] || stats.find((item) => item.count > 0) || stats[0];
