@@ -26,6 +26,7 @@ const RECEIVED_STATUSES = [
   DISPATCH_STATUSES.ACCEPTED,
   DISPATCH_STATUSES.PCR_IN_PROGRESS,
   DISPATCH_STATUSES.PCR_COMPLETED,
+  "Sent to Field Officer",
   "Sent to Responding Team Locally",
   "Submitted",
   "Submitted Locally",
@@ -73,7 +74,7 @@ function isResolvedDispatch(record = {}, pcr = null) {
 function canAcceptDispatch(record = {}, pcr = null) {
   return !pcr
     && !isResolvedDispatch(record, pcr)
-    && [DISPATCH_STATUSES.SENT, DISPATCH_STATUSES.ACCEPTED].includes(record.status);
+    && [DISPATCH_STATUSES.SENT, DISPATCH_STATUSES.ACCEPTED, "Sent to Field Officer"].includes(record.status);
 }
 
 function linkedPcrLabel(record = {}, pcr = null) {

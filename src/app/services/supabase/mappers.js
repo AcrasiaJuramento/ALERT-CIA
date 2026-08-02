@@ -15,7 +15,7 @@ const DISPATCH_STATUS_TO_DB = {
 const DISPATCH_STATUS_FROM_DB = {
   draft: "Draft",
   dispatched: "Dispatched",
-  sent_to_responding_team: "Sent to Field Officer",
+  sent_to_responding_team: "Sent to Responding Team",
   accepted_by_responding_team: "Accepted by Responding Team",
   pcr_in_progress: "PCR In Progress",
   pcr_completed: "Submitted",
