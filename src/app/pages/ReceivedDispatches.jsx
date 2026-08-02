@@ -242,11 +242,9 @@ export default function ReceivedDispatches() {
 
   const filterCounts = useMemo(() => {
     const receivedRows = records.filter(hasReceivedStatus);
-    const backToBase = receivedRows.filter(record => workflowStage(record, linkedPCRs[record.responseId]) === "Back to Base").length;
     const resolved = receivedRows.filter(record => workflowStage(record, linkedPCRs[record.responseId]) === "Resolved").length;
     return {
       active: receivedRows.filter(record => workflowStage(record, linkedPCRs[record.responseId]) === "Active").length,
-      backToBase,
       resolved,
       all: receivedRows.length,
     };
@@ -317,7 +315,6 @@ export default function ReceivedDispatches() {
           <Filter size={15} className="ml-2 text-muted-foreground" />
           {[
             ["Active", filterCounts.active],
-            ["Back to Base", filterCounts.backToBase],
             ["Resolved", filterCounts.resolved],
             ["All", filterCounts.all],
           ].map(([label, count]) => (

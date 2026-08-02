@@ -9,7 +9,7 @@ import {
   DISPATCH_STATUSES,
   generateResponseNumber,
 } from "../utils/dispatchWorkflow";
-import { getDispatchRecord, getPCRReportByResponse, listRespondingTeams } from "../services/supabase";
+import { getDispatchRecord, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import SyncStatusPanel from "../components/SyncStatusPanel";
@@ -101,8 +101,11 @@ function newDispatch() {
     responseNumber: generateResponseNumber(),
     numberOfPatients: "1",
     team: "",
+    respondingTeamId: "",
     vehicle: "",
+    vehicleId: "",
     driver: "",
+    mainAider: "",
     groupLeader: "",
     assistantAider: "",
     // Caller data
@@ -164,6 +167,32 @@ function TimelineField({ label, value, onChange, error }) {
   );
 }
 
+function FloatingTimePrompt({ label, value, onChange }) {
+  if (value) return null;
+  return (
+    <div className="sticky top-3 z-30 ml-auto w-full max-w-xs rounded-lg border border-blue-500/30 bg-card p-3 shadow-xl">
+      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-blue-400">
+        <Clock size={14} />
+        {label}
+      </div>
+      <input type="time" className={input} value={value || ""} onChange={event => onChange(event.target.value)} />
+    </div>
+  );
+}
+
+function SelectField({ label, value, options, onChange, placeholder = "Select" }) {
+  return (
+    <Field label={label}>
+      <select className={input} value={value || ""} onChange={event => onChange(event.target.value)}>
+        <option value="">{placeholder}</option>
+        {options.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
 function splitBirthdate(value = "") {
   const [year = "", month = "", day = ""] = String(value || "").split("-");
   return { year, month, day };
@@ -199,7 +228,6 @@ function PatientBirthdayField({ patient, onChange }) {
     month: patient.birthMonth || birthdateParts.month,
     day: patient.birthDay || birthdateParts.day,
   };
-  const yearHints = possibleBirthYears(patient.age);
   const updatePart = (key, value) => {
     const next = { ...parts, [key]: value };
     const birthdate = composeBirthdate(next);
@@ -388,14 +416,23 @@ export default function DispatchModule({ onBack }) {
   const [linkedPCR, setLinkedPCR] = useState(null);
   const [loading, setLoading] = useState(Boolean(editId));
   const [teamOptions, setTeamOptions] = useState([]);
+  const [vehicleOptions, setVehicleOptions] = useState([]);
+  const [crewOptions, setCrewOptions] = useState([]);
 
   useEffect(() => {
     let mounted = true;
-    listRespondingTeams()
-      .then(rows => {
-        if (mounted) setTeamOptions(rows);
+    Promise.all([
+      listRespondingTeams(),
+      listAmbulanceUnits(),
+      listCrewMembers(),
+    ])
+      .then(([teams, vehicles, crew]) => {
+        if (!mounted) return;
+        setTeamOptions(teams);
+        setVehicleOptions(vehicles);
+        setCrewOptions(crew);
       })
-      .catch(error => toast.error(error.message || "Unable to load responding teams."));
+      .catch(error => toast.error(error.message || "Unable to load form reference data."));
     return () => {
       mounted = false;
     };
@@ -432,6 +469,20 @@ export default function DispatchModule({ onBack }) {
   }, [editId]);
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
+  const updateTeam = teamId => {
+    const team = teamOptions.find(option => option.id === teamId);
+    setForm(f => ({ ...f, respondingTeamId: teamId, team: team?.name || "" }));
+  };
+  const updateVehicle = vehicleId => {
+    const vehicle = vehicleOptions.find(option => option.id === vehicleId);
+    setForm(f => ({ ...f, vehicleId, vehicle: vehicle?.call_sign || "" }));
+  };
+  const crewSelectOptions = role => crewOptions
+    .filter(member => member.role === role)
+    .filter(member => !selectedTeamId || !member.responding_team_id || member.responding_team_id === selectedTeamId)
+    .map(member => ({ value: member.name, label: member.name }));
+  const selectedTeamId = form.respondingTeamId || teamOptions.find(team => team.name === form.team)?.id || "";
+  const selectedVehicleId = form.vehicleId || vehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
   const updateIncidentLocation = location => setForm(f => ({
     ...f,
     barangay: location.barangay || f.barangay,
@@ -600,6 +651,7 @@ export default function DispatchModule({ onBack }) {
       </div>
 
       <div className="space-y-4">
+        <FloatingTimePrompt label="Dispatch Time" value={form.dispatchedTime} onChange={value => update("dispatchedTime", value)} />
 
         {/* ── Unit & Response Info ── */}
         <Section title="Response & Unit Details" icon={<Radio size={14} />}>
@@ -614,24 +666,12 @@ export default function DispatchModule({ onBack }) {
                 <option value="3">3</option>
               </select>
             </Field>
-            <Field label="Responding Team">
-              <select className={input} required value={form.team} onChange={e => update("team", e.target.value)}>
-                <option value="">Select responding team</option>
-                {teamOptions.map(team => <option key={team.id} value={team.name}>{team.name}</option>)}
-              </select>
-            </Field>
-            <Field label="Vehicle">
-              <input className={input} value={form.vehicle} onChange={e => update("vehicle", e.target.value)} />
-            </Field>
-            <Field label="Driver">
-              <input className={input} value={form.driver} onChange={e => update("driver", e.target.value)} />
-            </Field>
-            <Field label="Group Leader">
-              <input className={input} value={form.groupLeader} onChange={e => update("groupLeader", e.target.value)} />
-            </Field>
-            <Field label="Assistant Aider">
-              <input className={input} value={form.assistantAider} onChange={e => update("assistantAider", e.target.value)} />
-            </Field>
+            <SelectField label="Responding Team" value={selectedTeamId} options={teamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team" />
+            <SelectField label="Vehicle" value={selectedVehicleId} options={vehicleOptions.map(unit => ({ value: unit.id, label: `${unit.call_sign}${unit.plate_number ? ` - ${unit.plate_number}` : ""}` }))} onChange={updateVehicle} placeholder="Select available ambulance" />
+            <SelectField label="Driver" value={form.driver} options={crewSelectOptions("driver")} onChange={value => update("driver", value)} placeholder="Select driver" />
+            <SelectField label="Main Aider" value={form.mainAider} options={crewSelectOptions("main_aider")} onChange={value => update("mainAider", value)} placeholder="Select main aider" />
+            <SelectField label="Group Leader" value={form.groupLeader} options={crewSelectOptions("group_leader")} onChange={value => update("groupLeader", value)} placeholder="Select group leader" />
+            <SelectField label="Assistant Aider" value={form.assistantAider} options={crewSelectOptions("assistant_aider")} onChange={value => update("assistantAider", value)} placeholder="Select assistant aider" />
           </div>
         </Section>
 
