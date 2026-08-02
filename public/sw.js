@@ -1,4 +1,4 @@
-const CACHE_NAME = "alert-cia-shell-v2";
+const CACHE_NAME = "alert-cia-shell-v3";
 const APP_SHELL = [
   "/",
   "/admin",
@@ -32,7 +32,20 @@ self.addEventListener("fetch", event => {
   if (url.pathname.includes("/rest/v1/") || url.pathname.includes("/auth/v1/") || url.pathname.includes("/storage/v1/")) return;
 
   if (request.mode === "navigate") {
-    event.respondWith(fetch(request).catch(() => caches.match("/offline.html")));
+    event.respondWith(
+      fetch(request)
+        .then(response => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => {
+            cache.put(request, copy.clone());
+            if (url.pathname === "/" || url.pathname.startsWith("/admin")) cache.put("/admin", copy);
+          });
+          return response;
+        })
+        .catch(() => caches.match(request)
+          .then(cached => cached || caches.match(url.pathname.startsWith("/admin") ? "/admin" : "/"))
+          .then(cached => cached || caches.match("/offline.html")))
+    );
     return;
   }
 

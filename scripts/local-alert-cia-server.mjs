@@ -1,6 +1,6 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
@@ -16,6 +16,7 @@ function defaultDataDir() {
 
 const dataDir = defaultDataDir();
 const databasePath = process.env.ALERT_CIA_LOCAL_DB || join(dataDir, "alert-cia-local.db");
+const configPath = join(dataDir, "alert-cia-local-config.json");
 mkdirSync(dirname(databasePath), { recursive: true });
 
 const db = new DatabaseSync(databasePath);
@@ -133,6 +134,26 @@ function json(res, status, body) {
     "Access-Control-Allow-Headers": "Content-Type, X-ALERT-CIA-Device-ID",
   });
   res.end(JSON.stringify(body));
+}
+
+function localServerConfig() {
+  const configuredHost = process.env.ALERT_CIA_ADVERTISED_HOST || process.env.ALERT_CIA_LOCAL_ADVERTISED_HOST || "192.168.100.8";
+  if (existsSync(configPath)) {
+    try {
+      return JSON.parse(readFileSync(configPath, "utf8"));
+    } catch {
+      // Fall through and regenerate a valid config file.
+    }
+  }
+  const config = {
+    server: {
+      protocol: process.env.ALERT_CIA_LOCAL_PROTOCOL || "http",
+      host: configuredHost,
+      port,
+    },
+  };
+  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+  return config;
 }
 
 function openEventStream(req, res) {
@@ -278,6 +299,11 @@ const server = http.createServer(async (req, res) => {
         pcrReports: pcrReports.size,
         eventClients: eventClients.size,
       });
+      return;
+    }
+
+    if (req.method === "GET" && ["/alert-cia-local-config.json", "/.well-known/alert-cia-local.json"].includes(url.pathname)) {
+      json(res, 200, localServerConfig());
       return;
     }
 

@@ -10,13 +10,236 @@
       h1 { font-size: 28px; margin: 0 0 12px; }
       p { color: #cbd5e1; line-height: 1.6; }
       a { color: #60a5fa; }
+      form { display: grid; gap: 12px; margin-top: 24px; padding-top: 20px; border-top: 1px solid #334155; }
+      label { display: grid; gap: 6px; color: #cbd5e1; font-size: 13px; }
+      input, select { box-sizing: border-box; width: 100%; border: 1px solid #475569; border-radius: 8px; background: #020617; color: #f8fafc; font: inherit; padding: 10px 12px; }
+      .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      button { border: 0; border-radius: 8px; background: #2563eb; color: white; cursor: pointer; font: inherit; font-weight: 700; padding: 11px 14px; }
+      button:disabled { cursor: wait; opacity: 0.7; }
+      button:hover { background: #1d4ed8; }
+      .meta { font-size: 13px; color: #94a3b8; }
+      @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
     </style>
   </head>
   <body>
     <main>
       <h1>Offline field mode</h1>
       <p>ALERT-CIA can continue using records already saved on this device. Reopen the app when a local ALERT-CIA server or internet connection is available to synchronize pending records.</p>
-      <p><a href="/admin">Return to ALERT-CIA</a></p>
+      <p><a id="return-link" href="/admin">Return to ALERT-CIA</a></p>
+      <p id="offline-meta" class="meta"></p>
+      <form id="local-server-form">
+        <div class="grid">
+          <label>
+            Protocol
+            <select id="protocol">
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+            </select>
+          </label>
+          <label>
+            Port
+            <input id="port" inputmode="numeric" placeholder="4000" />
+          </label>
+        </div>
+        <label>
+          Local server IP or hostname
+          <input id="host" autocomplete="off" placeholder="192.168.100.8 or alertcia.local" />
+        </label>
+        <button type="submit">Save Local Server and Return</button>
+      </form>
     </main>
+    <script>
+      (function () {
+        var SETTINGS_KEY = "alert_cia_offline_settings";
+        var fallbackPath = "/admin";
+        var defaultOrigin = "http://192.168.100.8:4000";
+        var candidateOrigins = [
+          defaultOrigin,
+          "http://192.168.100.1:4000",
+          "http://192.168.1.8:4000",
+          "http://192.168.0.8:4000"
+        ];
+
+        function readSettings() {
+          try {
+            return JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+          } catch (error) {
+            return {};
+          }
+        }
+
+        function safePath(path) {
+          if (!path || path === "/offline.html" || path.indexOf("/") !== 0 || path.indexOf("//") === 0) return fallbackPath;
+          return path;
+        }
+
+        function unique(list) {
+          var seen = {};
+          return list.filter(function (item) {
+            if (!item || seen[item]) return false;
+            seen[item] = true;
+            return true;
+          });
+        }
+
+        function configFromOrigin(origin) {
+          var url = new URL(origin);
+          return {
+            protocol: url.protocol.replace(":", "") || "http",
+            host: url.hostname,
+            port: url.port || "4000",
+            timeoutMs: 2500,
+            discoveryEnabled: false,
+            lastSuccessfulConnection: new Date().toISOString()
+          };
+        }
+
+        function saveServer(origin, advertised) {
+          var config = advertised || configFromOrigin(origin);
+          var savedOrigin = config.protocol + "://" + config.host + (config.port ? ":" + config.port : "");
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+            version: 1,
+            updatedAt: new Date().toISOString(),
+            appOrigin: location.origin,
+            returnPath: returnPath,
+            localServerConfig: config,
+            localServerOrigin: savedOrigin
+          }));
+          return savedOrigin;
+        }
+
+        function fetchWithTimeout(url, timeoutMs) {
+          var controller = new AbortController();
+          var timeout = setTimeout(function () { controller.abort(); }, timeoutMs || 1800);
+          return fetch(url, { cache: "no-store", signal: controller.signal }).finally(function () {
+            clearTimeout(timeout);
+          });
+        }
+
+        function loadAdvertisedConfig(origin) {
+          return fetchWithTimeout(origin + "/alert-cia-local-config.json", 1800)
+            .then(function (response) {
+              if (!response.ok) return null;
+              return response.json();
+            })
+            .then(function (data) {
+              var server = data && (data.server || data);
+              if (!server || !server.host) return null;
+              return {
+                protocol: server.protocol || "http",
+                host: server.host,
+                port: String(server.port || "4000"),
+                timeoutMs: 2500,
+                discoveryEnabled: false,
+                lastSuccessfulConnection: new Date().toISOString()
+              };
+            })
+            .catch(function () { return null; });
+        }
+
+        function isLocalServerReachable(origin) {
+          return fetchWithTimeout(origin + "/health", 1800)
+            .then(function (response) { return response.ok; })
+            .catch(function () { return false; });
+        }
+
+        function discoverLocalServer() {
+          var origins = unique([settings.localServerOrigin, defaultOrigin].concat(candidateOrigins));
+          return new Promise(function (resolve) {
+            var remaining = origins.length;
+            origins.forEach(function (origin) {
+              isLocalServerReachable(origin).then(function (ok) {
+                if (!ok) return;
+                return loadAdvertisedConfig(origin).then(function (advertised) {
+                  resolve(saveServer(origin, advertised));
+                });
+              }).finally(function () {
+                remaining -= 1;
+                if (remaining === 0) resolve(null);
+              });
+            });
+          });
+        }
+
+        function canReachCloud() {
+          if (!navigator.onLine) return Promise.resolve(false);
+          return fetchWithTimeout(location.origin + "/", 2500)
+            .then(function (response) { return response.ok; })
+            .catch(function () { return false; });
+        }
+
+        var settings = readSettings();
+        var returnPath = safePath(settings.returnPath);
+        var returnHref = returnPath;
+        var returnLink = document.getElementById("return-link");
+        var meta = document.getElementById("offline-meta");
+        var form = document.getElementById("local-server-form");
+        var protocol = document.getElementById("protocol");
+        var host = document.getElementById("host");
+        var port = document.getElementById("port");
+
+        if (settings.localServerOrigin && /^https?:\/\//.test(settings.localServerOrigin)) {
+          returnHref = settings.localServerOrigin.replace(/\/$/, "") + returnPath;
+        }
+
+        returnLink.setAttribute("href", returnHref);
+        returnLink.addEventListener("click", function (event) {
+          event.preventDefault();
+          returnLink.textContent = "Checking ALERT-CIA...";
+          discoverLocalServer().then(function (origin) {
+            if (origin) {
+              window.location.assign(origin + returnPath);
+              return;
+            }
+            canReachCloud().then(function (cloudOk) {
+              if (cloudOk) {
+                window.location.assign(returnPath);
+                return;
+              }
+              returnLink.textContent = "Return to ALERT-CIA";
+              meta.textContent = "Local ALERT-CIA Server not found. Connect to the ALERT-CIA Wi-Fi or contact your system administrator.";
+            });
+          });
+        });
+
+        if (settings.localServerOrigin) {
+          meta.textContent = "Last configured local server: " + settings.localServerOrigin;
+        } else if (settings.updatedAt) {
+          meta.textContent = "Offline settings saved on this device.";
+        } else {
+          meta.textContent = "No local server is configured on this device yet.";
+        }
+
+        if (settings.localServerConfig) {
+          protocol.value = settings.localServerConfig.protocol || "http";
+          host.value = settings.localServerConfig.host || "";
+          port.value = settings.localServerConfig.port || "4000";
+        } else {
+          port.value = "4000";
+        }
+
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+          var cleanHost = String(host.value || "").trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+          var cleanPort = String(port.value || "").trim();
+          if (!cleanHost) {
+            meta.textContent = "Enter the local server IP address or hostname.";
+            host.focus();
+            return;
+          }
+
+          var config = {
+            protocol: protocol.value || "http",
+            host: cleanHost,
+            port: cleanPort || "4000",
+            timeoutMs: 2500,
+            discoveryEnabled: false,
+            lastSuccessfulConnection: null
+          };
+          var origin = saveServer(config.protocol + "://" + config.host + (config.port ? ":" + config.port : ""), config);
+          window.location.assign(origin + returnPath);
+        });
+      })();
+    </script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 import { CONNECTION_MODES } from "../types/hybrid";
-import { checkCloudHealth, checkLocalHealth } from "./health-checks";
+import { checkCloudHealth, discoverLocalServer } from "./health-checks";
 
 const CLOUD_CHECK_INTERVAL_MS = 30000;
 const FALLBACK_CHECK_INTERVAL_MS = 15000;
@@ -30,8 +30,8 @@ function emit() {
 }
 
 function modeFromHealth(cloudOnline, localOnline) {
-  if (cloudOnline) return CONNECTION_MODES.CLOUD;
   if (localOnline) return CONNECTION_MODES.LOCAL;
+  if (cloudOnline) return CONNECTION_MODES.CLOUD;
   return CONNECTION_MODES.OFFLINE;
 }
 
@@ -67,8 +67,9 @@ export async function checkConnection({ force = false } = {}) {
   state = { ...state, checking: true, error: null };
   emit();
   inflight = (async () => {
-    const cloudOnline = await checkCloudWithRetries();
-    const localOnline = await checkLocalHealth();
+    const localConfig = await discoverLocalServer();
+    const localOnline = Boolean(localConfig);
+    const cloudOnline = localOnline ? false : await checkCloudWithRetries();
     const checkedAt = new Date().toISOString();
     state = {
       ...state,

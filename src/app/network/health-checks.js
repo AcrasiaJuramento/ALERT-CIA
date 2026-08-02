@@ -1,5 +1,11 @@
 import { isSupabaseConfigured } from "../lib/supabaseClient";
-import { getLocalServerConfig, localServerUrl } from "../services/device-service";
+import {
+  getLocalServerCandidates,
+  getLocalServerConfig,
+  localServerConfigFromOrigin,
+  localServerUrl,
+  saveLocalServerConfig,
+} from "../services/device-service";
 
 const CLOUD_TIMEOUT_MS = 3000;
 
@@ -61,4 +67,57 @@ export async function checkLocalHealth(config) {
   } catch {
     return false;
   }
+}
+
+async function loadAdvertisedConfig(origin, fallbackConfig) {
+  const configUrls = [
+    `${origin}/alert-cia-local-config.json`,
+    `${origin}/.well-known/alert-cia-local.json`,
+  ];
+  for (const url of configUrls) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), fallbackConfig.timeoutMs);
+      const response = await fetch(url, { cache: "no-store", signal: controller.signal })
+        .finally(() => clearTimeout(timeout));
+      if (!response.ok) continue;
+      const data = await response.json();
+      const server = data?.server || data;
+      if (!server?.host) continue;
+      return {
+        ...fallbackConfig,
+        protocol: server.protocol || fallbackConfig.protocol,
+        host: server.host,
+        port: String(server.port || fallbackConfig.port),
+      };
+    } catch {
+      // The health endpoint is enough; config files are optional.
+    }
+  }
+  return fallbackConfig;
+}
+
+export async function discoverLocalServer() {
+  const candidates = await getLocalServerCandidates();
+  return new Promise(resolve => {
+    let remaining = candidates.length;
+    if (!remaining) {
+      resolve(null);
+      return;
+    }
+    candidates.forEach(async candidate => {
+      try {
+        const origin = localServerUrl(candidate);
+        if (!await checkLocalHealth(candidate)) return;
+        const found = await loadAdvertisedConfig(origin, localServerConfigFromOrigin(origin));
+        resolve(saveLocalServerConfig({
+          ...found,
+          lastSuccessfulConnection: new Date().toISOString(),
+        }));
+      } finally {
+        remaining -= 1;
+        if (remaining === 0) resolve(null);
+      }
+    });
+  });
 }
