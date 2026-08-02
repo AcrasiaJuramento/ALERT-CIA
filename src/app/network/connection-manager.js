@@ -1,4 +1,5 @@
 import { CONNECTION_MODES } from "../types/hybrid";
+import { readOfflineSettings } from "../pwa/offline-settings";
 import { checkCloudHealth, discoverLocalServer } from "./health-checks";
 
 const CLOUD_CHECK_INTERVAL_MS = 30000;
@@ -29,7 +30,9 @@ function emit() {
   for (const subscriber of subscribers) subscriber(state);
 }
 
-function modeFromHealth(cloudOnline, localOnline) {
+function modeFromHealth(cloudOnline, localOnline, preferredMode) {
+  if (preferredMode === CONNECTION_MODES.CLOUD && cloudOnline) return CONNECTION_MODES.CLOUD;
+  if (preferredMode === CONNECTION_MODES.LOCAL && localOnline) return CONNECTION_MODES.LOCAL;
   if (localOnline) return CONNECTION_MODES.LOCAL;
   if (cloudOnline) return CONNECTION_MODES.CLOUD;
   return CONNECTION_MODES.OFFLINE;
@@ -72,12 +75,14 @@ export async function checkConnection({ force = false } = {}) {
       checkCloudWithRetries(),
     ]);
     const localOnline = Boolean(localConfig);
+    const preferredMode = readOfflineSettings().preferredMode;
     const checkedAt = new Date().toISOString();
     state = {
       ...state,
       cloudOnline,
       localOnline,
-      mode: modeFromHealth(cloudOnline, localOnline),
+      mode: modeFromHealth(cloudOnline, localOnline, preferredMode),
+      preferredMode,
       checking: false,
       lastCheckedAt: checkedAt,
       lastCloudOnlineAt: cloudOnline ? checkedAt : state.lastCloudOnlineAt,

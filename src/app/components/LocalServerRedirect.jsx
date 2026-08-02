@@ -12,7 +12,9 @@ export default function LocalServerRedirect() {
   useEffect(() => {
     return subscribeConnection(connection => {
       if (connection.checking || connection.mode !== "offline") return;
-      const localOrigin = readOfflineSettings().localServerOrigin;
+      const settings = readOfflineSettings();
+      if (settings.preferredMode === "cloud") return;
+      const localOrigin = settings.localServerOrigin;
       if (!shouldRedirectToLocal(localOrigin)) return;
       window.location.replace(`${localOrigin}${window.location.pathname}${window.location.search}${window.location.hash}`);
     });

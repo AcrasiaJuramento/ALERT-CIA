@@ -17,6 +17,7 @@ export default function ConnectionIndicator() {
   const [connection, setConnection] = useState(getConnectionState());
   const [counts, setCounts] = useState({ pending: 0, failed: 0 });
   const [syncing, setSyncing] = useState(false);
+  const preferredMode = connection.preferredMode || readOfflineSettings().preferredMode;
 
   useEffect(() => subscribeConnection(setConnection), []);
   useEffect(() => {
@@ -72,7 +73,8 @@ export default function ConnectionIndicator() {
   const switchToCloud = () => {
     savePreferredConnectionMode("cloud");
     const settings = readOfflineSettings();
-    const cloudOrigin = /^https:\/\//.test(settings.appOrigin || "") ? settings.appOrigin : DEFAULT_CLOUD_ORIGIN;
+    const savedCloudOrigin = settings.cloudOrigin || settings.appOrigin;
+    const cloudOrigin = /^https:\/\//.test(savedCloudOrigin || "") ? savedCloudOrigin : DEFAULT_CLOUD_ORIGIN;
     if (window.location.origin === cloudOrigin) {
       checkConnection({ force: true });
       return;
@@ -90,11 +92,11 @@ export default function ConnectionIndicator() {
       <span className="hidden xl:inline text-xs opacity-80">Cloud {connection.cloudOnline ? "Online" : "Offline"}</span>
       <span className="hidden xl:inline text-xs opacity-80">Local {connection.localOnline ? "Connected" : "Unreachable"}</span>
       {(counts.pending > 0 || counts.failed > 0) && <span className="text-xs font-semibold">Queue {counts.pending}/{counts.failed}</span>}
-      <button onClick={switchToCloud} className={`flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold hover:bg-white/10 ${window.location.hostname.endsWith("vercel.app") ? "bg-white/10" : ""}`} title="Switch to cloud URL">
+      <button onClick={switchToCloud} className={`flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold hover:bg-white/10 ${preferredMode === "cloud" || window.location.hostname.endsWith("vercel.app") ? "bg-white/10" : ""}`} title="Switch to cloud URL">
         <Cloud className="h-3.5 w-3.5" />
         <span className="hidden 2xl:inline">Cloud</span>
       </button>
-      <button onClick={switchToLocal} className={`flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold hover:bg-white/10 ${!window.location.hostname.endsWith("vercel.app") ? "bg-white/10" : ""}`} title="Switch to local/offline URL">
+      <button onClick={switchToLocal} className={`flex h-6 items-center gap-1 rounded-md px-2 text-xs font-semibold hover:bg-white/10 ${preferredMode === "local" || !window.location.hostname.endsWith("vercel.app") ? "bg-white/10" : ""}`} title="Switch to local/offline URL">
         <Server className="h-3.5 w-3.5" />
         <span className="hidden 2xl:inline">Offline</span>
       </button>
