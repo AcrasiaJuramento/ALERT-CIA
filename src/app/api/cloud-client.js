@@ -1,5 +1,6 @@
 import {
   createDispatchRecord,
+  markResponseBackToBase,
   sendDispatchToRespondingTeam,
   updateDispatchRecord,
 } from "../services/supabase/dispatchService";
@@ -93,6 +94,7 @@ export const cloudClient = {
   createDispatch: createDispatchRecord,
   updateDispatch: updateDispatchRecord,
   sendDispatch: sendDispatchToRespondingTeam,
+  markResponseBackToBase,
   async savePcrDraft(payload) {
     const parentedPayload = await ensureManualPcrParent(payload);
     const saved = await upsertPCRReport(parentedPayload);

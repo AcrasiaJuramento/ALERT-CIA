@@ -227,6 +227,9 @@ async function deliver(operation, mode) {
   if (operation.entity_type === "pcr" && operation.operation_type === "submit") {
     return cloudClient.submitPcr(operation.payload);
   }
+  if (operation.entity_type === "completion_status" && operation.operation_type === "completion_status") {
+    return cloudClient.markResponseBackToBase(operation.payload.responseId || operation.payload.response_id);
+  }
   if (operation.entity_type === "pcr") {
     return cloudClient.savePcrDraft(operation.payload);
   }

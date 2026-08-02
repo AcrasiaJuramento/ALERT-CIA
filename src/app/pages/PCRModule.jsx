@@ -379,7 +379,18 @@ export default function PCRModule() {
     }
     setSavingStatus(status);
     try {
-      const payload = { ...form, status, id: form.id || randomUuid() };
+      const submitTimeline = status === "Draft"
+        ? form.timeline
+        : { ...(form.timeline || {}), backToBase: "" };
+      const payload = {
+        ...form,
+        status,
+        id: form.id || randomUuid(),
+        timeline: submitTimeline,
+        backToBase: status === "Draft" ? form.backToBase : "",
+        completedAt: status === "Draft" ? form.completedAt : "",
+        resolvedAt: status === "Draft" ? form.resolvedAt : "",
+      };
       const saved = status === "Draft"
         ? await hybridRepository.savePcrDraft(payload)
         : await hybridRepository.submitPcr(payload);

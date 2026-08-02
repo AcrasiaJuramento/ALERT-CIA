@@ -318,7 +318,8 @@ export const indexedDbRepository = {
       status: completedLocally ? "Submitted" : "Submitted",
       localStatus: completedLocally ? "Submitted Locally" : payload.localStatus,
       submittedAt: payload.submittedAt || new Date().toISOString(),
-      completedAt: completedLocally ? payload.completedAt || new Date().toISOString() : payload.completedAt,
+      completedAt: payload.completedAt || "",
+      backToBase: payload.backToBase || "",
     }, "pcr", payload.source || RECORD_SOURCES.OFFLINE_DEVICE);
     await putRecord("local_pcr_reports", record);
     await queue("submit", "pcr", record);

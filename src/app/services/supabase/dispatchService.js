@@ -60,6 +60,7 @@ const DISPATCH_LIST_SELECT = `
     caller_address,
     responding_team_id,
     assigned_unit_id,
+    resolved_at,
     status,
     barangay:barangays(id, name, normalized_name),
     responding_team:responding_teams!responses_responding_team_id_fkey(id, name),

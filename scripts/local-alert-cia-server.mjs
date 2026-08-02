@@ -370,7 +370,7 @@ function findDispatchByResponse(responseId) {
   return [...dispatches.values()].find(dispatch => dispatch.responseId === responseId);
 }
 
-function withLocalCompletion(dispatch, pcr, completedAt) {
+function withLocalSubmittedPcr(dispatch, pcr, submittedAt) {
   const patients = dispatch.patients?.length
     ? dispatch.patients.map((patient, index) => index === 0 ? {
       ...patient,
@@ -398,14 +398,14 @@ function withLocalCompletion(dispatch, pcr, completedAt) {
     gender: pcr.gender || dispatch.gender,
     birthday: pcr.birthday || dispatch.birthday,
     address: pcr.address || dispatch.address,
-    status: "Submitted Locally",
+    status: "Submitted",
     localStatus: "Submitted Locally",
     syncLabel: "Pending cloud synchronization",
     pcrStatus: pcr.status,
-    pcrCompletedAt: pcr.completedAt || completedAt,
+    pcrSubmittedAt: pcr.submittedAt || submittedAt,
     linkedPcrId: pcr.id || pcr.pcrId,
     pcr,
-    updatedAt: completedAt,
+    updatedAt: submittedAt,
     hybridMessage: "PCR submitted locally by responding team. Pending cloud synchronization.",
   };
 }
@@ -645,20 +645,21 @@ const server = http.createServer(async (req, res) => {
         status: "Submitted",
         localStatus: "Submitted Locally",
         submittedAt,
-        completedAt: payload.completedAt || submittedAt,
+        completedAt: existing.completedAt || payload.completedAt || "",
+        backToBase: existing.backToBase || "",
         source: "local_server",
         sync_status: "partially_synced",
         syncLabel: "Pending cloud synchronization",
         updatedAt: submittedAt,
       };
       pcrReports.set(responseId, record);
-      const completedDispatch = dispatch ? withLocalCompletion(dispatch, record, submittedAt) : null;
-      if (completedDispatch) dispatches.set(completedDispatch.id, completedDispatch);
+      const submittedDispatch = dispatch ? withLocalSubmittedPcr(dispatch, record, submittedAt) : null;
+      if (submittedDispatch) dispatches.set(submittedDispatch.id, submittedDispatch);
       broadcastEvent("pcr_changed", { pcrId: record.id, responseId: record.responseId, status: record.status, record });
-      if (completedDispatch) broadcastEvent("dispatch_changed", { dispatchId: completedDispatch.id, responseId: completedDispatch.responseId, status: completedDispatch.status, record: completedDispatch });
+      if (submittedDispatch) broadcastEvent("dispatch_changed", { dispatchId: submittedDispatch.id, responseId: submittedDispatch.responseId, status: submittedDispatch.status, record: submittedDispatch });
       json(res, 200, {
         ...record,
-        dispatch: completedDispatch,
+        dispatch: submittedDispatch,
         hybridMessage: "PCR submitted locally and returned to dispatcher through the local ALERT-CIA server.",
       });
       return;
@@ -672,9 +673,9 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "No linked PCR report found on local server." });
         return;
       }
-      const completedAt = new Date().toISOString();
+      const completedAt = pcr.completedAt || dispatch.resolvedAt || new Date().toISOString();
       const now = new Date();
-      const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      const time = pcr.backToBase || dispatch.backToBase || `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
       const completedPcr = {
         ...pcr,
         status: "Submitted",

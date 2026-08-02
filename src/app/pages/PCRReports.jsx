@@ -16,7 +16,6 @@ import { cloudClient } from '../api/cloud-client';
 import { localServerClient } from '../api/local-server-client';
 import { getConnectionState, subscribeConnection } from '../network/connection-manager';
 import { subscribeLiveSyncEvents } from '../network/live-sync-events';
-import { runSyncNow } from '../sync/sync-engine';
 import { getAllRecords, putRecord } from '../db/indexed-db';
 
 const SOURCE_RANK = {
@@ -27,6 +26,46 @@ const SOURCE_RANK = {
 const LOCAL_REFRESH_MS = 15000;
 const CLOUD_REFRESH_MS = 30000;
 const autoUploadingPcrKeys = new Set();
+const PCR_WORKFLOW_FILTERS = ['Active', 'Back to Base', 'Resolved', 'All'];
+const ACTIVE_STATUS_KEYS = new Set([
+  'draft',
+  'in_progress',
+  'submitted',
+  'submitted_locally',
+  'pcr_draft_locally',
+  'pcr_in_progress',
+  'dispatch_received_locally',
+  'sent_to_field_officer',
+  'sent_to_responding_team',
+]);
+const BACK_TO_BASE_STATUS_KEYS = new Set(['back_to_base', 'returned_to_base']);
+const RESOLVED_STATUS_KEYS = new Set(['verified', 'resolved', 'completed', 'closed']);
+
+function normalizeStatus(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function hasReturnToBase(record = {}) {
+  return Boolean(record.backToBase || record.backToBaseTime || record.completedAt || record.completed_at);
+}
+
+function workflowStage(record = {}) {
+  const statusKeys = [
+    record.status,
+    record.localStatus,
+    displayStatus(record),
+    record.responseStatus,
+    record.dispatchStatus,
+  ].map(normalizeStatus).filter(Boolean);
+  if (record.resolvedAt || record.resolved_at || statusKeys.some(key => RESOLVED_STATUS_KEYS.has(key))) return 'Resolved';
+  if (hasReturnToBase(record) || statusKeys.some(key => BACK_TO_BASE_STATUS_KEYS.has(key))) return 'Back to Base';
+  if (statusKeys.some(key => ACTIVE_STATUS_KEYS.has(key))) return 'Active';
+  return 'All';
+}
 
 function statusRank(status = '') {
   return {
@@ -338,7 +377,7 @@ export default function PCRReports() {
 
   const filtered = useMemo(() => records.filter(record =>
     (archiveView === 'Archived' ? record.archived : !record.archived)
-    && (status === 'All' || record.status === status || record.localStatus === status)
+    && (status === 'All' || workflowStage(record) === status)
     && [record.responseNumber, record.patientName, record.placeOfIncident, record.hospitalName, record.respondingTeam].join(' ').toLowerCase().includes(query.toLowerCase())
   ), [records, query, status, archiveView]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -414,16 +453,6 @@ export default function PCRReports() {
     updateStatus(rejectingRecord, 'Rejected', rejectionReason.trim());
     setRejectingRecord(null);
     setRejectionReason('');
-  };
-  const syncToCloud = async () => {
-    try {
-      toast.info('Syncing queued PCR records to cloud...');
-      await runSyncNow({ includeNotDue: true });
-      await loadReports({ silent: true });
-      toast.success('Cloud sync attempted. Records refreshed.');
-    } catch (error) {
-      toast.error(error.message || 'Unable to sync to cloud.');
-    }
   };
   const uploadRecordToCloud = async record => {
     try {
@@ -526,7 +555,7 @@ export default function PCRReports() {
 
       <div className="bg-card border border-border rounded-xl p-3 mb-4 grid md:grid-cols-[1fr_auto_auto] gap-3">
         <label className="relative"><Search size={16} className="absolute left-3 top-3 text-muted-foreground" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search response no., patient, place, hospital, or team" className="w-full pl-9 pr-3 py-2.5 bg-input-background border border-border rounded-lg text-sm" /></label>
-        <label className="flex items-center gap-2"><Filter size={15} /><select value={status} onChange={event => setStatus(event.target.value)} className="bg-input-background border border-border rounded-lg px-3 py-2.5 text-sm">{['All', 'Draft', 'Sent to Field Officer', 'Submitted', 'Submitted Locally', 'Verified', 'Rejected', 'Dispatch Received Locally', 'PCR Draft Locally'].map(item => <option key={item}>{item}</option>)}</select></label>
+        <label className="flex items-center gap-2"><Filter size={15} /><select value={status} onChange={event => setStatus(event.target.value)} className="bg-input-background border border-border rounded-lg px-3 py-2.5 text-sm">{PCR_WORKFLOW_FILTERS.map(item => <option key={item}>{item}</option>)}</select></label>
         <div className="flex rounded-lg border border-border overflow-hidden">{['Active', 'Archived'].map(item => <button key={item} onClick={() => setArchiveView(item)} className={`px-4 py-2 text-xs font-semibold ${archiveView === item ? 'bg-blue-600 text-white' : 'bg-secondary'}`}>{item}</button>)}</div>
       </div>
 

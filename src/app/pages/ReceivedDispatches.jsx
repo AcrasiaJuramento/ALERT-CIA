@@ -32,6 +32,26 @@ const RECEIVED_STATUSES = [
   "Submitted Locally",
   "Verified",
 ];
+const ACTIVE_STATUS_KEYS = new Set([
+  "sent_to_responding_team",
+  "sent_to_field_officer",
+  "assigned_locally",
+  "accepted_by_responding_team",
+  "pcr_in_progress",
+  "submitted",
+  "submitted_locally",
+  "dispatch_received_locally",
+]);
+const BACK_TO_BASE_STATUS_KEYS = new Set(["back_to_base", "returned_to_base"]);
+const RESOLVED_STATUS_KEYS = new Set(["pcr_completed", "verified", "completed", "resolved", "closed"]);
+
+function normalizeStatus(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
 
 function hasReceivedStatus(record = {}) {
   return RECEIVED_STATUSES.includes(record.status) || RECEIVED_STATUSES.includes(record.localStatus);
@@ -44,35 +64,44 @@ function joinValues(value) {
 }
 
 function isResolvedDispatch(record = {}, pcr = null) {
-  const terminalStatuses = new Set([
-    DISPATCH_STATUSES.PCR_COMPLETED,
-    "Submitted",
-    "Submitted Locally",
-    "Verified",
-    "Completed",
-  ]);
-
   return Boolean(
     record.resolvedAt
     || pcr?.resolvedAt
     || record.resolved_at
     || pcr?.resolved_at
-    || record.backToBase
+    || [record.status, record.localStatus, pcr?.status, pcr?.localStatus]
+      .map(normalizeStatus)
+      .some(status => RESOLVED_STATUS_KEYS.has(status))
+  );
+}
+
+function hasBackToBase(record = {}, pcr = null) {
+  return Boolean(
+    record.backToBase
     || pcr?.backToBase
     || pcr?.backToBaseTime
     || record.completedAt
     || pcr?.completedAt
     || record.completed_at
     || pcr?.completed_at
-    || terminalStatuses.has(record.status)
-    || terminalStatuses.has(record.localStatus)
-    || terminalStatuses.has(pcr?.status)
-    || terminalStatuses.has(pcr?.localStatus)
+    || [record.status, record.localStatus, pcr?.status, pcr?.localStatus]
+      .map(normalizeStatus)
+      .some(status => BACK_TO_BASE_STATUS_KEYS.has(status))
   );
+}
+
+function workflowStage(record = {}, pcr = null) {
+  if (isResolvedDispatch(record, pcr)) return "Resolved";
+  if (hasBackToBase(record, pcr)) return "Back to Base";
+  const active = [record.status, record.localStatus, pcr?.status, pcr?.localStatus]
+    .map(normalizeStatus)
+    .some(status => ACTIVE_STATUS_KEYS.has(status));
+  return active ? "Active" : "All";
 }
 
 function canAcceptDispatch(record = {}, pcr = null) {
   return !pcr
+    && !record.linkedPcrId
     && !isResolvedDispatch(record, pcr)
     && [DISPATCH_STATUSES.SENT, DISPATCH_STATUSES.ACCEPTED, "Sent to Field Officer"].includes(record.status);
 }
@@ -120,8 +149,8 @@ export default function ReceivedDispatches() {
         await hybridRepository.reconcileCloudDispatches(rows).catch(() => 0);
       }
       setRecords(rows);
-      const pairs = await (state.localOnline
-        ? Promise.all(rows.map(async record => {
+      const localPairs = state.localOnline
+        ? await Promise.all(rows.map(async record => {
           try {
             const pcr = await localServerClient.getPcrByResponse(record.responseId);
             return [record.responseId, pcr];
@@ -129,7 +158,9 @@ export default function ReceivedDispatches() {
             return [record.responseId, null];
           }
         }))
-        : (() => {
+        : [];
+      const cloudPairs = state.cloudOnline
+        ? await (() => {
           const byResponse = new Map();
           const byDispatch = new Map();
           return Promise.all([
@@ -145,7 +176,13 @@ export default function ReceivedDispatches() {
               ]);
             })
             .catch(() => rows.map(record => [record.responseId, null]));
-        })());
+        })()
+        : [];
+      const pcrByResponse = new Map(localPairs);
+      cloudPairs.forEach(([responseId, pcr]) => {
+        if (responseId && pcr) pcrByResponse.set(responseId, pcr);
+      });
+      const pairs = rows.map(record => [record.responseId, pcrByResponse.get(record.responseId) || null]);
       if (state.cloudOnline) {
         await hybridRepository.reconcileCloudPcrReports(pairs.map(([, pcr]) => pcr).filter(Boolean)).catch(() => 0);
       }
@@ -187,7 +224,7 @@ export default function ReceivedDispatches() {
 
   const received = useMemo(() => records.filter(record => {
     const pcr = linkedPCRs[record.responseId];
-    const isResolved = isResolvedDispatch(record, pcr);
+    const stage = workflowStage(record, pcr);
     const isReceived = hasReceivedStatus(record);
     const text = [
       record.responseNumber,
@@ -199,16 +236,17 @@ export default function ReceivedDispatches() {
       joinValues(record.natureTypes),
     ].join(" ").toLowerCase();
     const matchesFilter = statusFilter === "All"
-      || (statusFilter === "Active" && !isResolved)
-      || (statusFilter === "Resolved" && isResolved);
+      || stage === statusFilter;
     return isReceived && matchesFilter && text.includes(query.toLowerCase());
   }), [records, linkedPCRs, query, statusFilter]);
 
   const filterCounts = useMemo(() => {
     const receivedRows = records.filter(hasReceivedStatus);
-    const resolved = receivedRows.filter(record => isResolvedDispatch(record, linkedPCRs[record.responseId])).length;
+    const backToBase = receivedRows.filter(record => workflowStage(record, linkedPCRs[record.responseId]) === "Back to Base").length;
+    const resolved = receivedRows.filter(record => workflowStage(record, linkedPCRs[record.responseId]) === "Resolved").length;
     return {
-      active: receivedRows.length - resolved,
+      active: receivedRows.filter(record => workflowStage(record, linkedPCRs[record.responseId]) === "Active").length,
+      backToBase,
       resolved,
       all: receivedRows.length,
     };
@@ -279,6 +317,7 @@ export default function ReceivedDispatches() {
           <Filter size={15} className="ml-2 text-muted-foreground" />
           {[
             ["Active", filterCounts.active],
+            ["Back to Base", filterCounts.backToBase],
             ["Resolved", filterCounts.resolved],
             ["All", filterCounts.all],
           ].map(([label, count]) => (
@@ -302,9 +341,11 @@ export default function ReceivedDispatches() {
         {!loading && error && <div className="rounded-xl border border-border bg-card py-16 text-center text-sm text-red-400">{error}</div>}
         {!loading && !error && received.map(record => {
           const pcr = linkedPCRs[record.responseId];
-          const isResolved = isResolvedDispatch(record, pcr);
-          const displayStatus = isResolved ? "Resolved" : record.status;
-          const visibleBackToBase = isResolved ? (record.backToBase || pcr?.backToBase || pcr?.backToBaseTime || "-") : "-";
+          const stage = workflowStage(record, pcr);
+          const isResolved = stage === "Resolved";
+          const hasPcrLink = Boolean(pcr || record.linkedPcrId);
+          const displayStatus = stage === "All" ? record.status : stage;
+          const visibleBackToBase = ["Back to Base", "Resolved"].includes(stage) ? (record.backToBase || pcr?.backToBase || pcr?.backToBaseTime || "-") : "-";
           const incidentType = [...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified";
           return (
             <article key={record.id} className="rounded-xl border border-border bg-card p-4 shadow-sm">
@@ -319,22 +360,21 @@ export default function ReceivedDispatches() {
                   <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin size={14} />{record.placeOfIncident || record.callerAddress || "No location entered"}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {pcr || isResolved ? (
+                  {hasPcrLink || isResolved ? (
                     <>
                       <button onClick={() => openPCR(record)} className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500">
                         <FileText size={15} />Open PCR
                       </button>
-                      {pcr ? (
+                      {stage === "Active" ? (
                         <button
                           onClick={() => completeResponse(record)}
-                          disabled={isResolved}
-                          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white ${isResolved ? "cursor-not-allowed bg-slate-500 opacity-70" : "bg-blue-600 hover:bg-blue-500"}`}
+                          className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
                         >
-                          <CheckCircle2 size={15} />{isResolved ? "Resolved" : "Back to Base"}
+                          <CheckCircle2 size={15} />Back to Base
                         </button>
                       ) : (
                         <button disabled className="flex cursor-not-allowed items-center gap-2 rounded-lg bg-slate-500 px-4 py-2 text-sm font-semibold text-white opacity-70">
-                          <CheckCircle2 size={15} />Resolved
+                          <CheckCircle2 size={15} />{stage === "Back to Base" ? "Back to Base" : "Resolved"}
                         </button>
                       )}
                     </>
@@ -344,7 +384,7 @@ export default function ReceivedDispatches() {
                     </button>
                   ) : (
                     <button disabled className="flex cursor-not-allowed items-center gap-2 rounded-lg bg-slate-500 px-4 py-2 text-sm font-semibold text-white opacity-70">
-                      <CheckCircle2 size={15} />{isResolved ? "Resolved" : "Unavailable"}
+                      <CheckCircle2 size={15} />Awaiting PCR
                     </button>
                   )}
                 </div>
