@@ -43,11 +43,30 @@ function joinValues(value) {
 }
 
 function isResolvedDispatch(record = {}, pcr = null) {
+  const terminalStatuses = new Set([
+    DISPATCH_STATUSES.PCR_COMPLETED,
+    "Submitted",
+    "Submitted Locally",
+    "Verified",
+    "Completed",
+  ]);
+
   return Boolean(
     record.resolvedAt
     || pcr?.resolvedAt
     || record.resolved_at
     || pcr?.resolved_at
+    || record.backToBase
+    || pcr?.backToBase
+    || pcr?.backToBaseTime
+    || record.completedAt
+    || pcr?.completedAt
+    || record.completed_at
+    || pcr?.completed_at
+    || terminalStatuses.has(record.status)
+    || terminalStatuses.has(record.localStatus)
+    || terminalStatuses.has(pcr?.status)
+    || terminalStatuses.has(pcr?.localStatus)
   );
 }
 
@@ -283,6 +302,7 @@ export default function ReceivedDispatches() {
         {!loading && !error && received.map(record => {
           const pcr = linkedPCRs[record.responseId];
           const isResolved = isResolvedDispatch(record, pcr);
+          const displayStatus = isResolved ? "Resolved" : record.status;
           const visibleBackToBase = isResolved ? (record.backToBase || pcr?.backToBase || pcr?.backToBaseTime || "-") : "-";
           const incidentType = [...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified";
           return (
@@ -291,7 +311,7 @@ export default function ReceivedDispatches() {
                 <div className="min-w-0">
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="font-mono text-sm font-bold text-blue-400">{record.responseNumber}</span>
-                    <span className="rounded-full bg-blue-500/15 px-2 py-1 text-[11px] font-semibold text-blue-400">{record.status}</span>
+                    <span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${isResolved ? "bg-green-500/15 text-green-400" : "bg-blue-500/15 text-blue-400"}`}>{displayStatus}</span>
                     <span className="rounded-full bg-secondary px-2 py-1 text-[11px] font-semibold text-muted-foreground">{record.team || "No team"}</span>
                   </div>
                   <h2 className="text-base font-bold text-foreground">{incidentType}</h2>
