@@ -27,6 +27,7 @@ Name: "{commonappdata}\ALERT-CIA\local-server"; Permissions: users-modify
 Source: "dependencies\node-v22-x64.msi"; DestDir: "{tmp}"; Flags: deleteafterinstall
 #endif
 Source: "..\scripts\local-alert-cia-server.mjs"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\dist\*"; DestDir: "{app}\dist"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\start-alert-cia-local-server.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\run-alert-cia-local-server-hidden.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\run-alert-cia-local-server.vbs"; DestDir: "{app}"; Flags: ignoreversion

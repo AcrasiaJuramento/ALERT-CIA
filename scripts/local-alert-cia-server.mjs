@@ -1,7 +1,7 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, normalize, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 const host = process.env.ALERT_CIA_LOCAL_HOST || "0.0.0.0";
@@ -17,6 +17,7 @@ function defaultDataDir() {
 const dataDir = defaultDataDir();
 const databasePath = process.env.ALERT_CIA_LOCAL_DB || join(dataDir, "alert-cia-local.db");
 const configPath = join(dataDir, "alert-cia-local-config.json");
+const webRoot = resolve(process.env.ALERT_CIA_WEB_ROOT || join(process.cwd(), "dist"));
 mkdirSync(dirname(databasePath), { recursive: true });
 
 const db = new DatabaseSync(databasePath);
@@ -134,6 +135,47 @@ function json(res, status, body) {
     "Access-Control-Allow-Headers": "Content-Type, X-ALERT-CIA-Device-ID",
   });
   res.end(JSON.stringify(body));
+}
+
+const MIME_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".gif": "image/gif",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+function sendFile(res, filePath) {
+  const body = readFileSync(filePath);
+  res.writeHead(200, {
+    "Content-Type": MIME_TYPES[extname(filePath).toLowerCase()] || "application/octet-stream",
+    "Cache-Control": extname(filePath).toLowerCase() === ".html" ? "no-store" : "public, max-age=31536000, immutable",
+  });
+  res.end(body);
+}
+
+function staticFileForPath(pathname) {
+  if (!existsSync(webRoot)) return null;
+  const cleanPath = decodeURIComponent(pathname).replace(/\\/g, "/");
+  const requested = cleanPath === "/" ? "/index.html" : cleanPath;
+  const target = normalize(join(webRoot, requested));
+  if (!target.startsWith(webRoot)) return null;
+  try {
+    const stat = statSync(target);
+    if (stat.isFile()) return target;
+  } catch {
+    // Fall through to React app shell.
+  }
+  return join(webRoot, "index.html");
 }
 
 function localServerConfig() {
@@ -562,7 +604,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    json(res, 404, { error: "Local ALERT-CIA dev endpoint not found." });
+    if ((req.method === "GET" || req.method === "HEAD") && !url.pathname.startsWith("/api/")) {
+      const filePath = staticFileForPath(url.pathname);
+      if (filePath && existsSync(filePath)) {
+        sendFile(res, filePath);
+        return;
+      }
+    }
+
+    json(res, 404, { error: "Local ALERT-CIA endpoint not found. Build the frontend with npm run build so the local server can serve ALERT-CIA pages." });
   } catch (error) {
     json(res, 500, { error: error.message || "Local ALERT-CIA server error." });
   }
@@ -571,6 +621,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(port, host, () => {
   console.log(`ALERT-CIA local dev server listening at http://${host}:${port}`);
   console.log(`ALERT-CIA local database: ${databasePath}`);
+  console.log(`ALERT-CIA local web root: ${webRoot}`);
 });
 
 server.on("error", error => {
