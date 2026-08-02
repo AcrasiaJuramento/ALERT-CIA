@@ -33,6 +33,10 @@ export function writeOfflineSettings(settings = {}) {
   return next;
 }
 
+export function savePreferredConnectionMode(mode) {
+  return writeOfflineSettings({ preferredMode: mode });
+}
+
 export function rememberCurrentAppLocation() {
   if (typeof window === "undefined") return;
   writeOfflineSettings({

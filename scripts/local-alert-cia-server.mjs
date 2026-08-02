@@ -1,5 +1,5 @@
 import http from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, normalize, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -7,6 +7,32 @@ import { DatabaseSync } from "node:sqlite";
 const host = process.env.ALERT_CIA_LOCAL_HOST || "0.0.0.0";
 const port = Number(process.env.ALERT_CIA_LOCAL_PORT || 4000);
 const eventClients = new Set();
+const DEFAULT_LOCAL_USERS = [
+  {
+    id: "local-admin",
+    email: "admin@mdrrmo.gov.ph",
+    password: "alertcia-admin",
+    name: "Local ALERT-CIA Administrator",
+    role: "administrator",
+    status: "active",
+  },
+  {
+    id: "local-dispatcher",
+    email: "dispatcher@mdrrmo.gov.ph",
+    password: "alertcia-dispatch",
+    name: "Local Dispatcher",
+    role: "dispatcher",
+    status: "active",
+  },
+  {
+    id: "local-responder",
+    email: "responder@mdrrmo.gov.ph",
+    password: "alertcia-field",
+    name: "Local Field Responder",
+    role: "field_responder",
+    status: "active",
+  },
+];
 
 function defaultDataDir() {
   if (process.env.ALERT_CIA_LOCAL_DATA_DIR) return process.env.ALERT_CIA_LOCAL_DATA_DIR;
@@ -198,6 +224,68 @@ function localServerConfig() {
   return config;
 }
 
+function localUsers() {
+  if (process.env.ALERT_CIA_LOCAL_USERS_JSON) {
+    try {
+      const parsed = JSON.parse(process.env.ALERT_CIA_LOCAL_USERS_JSON);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Fall back to file/default accounts.
+    }
+  }
+  const usersPath = join(dataDir, "local-users.json");
+  if (existsSync(usersPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(usersPath, "utf8"));
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // Fall back to default accounts.
+    }
+  }
+  writeFileSync(usersPath, `${JSON.stringify(DEFAULT_LOCAL_USERS, null, 2)}\n`);
+  return DEFAULT_LOCAL_USERS;
+}
+
+function publicUser(user) {
+  const { password, passwordHash, passwordSalt, ...safeUser } = user;
+  return safeUser;
+}
+
+function hashPassword(password, salt = randomBytes(16).toString("hex")) {
+  return {
+    passwordSalt: salt,
+    passwordHash: scryptSync(String(password), salt, 32).toString("hex"),
+  };
+}
+
+function passwordMatches(user, password) {
+  if (user.passwordHash && user.passwordSalt) {
+    const expected = Buffer.from(user.passwordHash, "hex");
+    const actual = scryptSync(String(password), user.passwordSalt, expected.length);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+  }
+  return String(user.password || "") === String(password || "");
+}
+
+function saveLocalUser(user, password) {
+  const usersPath = join(dataDir, "local-users.json");
+  const users = localUsers();
+  const email = String(user.email || "").trim().toLowerCase();
+  const nextUser = {
+    id: user.id || `local-${email}`,
+    email,
+    name: user.name || user.email || "ALERT-CIA User",
+    role: user.role || "field_responder",
+    status: user.status || "active",
+    ...hashPassword(password),
+  };
+  const index = users.findIndex(account => String(account.email || "").toLowerCase() === email);
+  if (index >= 0) users[index] = { ...users[index], ...nextUser, password: undefined };
+  else users.push(nextUser);
+  writeFileSync(usersPath, `${JSON.stringify(users, null, 2)}\n`);
+  return nextUser;
+}
+
 function openEventStream(req, res) {
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -346,6 +434,34 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && ["/alert-cia-local-config.json", "/.well-known/alert-cia-local.json"].includes(url.pathname)) {
       json(res, 200, localServerConfig());
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/login") {
+      const body = await readBody(req);
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      const user = localUsers().find(account =>
+        String(account.email || "").toLowerCase() === email
+        && passwordMatches(account, password)
+        && (account.status || "active") === "active"
+      );
+      if (!user) {
+        json(res, 401, { error: "Invalid local ALERT-CIA credentials." });
+        return;
+      }
+      json(res, 200, publicUser(user));
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/auth/cache-user") {
+      const body = await readBody(req);
+      if (!body.user?.email || !body.password) {
+        json(res, 400, { error: "User email and password are required for offline credential caching." });
+        return;
+      }
+      const user = saveLocalUser(body.user, body.password);
+      json(res, 200, publicUser(user));
       return;
     }
 

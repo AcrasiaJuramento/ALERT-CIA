@@ -7,6 +7,7 @@ import { NotificationProvider } from './contexts/NotificationContext';
 import { AccessibilityProvider } from './contexts/AccessibilityContext';
 import { AuthProvider } from './contexts/AuthContext';
 import OfflineSetupWizard from './components/OfflineSetupWizard';
+import LocalServerRedirect from './components/LocalServerRedirect';
 
 import { Toaster } from 'sonner';
 import { startConnectionManager } from './network/connection-manager';
@@ -44,6 +45,7 @@ export default function App() {
         <AuthProvider>
           <NotificationProvider>
             <RouterProvider router={router} />
+            <LocalServerRedirect />
             <OfflineSetupWizard />
             <ToasterWrapper />
           </NotificationProvider>

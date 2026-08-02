@@ -170,7 +170,8 @@
 
         var settings = readSettings();
         var returnPath = safePath(settings.returnPath);
-        var returnHref = returnPath;
+        var preferredLocalOrigin = /^https?:\/\//.test(settings.localServerOrigin || "") ? settings.localServerOrigin.replace(/\/$/, "") : defaultOrigin;
+        var returnHref = navigator.onLine ? returnPath : preferredLocalOrigin + returnPath;
         var returnLink = document.getElementById("return-link");
         var meta = document.getElementById("offline-meta");
         var form = document.getElementById("local-server-form");
@@ -185,6 +186,10 @@
         returnLink.setAttribute("href", returnHref);
         returnLink.addEventListener("click", function (event) {
           event.preventDefault();
+          if (!navigator.onLine) {
+            window.location.assign(preferredLocalOrigin + returnPath);
+            return;
+          }
           returnLink.textContent = "Checking ALERT-CIA...";
           discoverLocalServer().then(function (origin) {
             if (origin) {

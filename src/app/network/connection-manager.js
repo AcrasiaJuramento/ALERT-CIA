@@ -67,9 +67,11 @@ export async function checkConnection({ force = false } = {}) {
   state = { ...state, checking: true, error: null };
   emit();
   inflight = (async () => {
-    const localConfig = await discoverLocalServer();
+    const [localConfig, cloudOnline] = await Promise.all([
+      discoverLocalServer(),
+      checkCloudWithRetries(),
+    ]);
     const localOnline = Boolean(localConfig);
-    const cloudOnline = localOnline ? false : await checkCloudWithRetries();
     const checkedAt = new Date().toISOString();
     state = {
       ...state,

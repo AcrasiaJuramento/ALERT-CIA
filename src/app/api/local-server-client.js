@@ -1,12 +1,19 @@
 import { getDeviceId, getLocalServerConfig, localServerUrl } from "../services/device-service";
 
+function requestBase(config) {
+  if (typeof window !== "undefined" && window.location.port === String(config.port || "4000") && !window.location.hostname.endsWith("vercel.app")) {
+    return window.location.origin;
+  }
+  return localServerUrl(config);
+}
+
 async function request(path, { method = "GET", body, timeoutMs } = {}) {
   const config = await getLocalServerConfig();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs || config.timeoutMs);
   try {
     const deviceId = await getDeviceId();
-    const response = await fetch(`${localServerUrl(config)}${path}`, {
+    const response = await fetch(`${requestBase(config)}${path}`, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -26,6 +33,8 @@ async function request(path, { method = "GET", body, timeoutMs } = {}) {
 
 export const localServerClient = {
   health: () => request("/health"),
+  login: credentials => request("/api/auth/login", { method: "POST", body: credentials }),
+  cacheUser: payload => request("/api/auth/cache-user", { method: "POST", body: payload }),
   createIncident: payload => request("/api/incidents", { method: "POST", body: payload }),
   listDispatches: () => request("/api/dispatches"),
   listReceivedDispatches: () => request("/api/dispatches/received"),
