@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Cloud, CloudOff, DatabaseZap, RefreshCw, Server, WifiOff } from "lucide-react";
 import { getAllRecords } from "../db/indexed-db";
-import { checkConnection, getConnectionState, subscribeConnection } from "../network/connection-manager";
+import { checkConnection, forceConnectionMode, getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { readOfflineSettings, savePreferredConnectionMode } from "../pwa/offline-settings";
 import { getLocalServerConfig, localServerUrl } from "../services/device-service";
 import { runSyncNow } from "../sync/sync-engine";
@@ -60,6 +60,7 @@ export default function ConnectionIndicator() {
 
   const switchToLocal = async () => {
     savePreferredConnectionMode("local");
+    forceConnectionMode("local");
     const settings = readOfflineSettings();
     const localOrigin = settings.localServerOrigin || localServerUrl(await getLocalServerConfig());
     const target = `${localOrigin.replace(/\/$/, "")}${currentPath()}`;
@@ -72,6 +73,7 @@ export default function ConnectionIndicator() {
 
   const switchToCloud = () => {
     savePreferredConnectionMode("cloud");
+    forceConnectionMode("cloud");
     const settings = readOfflineSettings();
     const savedCloudOrigin = settings.cloudOrigin || settings.appOrigin;
     const cloudOrigin = /^https:\/\//.test(savedCloudOrigin || "") ? savedCloudOrigin : DEFAULT_CLOUD_ORIGIN;

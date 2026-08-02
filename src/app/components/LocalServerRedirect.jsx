@@ -11,7 +11,8 @@ function shouldRedirectToLocal(localOrigin) {
 export default function LocalServerRedirect() {
   useEffect(() => {
     return subscribeConnection(connection => {
-      if (connection.checking || connection.mode !== "offline") return;
+      if (connection.checking || !connection.lastCheckedAt) return;
+      if (connection.cloudOnline || !connection.localOnline) return;
       const settings = readOfflineSettings();
       if (settings.preferredMode === "cloud") return;
       const localOrigin = settings.localServerOrigin;

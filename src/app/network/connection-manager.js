@@ -54,6 +54,16 @@ export function getConnectionState() {
   return state;
 }
 
+export function forceConnectionMode(mode) {
+  state = {
+    ...state,
+    mode,
+    preferredMode: mode,
+  };
+  emit();
+  return state;
+}
+
 export function subscribeConnection(listener) {
   subscribers.add(listener);
   listener(state);
