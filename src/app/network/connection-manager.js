@@ -31,6 +31,14 @@ function emit() {
 }
 
 function modeFromHealth(cloudOnline, localOnline, preferredMode) {
+  if (typeof window !== "undefined") {
+    if ((window.location.protocol === "https:" || window.location.hostname.endsWith("vercel.app")) && cloudOnline) {
+      return CONNECTION_MODES.CLOUD;
+    }
+    if ((window.location.port === "4000" || /^192\.168\./.test(window.location.hostname) || window.location.hostname === "127.0.0.1") && localOnline) {
+      return CONNECTION_MODES.LOCAL;
+    }
+  }
   if (preferredMode === CONNECTION_MODES.CLOUD && cloudOnline) return CONNECTION_MODES.CLOUD;
   if (preferredMode === CONNECTION_MODES.LOCAL && localOnline) return CONNECTION_MODES.LOCAL;
   if (localOnline) return CONNECTION_MODES.LOCAL;

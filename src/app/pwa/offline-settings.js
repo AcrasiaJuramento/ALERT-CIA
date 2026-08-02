@@ -40,8 +40,11 @@ export function savePreferredConnectionMode(mode) {
 export function rememberCurrentAppLocation() {
   if (typeof window === "undefined") return;
   const isCloudOrigin = window.location.protocol === "https:" || window.location.hostname.endsWith("vercel.app");
+  const isLocalServerOrigin = window.location.port === "4000" || /^192\.168\./.test(window.location.hostname) || window.location.hostname === "127.0.0.1";
   const originSettings = isCloudOrigin
-    ? { appOrigin: window.location.origin, cloudOrigin: window.location.origin }
+    ? { appOrigin: window.location.origin, cloudOrigin: window.location.origin, preferredMode: "cloud" }
+    : isLocalServerOrigin
+      ? { preferredMode: "local" }
     : {};
   writeOfflineSettings({
     ...originSettings,
