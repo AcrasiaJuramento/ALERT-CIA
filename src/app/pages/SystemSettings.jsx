@@ -1,304 +1,214 @@
-import { useEffect, useState } from 'react';
-import {
-  Bell, Map, Brain, User, Save, Shield, Volume2,
-  Mail, Phone, Globe, Sliders, Radio, AlertTriangle
-} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Bell, Check, DatabaseZap, Monitor, Radio, RotateCcw, Save, Volume2 } from 'lucide-react';
+import { useAccessibility } from '../contexts/AccessibilityContext';
+import { useNotifications } from '../contexts/NotificationContext';
+import { useTheme } from '../contexts/ThemeContext';
+import { checkConnection } from '../network/connection-manager';
 import { checkLocalHealth } from '../network/health-checks';
-import { getLocalServerConfig, resetLocalServerConfig, saveLocalServerConfig } from '../services/device-service';
+import { getLocalServerConfig, localServerUrl, resetLocalServerConfig, saveLocalServerConfig } from '../services/device-service';
 
 const tabs = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
-  { id: 'map', label: 'Map Config', icon: Map },
-  { id: 'ai', label: 'AI Prediction', icon: Brain },
-  { id: 'preferences', label: 'User Preferences', icon: User },
+  { id: 'display', label: 'Display', icon: Monitor },
   { id: 'local-server', label: 'Local Server', icon: Radio },
 ];
 
-function Toggle({ checked, onChange }) {
+const inputClass = 'w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500';
+const labelClass = 'block text-xs font-semibold text-muted-foreground mb-1.5';
+
+function Toggle({ checked, onChange, disabled = false }) {
   return (
     <button
+      type="button"
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative w-10 h-5.5 rounded-full transition-all shrink-0 ${
-        checked ? 'bg-blue-600' : 'bg-secondary border border-border'
-      }`}
-      style={{ height: '22px', width: '40px' }}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition ${checked ? 'bg-blue-600' : 'bg-secondary border border-border'} disabled:opacity-50`}
+      aria-pressed={checked}
     >
-      <span
-        className={`absolute top-0.5 left-0.5 w-4.5 h-4.5 bg-white rounded-full shadow transition-transform ${
-          checked ? 'translate-x-4.5' : 'translate-x-0'
-        }`}
-        style={{ width: '18px', height: '18px' }}
-      />
+      <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${checked ? 'left-5' : 'left-0.5'}`} />
     </button>
   );
 }
 
-function SettingRow({
-  icon,
-  label,
-  desc,
-  checked,
-  onChange,
-}) {
-  const IconComponent = icon;
+function SettingRow({ icon, label, desc, checked, onChange, disabled }) {
+  const RowIcon = icon;
   return (
-    <div className="flex items-center justify-between py-3.5 border-b border-border/50 last:border-0">
+    <div className="flex items-center justify-between gap-4 border-b border-border/50 py-3.5 last:border-0">
       <div className="flex items-start gap-3">
-        <div className="w-8 h-8 bg-secondary rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-          <IconComponent className="w-4 h-4 text-muted-foreground" />
+        <div className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-secondary">
+          <RowIcon className="h-4 w-4 text-muted-foreground" />
         </div>
         <div>
-          <div className="text-sm font-medium text-foreground">{label}</div>
-          <div className="text-xs text-muted-foreground mt-0.5">{desc}</div>
+          <div className="text-sm font-semibold text-foreground">{label}</div>
+          <div className="mt-0.5 text-xs leading-5 text-muted-foreground">{desc}</div>
         </div>
       </div>
-      <Toggle checked={checked} onChange={onChange} />
+      <Toggle checked={checked} onChange={onChange} disabled={disabled} />
     </div>
   );
 }
 
-const inputClass = 'w-full px-3 py-2.5 bg-input-background border border-border rounded-xl text-foreground text-sm focus:outline-none focus:border-blue-500 transition-all';
-const labelClass = 'block text-xs font-medium text-muted-foreground mb-1.5';
+function SaveBanner({ saved }) {
+  if (!saved) return null;
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs font-semibold text-green-500">
+      <Check className="h-4 w-4" />
+      Settings saved
+    </div>
+  );
+}
 
 export default function SystemSettings() {
   const [activeTab, setActiveTab] = useState('notifications');
   const [saved, setSaved] = useState(false);
-  const [localServer, setLocalServer] = useState({ protocol: 'http', host: '192.168.1.10', port: '4000', timeoutMs: 2500, discoveryEnabled: false, lastSuccessfulConnection: null });
+  const [localServer, setLocalServer] = useState({ protocol: 'http', host: '192.168.100.8', port: '4000', timeoutMs: 2500, discoveryEnabled: false, lastSuccessfulConnection: null });
   const [localTest, setLocalTest] = useState('');
-  const [settings, setSettings] = useState({
-    // Notifications
-    criticalAlerts: true,
-    warningAlerts: true,
-    incidentUpdates: true,
-    dispatchNotifs: true,
-    emailAlerts: true,
-    smsAlerts: false,
-    soundAlerts: true,
-    browserNotifs: true,
-    // Map
-    satelliteDefault: false,
-    heatmapEnabled: true,
-    dangerZones: true,
-    autoRefresh: true,
-    clusterMarkers: true,
-    trafficLayer: false,
-    // AI
-    aiPredictions: true,
-    hotspotHighlight: true,
-    riskAlerts: true,
-    autoReroute: false,
-    weeklyReports: true,
-    // Preferences
-    darkMode: true,
-    compactView: false,
-    autoLogout: true,
-    showCoordinates: false,
-    notifSound: true,
-    twelveHourClock: false,
-  });
+  const { isDarkMode, setThemeMode } = useTheme();
+  const {
+    fontSizeIndex,
+    setFontSizeIndex,
+    zoomIndex,
+    setZoomIndex,
+    resetAll,
+    fontLabel,
+    zoomLabel,
+  } = useAccessibility();
+  const {
+    preferences,
+    updatePreferences,
+    requestBrowserPermission,
+    clearAll,
+    notifications,
+  } = useNotifications();
 
-  const update = (key, val) => setSettings(s => ({ ...s, [key]: val }));
-  const updateLocal = (key, val) => setLocalServer(s => ({ ...s, [key]: val }));
+  const localServerOrigin = useMemo(() => localServerUrl(localServer), [localServer]);
 
   useEffect(() => {
     getLocalServerConfig().then(setLocalServer).catch(() => undefined);
   }, []);
 
-  const handleSave = () => {
+  const flashSaved = () => {
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    window.setTimeout(() => setSaved(false), 1800);
   };
+
+  const updateLocal = (key, value) => setLocalServer(current => ({ ...current, [key]: value }));
 
   const saveLocal = async () => {
     const next = await saveLocalServerConfig(localServer);
     setLocalServer(next);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    await checkConnection({ force: true });
+    flashSaved();
   };
 
   const testLocal = async () => {
     setLocalTest('Testing connection...');
     const ok = await checkLocalHealth(localServer);
-    if (ok) {
-      const next = await saveLocalServerConfig({ ...localServer, lastSuccessfulConnection: new Date().toISOString() });
-      setLocalServer(next);
-      setLocalTest('Local ALERT-CIA server connected.');
-    } else {
+    if (!ok) {
       setLocalTest('Local ALERT-CIA server is unreachable.');
+      return;
     }
+    const next = await saveLocalServerConfig({ ...localServer, lastSuccessfulConnection: new Date().toISOString() });
+    setLocalServer(next);
+    setLocalTest('Local ALERT-CIA server connected.');
+    await checkConnection({ force: true });
+  };
+
+  const resetLocal = async () => {
+    const next = await resetLocalServerConfig();
+    setLocalServer(next);
+    setLocalTest('');
+    flashSaved();
+  };
+
+  const enableBrowserNotifications = async value => {
+    if (!value) {
+      updatePreferences({ browserEnabled: false });
+      return;
+    }
+    const permission = await requestBrowserPermission();
+    if (permission !== 'granted') updatePreferences({ browserEnabled: false });
   };
 
   return (
-    <div className="p-5 max-w-3xl mx-auto bg-background min-h-full transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-          Settings
-        </h1>
-        <p className="text-muted-foreground text-xs mt-0.5">Configure your ALERT-CIA preferences and notification behavior</p>
+    <div className="mx-auto min-h-full max-w-3xl bg-background p-5 transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>Settings</h1>
+          <p className="mt-0.5 text-xs text-muted-foreground">Configure working ALERT-CIA device settings.</p>
+        </div>
+        <SaveBanner saved={saved} />
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-secondary/50 border border-border rounded-xl p-1 mb-6">
+      <div className="mb-6 flex gap-1 rounded-lg border border-border bg-secondary/50 p-1">
         {tabs.map(tab => {
-          const IconComponent = tab.icon;
+          const Icon = tab.icon;
           return (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-medium transition-all ${
-              activeTab === tab.id ? 'bg-blue-600 text-white shadow' : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <IconComponent className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">{tab.label}</span>
-          </button>
-        )})}
+            <button
+              type="button"
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex-1 rounded-md px-2 py-2.5 text-xs font-semibold transition ${activeTab === tab.id ? 'bg-blue-600 text-white shadow' : 'text-muted-foreground hover:text-foreground'}`}
+            >
+              <span className="inline-flex items-center justify-center gap-1.5">
+                <Icon className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">{tab.label}</span>
+              </span>
+            </button>
+          );
+        })}
       </div>
 
-      {/* Tab Content */}
-      <div className="bg-card border border-border rounded-2xl p-5 transition-colors duration-300">
-        {/* Notifications */}
+      <div className="rounded-lg border border-border bg-card p-5">
         {activeTab === 'notifications' && (
-          <div className="space-y-0">
+          <div>
             <div className="mb-4">
-              <h3 className="text-sm font-semibold text-foreground mb-0.5">Alert Notifications</h3>
-              <p className="text-xs text-muted-foreground">Configure how you receive emergency alerts and updates</p>
+              <h2 className="text-sm font-bold text-foreground">Realtime Notifications</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Controls apply to cloud realtime events and local server events.</p>
             </div>
-            <SettingRow icon={AlertTriangle} label="Critical Incident Alerts" desc="Receive immediate alerts for critical emergencies" checked={settings.criticalAlerts} onChange={v => update('criticalAlerts', v)} />
-            <SettingRow icon={Bell} label="Warning Level Alerts" desc="Notifications for warning severity incidents" checked={settings.warningAlerts} onChange={v => update('warningAlerts', v)} />
-            <SettingRow icon={Radio} label="Incident Status Updates" desc="Updates when incident status changes" checked={settings.incidentUpdates} onChange={v => update('incidentUpdates', v)} />
-            <SettingRow icon={Radio} label="Dispatch Notifications" desc="Alerts when teams are dispatched or arrive on scene" checked={settings.dispatchNotifs} onChange={v => update('dispatchNotifs', v)} />
-
-            <div className="py-3 border-b border-border/50">
-              <h4 className="text-xs font-semibold text-blue-400 uppercase tracking-wide mb-3">Notification Channels</h4>
-              <SettingRow icon={Mail} label="Email Alerts" desc="Send incident alerts to registered email" checked={settings.emailAlerts} onChange={v => update('emailAlerts', v)} />
-            </div>
-            <SettingRow icon={Phone} label="SMS Alerts" desc="Receive SMS for critical incidents (carrier charges may apply)" checked={settings.smsAlerts} onChange={v => update('smsAlerts', v)} />
-            <SettingRow icon={Volume2} label="Sound Alerts" desc="Play audio notification on new incidents" checked={settings.soundAlerts} onChange={v => update('soundAlerts', v)} />
-            <SettingRow icon={Globe} label="Browser Notifications" desc="Show desktop notification popups" checked={settings.browserNotifs} onChange={v => update('browserNotifs', v)} />
-
-            <div className="mt-5 pt-4 border-t border-border">
-              <label className={labelClass}>Alert Email Recipients</label>
-              <input
-                type="text"
-                defaultValue="admin.santos@mdrrmo.gov.ph, dispatch@mdrrmo.gov.ph"
-                className={inputClass}
-              />
-              <p className="text-[10px] text-muted-foreground/60 mt-1">Separate multiple emails with commas</p>
+            <SettingRow icon={Bell} label="In-app notifications" desc="Show alerts in the notification drawer." checked={preferences.inAppEnabled} onChange={value => updatePreferences({ inAppEnabled: value })} />
+            <SettingRow icon={Bell} label="PCR updates" desc="Notify when patient care reports are submitted or updated." checked={preferences.pcrEnabled} onChange={value => updatePreferences({ pcrEnabled: value })} />
+            <SettingRow icon={Radio} label="Dispatch updates" desc="Notify when dispatch status changes locally or in cloud." checked={preferences.dispatchEnabled} onChange={value => updatePreferences({ dispatchEnabled: value })} />
+            <SettingRow icon={DatabaseZap} label="Incident and response updates" desc="Notify when response records change in cloud." checked={preferences.incidentEnabled} onChange={value => updatePreferences({ incidentEnabled: value })} />
+            <SettingRow icon={Volume2} label="Notification sound" desc="Play a short tone when a new allowed notification arrives." checked={preferences.soundEnabled} onChange={value => updatePreferences({ soundEnabled: value })} />
+            <SettingRow icon={Bell} label="Browser popups" desc="Use the operating system browser notification permission." checked={preferences.browserEnabled} onChange={enableBrowserNotifications} />
+            <SettingRow icon={Bell} label="Critical only" desc="Suppress normal updates and show only critical or urgent notifications." checked={preferences.criticalOnly} onChange={value => updatePreferences({ criticalOnly: value })} />
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+              <div className="text-xs text-muted-foreground">{notifications.length} notifications stored on this device.</div>
+              <button type="button" onClick={clearAll} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary">
+                Clear notification history
+              </button>
             </div>
           </div>
         )}
 
-        {/* Map Config */}
-        {activeTab === 'map' && (
+        {activeTab === 'display' && (
           <div>
             <div className="mb-4">
-              <h3 className="text-sm font-semibold text-foreground mb-0.5">Map Display Configuration</h3>
-              <p className="text-xs text-muted-foreground">Customize map appearance and real-time features</p>
+              <h2 className="text-sm font-bold text-foreground">Display and Accessibility</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">These preferences apply immediately on this device.</p>
             </div>
-            <SettingRow icon={Map} label="Satellite View Default" desc="Start map in satellite mode by default" checked={settings.satelliteDefault} onChange={v => update('satelliteDefault', v)} />
-            <SettingRow icon={Map} label="Heatmap Layer" desc="Show incident density heatmap overlay" checked={settings.heatmapEnabled} onChange={v => update('heatmapEnabled', v)} />
-            <SettingRow icon={Shield} label="Danger Zone Overlay" desc="Display hazard zone boundaries on map" checked={settings.dangerZones} onChange={v => update('dangerZones', v)} />
-            <SettingRow icon={Radio} label="Auto-Refresh Map" desc="Automatically update map with new incidents" checked={settings.autoRefresh} onChange={v => update('autoRefresh', v)} />
-            <SettingRow icon={Map} label="Cluster Markers" desc="Group nearby markers at lower zoom levels" checked={settings.clusterMarkers} onChange={v => update('clusterMarkers', v)} />
-            <SettingRow icon={Map} label="Traffic Layer" desc="Show live traffic conditions on map" checked={settings.trafficLayer} onChange={v => update('trafficLayer', v)} />
-
-            <div className="mt-5 pt-4 border-t border-border space-y-4">
+            <div className="grid gap-4">
               <div>
-                <label className={labelClass}>Default Map Center</label>
-                <input type="text" defaultValue="16.7023° N, 121.6722° E (Echague, Isabela)" className={inputClass} />
-              </div>
-              <div>
-                <label className={labelClass}>Map Refresh Interval</label>
-                <select className={inputClass}>
-                  <option>Every 10 seconds</option>
-                  <option>Every 30 seconds</option>
-                  <option>Every 1 minute</option>
-                  <option>Manual only</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelClass}>Default Zoom Level</label>
-                <input type="range" min="10" max="18" defaultValue="14" className="w-full accent-blue-500" />
-                <div className="flex justify-between text-[10px] text-muted-foreground/60 mt-1">
-                  <span>Town</span>
-                  <span>City</span>
-                  <span>Street</span>
+                <label className={labelClass}>Theme</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setThemeMode('light')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${!isDarkMode ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-border text-muted-foreground hover:bg-secondary'}`}>Light</button>
+                  <button type="button" onClick={() => setThemeMode('dark')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-border text-muted-foreground hover:bg-secondary'}`}>Dark</button>
                 </div>
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* AI Settings */}
-        {activeTab === 'ai' && (
-          <div>
-            <div className="mb-4">
-              <h3 className="text-sm font-semibold text-foreground mb-0.5">AI Spatial-Temporal Intelligence</h3>
-              <p className="text-xs text-muted-foreground">Configure AI prediction and analysis settings</p>
-            </div>
-            <div className="p-3 mb-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-              <div className="flex items-center gap-2">
-                <Brain className="w-4 h-4 text-blue-400" />
-                <span className="text-xs text-blue-400 font-medium">AI Model Status: <strong className="text-green-400">Active</strong> — Confidence: 87%</span>
-              </div>
-            </div>
-            <SettingRow icon={Brain} label="AI Predictive Analysis" desc="Enable spatial-temporal AI accident prediction" checked={settings.aiPredictions} onChange={v => update('aiPredictions', v)} />
-            <SettingRow icon={AlertTriangle} label="Hotspot Highlighting" desc="Automatically highlight predicted accident zones" checked={settings.hotspotHighlight} onChange={v => update('hotspotHighlight', v)} />
-            <SettingRow icon={Bell} label="Predictive Risk Alerts" desc="Alert dispatchers of upcoming high-risk periods" checked={settings.riskAlerts} onChange={v => update('riskAlerts', v)} />
-            <SettingRow icon={Map} label="Auto-Reroute Suggestions" desc="Suggest alternate routes to avoid hazard zones" checked={settings.autoReroute} onChange={v => update('autoReroute', v)} />
-            <SettingRow icon={Radio} label="Weekly AI Reports" desc="Generate weekly prediction accuracy reports" checked={settings.weeklyReports} onChange={v => update('weeklyReports', v)} />
-
-            <div className="mt-5 pt-4 border-t border-border space-y-4">
               <div>
-                <label className={labelClass}>Prediction Window</label>
-                <select className={inputClass}>
-                  <option>Next 6 hours</option>
-                  <option>Next 12 hours</option>
-                  <option>Next 24 hours</option>
-                  <option>Next 48 hours</option>
-                </select>
+                <label className={labelClass}>Text size: {fontLabel}</label>
+                <input type="range" min="0" max="3" value={fontSizeIndex} onChange={event => setFontSizeIndex(Number(event.target.value))} className="w-full accent-blue-500" />
               </div>
               <div>
-                <label className={labelClass}>Risk Threshold</label>
-                <input type="range" min="0" max="100" defaultValue="60" className="w-full accent-red-500" />
-                <div className="flex justify-between text-[10px] text-muted-foreground/60 mt-1">
-                  <span>Low (Alert more)</span>
-                  <span>High (Alert less)</span>
-                </div>
+                <label className={labelClass}>Interface zoom: {zoomLabel}</label>
+                <input type="range" min="0" max="3" value={zoomIndex} onChange={event => setZoomIndex(Number(event.target.value))} className="w-full accent-blue-500" />
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* User Preferences */}
-        {activeTab === 'preferences' && (
-          <div>
-            <div className="mb-4">
-              <h3 className="text-sm font-semibold text-foreground mb-0.5">User Preferences</h3>
-              <p className="text-xs text-muted-foreground">Personalize your ALERT-CIA experience</p>
-            </div>
-            <SettingRow icon={User} label="Dark Mode" desc="Use dark theme for the dashboard (recommended)" checked={settings.darkMode} onChange={v => update('darkMode', v)} />
-            <SettingRow icon={Sliders} label="Compact View" desc="Show more information with reduced spacing" checked={settings.compactView} onChange={v => update('compactView', v)} />
-            <SettingRow icon={Shield} label="Auto-Logout" desc="Automatically logout after 30 minutes of inactivity" checked={settings.autoLogout} onChange={v => update('autoLogout', v)} />
-            <SettingRow icon={Map} label="Show Coordinates" desc="Display GPS coordinates on map markers" checked={settings.showCoordinates} onChange={v => update('showCoordinates', v)} />
-            <SettingRow icon={Volume2} label="Notification Sound" desc="Play sound for system notifications" checked={settings.notifSound} onChange={v => update('notifSound', v)} />
-            <SettingRow icon={Radio} label="12-Hour Clock" desc="Display time in 12-hour format (default: 24-hour)" checked={settings.twelveHourClock} onChange={v => update('twelveHourClock', v)} />
-
-            <div className="mt-5 pt-4 border-t border-border space-y-4">
-              <div>
-                <label className={labelClass}>Language</label>
-                <select className={inputClass}>
-                  <option>English</option>
-                  <option>Filipino</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelClass}>Timezone</label>
-                <select className={inputClass}>
-                  <option>Asia/Manila (PHT, UTC+8)</option>
-                </select>
+              <div className="flex justify-end">
+                <button type="button" onClick={resetAll} className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary">
+                  <RotateCcw className="h-4 w-4" />
+                  Reset display settings
+                </button>
               </div>
             </div>
           </div>
@@ -307,63 +217,51 @@ export default function SystemSettings() {
         {activeTab === 'local-server' && (
           <div>
             <div className="mb-4">
-              <h3 className="text-sm font-semibold text-foreground mb-0.5">Local ALERT-CIA Server</h3>
-              <p className="text-xs text-muted-foreground">Configure LAN fallback used when Supabase cloud is unreachable.</p>
+              <h2 className="text-sm font-bold text-foreground">Local ALERT-CIA Server</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">Used by tablets on the ALERT-CIA Wi-Fi when internet is unavailable.</p>
             </div>
             <div className="grid gap-4">
-              <div className="grid sm:grid-cols-3 gap-3">
+              <div className="grid gap-3 sm:grid-cols-3">
                 <div>
                   <label className={labelClass}>Protocol</label>
-                  <select className={inputClass} value={localServer.protocol} onChange={e => updateLocal('protocol', e.target.value)}>
+                  <select className={inputClass} value={localServer.protocol} onChange={event => updateLocal('protocol', event.target.value)}>
                     <option value="http">HTTP</option>
                     <option value="https">HTTPS</option>
                   </select>
                 </div>
                 <div>
-                  <label className={labelClass}>Hostname or IP Address</label>
-                  <input className={inputClass} value={localServer.host} onChange={e => updateLocal('host', e.target.value)} placeholder="192.168.1.10 or alertcia.local" />
+                  <label className={labelClass}>Hostname or IP address</label>
+                  <input className={inputClass} value={localServer.host} onChange={event => updateLocal('host', event.target.value)} placeholder="192.168.100.8" />
                 </div>
                 <div>
                   <label className={labelClass}>Port</label>
-                  <input className={inputClass} value={localServer.port} onChange={e => updateLocal('port', e.target.value)} />
+                  <input className={inputClass} value={localServer.port} onChange={event => updateLocal('port', event.target.value)} />
                 </div>
               </div>
-              <div className="grid sm:grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className={labelClass}>Connection Timeout</label>
-                  <input type="number" min="500" step="250" className={inputClass} value={localServer.timeoutMs} onChange={e => updateLocal('timeoutMs', e.target.value)} />
+                  <label className={labelClass}>Connection timeout</label>
+                  <input type="number" min="500" step="250" className={inputClass} value={localServer.timeoutMs} onChange={event => updateLocal('timeoutMs', event.target.value)} />
                 </div>
-                <div className="rounded-xl border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-                  <div className="font-semibold text-foreground">Last successful connection</div>
+                <div className="rounded-lg border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
+                  <div className="font-semibold text-foreground">Current local URL</div>
+                  <div className="mt-1 break-all">{localServerOrigin}</div>
+                  <div className="mt-2 font-semibold text-foreground">Last successful connection</div>
                   <div className="mt-1">{localServer.lastSuccessfulConnection ? new Date(localServer.lastSuccessfulConnection).toLocaleString('en-PH', { hour12: false }) : 'Never'}</div>
                 </div>
               </div>
-              <SettingRow icon={Radio} label="Automatic Discovery" desc="Try hostname discovery, while keeping manual IP fallback available" checked={Boolean(localServer.discoveryEnabled)} onChange={v => updateLocal('discoveryEnabled', v)} />
               {localTest && <div className={`rounded-lg border px-3 py-2 text-xs ${localTest.includes('connected') ? 'border-green-500/30 bg-green-500/10 text-green-500' : localTest.includes('Testing') ? 'border-blue-500/30 bg-blue-500/10 text-blue-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}>{localTest}</div>}
               <div className="flex flex-wrap justify-end gap-2">
-                <button onClick={testLocal} className="rounded-xl bg-secondary px-4 py-2.5 text-sm font-semibold">Test Connection</button>
-                <button onClick={async () => setLocalServer(await resetLocalServerConfig())} className="rounded-xl border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground">Reset Configuration</button>
-                <button onClick={saveLocal} className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">Save Configuration</button>
+                <button type="button" onClick={testLocal} className="rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold">Test Connection</button>
+                <button type="button" onClick={resetLocal} className="rounded-lg border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground">Reset</button>
+                <button type="button" onClick={saveLocal} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">
+                  <Save className="h-4 w-4" />
+                  Save
+                </button>
               </div>
             </div>
           </div>
         )}
-
-        {/* Save Button */}
-        <div className="mt-6 pt-4 border-t border-border flex items-center justify-between">
-          <button className="text-xs text-muted-foreground hover:text-foreground transition-colors">
-            Reset to defaults
-          </button>
-          <button
-            onClick={handleSave}
-            className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-semibold transition-all ${
-              saved ? 'bg-green-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
-            }`}
-          >
-            <Save className="w-4 h-4" />
-            {saved ? '✓ Saved!' : 'Save Settings'}
-          </button>
-        </div>
       </div>
     </div>
   );

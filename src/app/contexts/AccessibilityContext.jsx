@@ -7,7 +7,9 @@ import {
   useRef,
 } from 'react';
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const FONT_SIZES = [16, 18, 20, 22];
+// eslint-disable-next-line react-refresh/only-export-components
 export const ZOOM_LEVELS = [1, 1.1, 1.2, 1.35];
 
 const FONT_LABELS = ['Default (16px)', 'Large (18px)', 'X-Large (20px)', 'XX-Large (22px)'];
@@ -165,12 +167,14 @@ export function AccessibilityProvider({ children }) {
         fontSizeIndex,
         currentFontSize: FONT_SIZES[fontSizeIndex],
         fontLabel: FONT_LABELS[fontSizeIndex],
+        setFontSizeIndex,
         increaseFontSize,
         decreaseFontSize,
         resetFontSize,
         zoomIndex,
         currentZoom: ZOOM_LEVELS[zoomIndex],
         zoomLabel: ZOOM_LABELS[zoomIndex],
+        setZoomIndex,
         increaseZoom,
         decreaseZoom,
         resetZoom,
@@ -192,6 +196,7 @@ export function AccessibilityProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAccessibility() {
   const context = useContext(AccessibilityContext);
   if (!context) {
