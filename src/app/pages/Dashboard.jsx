@@ -13,6 +13,7 @@ import { filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/a
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { getIncidentStatusLabel, isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
+import { computeAverageResponseMinutes, formatResponseDuration } from '../utils/responseTime';
 import {
   AMBULANCE_STATUSES,
   createAmbulanceUnit,
@@ -136,6 +137,12 @@ export default function Dashboard() {
     return rows;
   };
 
+  const refreshDispatches = async () => {
+    const rows = await listDispatchRecords({ limit: 500 });
+    setDispatches(rows);
+    return rows;
+  };
+
   const loadDashboard = async () => {
     setLoading(true);
     setError('');
@@ -196,10 +203,32 @@ export default function Dashboard() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!supabase) return undefined;
+
+    const channel = supabase
+      .channel('dashboard-dispatch-forms')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'dispatch_forms' },
+        () => {
+          refreshDispatches().catch((requestError) => {
+            setError(requestError.message || 'Unable to refresh dispatch records.');
+          });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
   const activeResponses = useMemo(() => incidents.filter(i => isAmbulanceAssigned(i.status)), [incidents]);
   const availableAmbulances = ambulanceUnits.filter(unit => getAmbulanceStatus(unit) === 'available').length;
   const ambulanceTotal = ambulanceUnits.length;
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status)).slice(0, 6);
+  const avgResponseMinutes = useMemo(() => computeAverageResponseMinutes(dispatches), [dispatches]);
   const analyticsIncidents = useMemo(() => incidents.map(incident => ({
     ...incident,
     barangay: incident.barangay,
@@ -254,8 +283,8 @@ export default function Dashboard() {
     },
     {
       label: 'Avg Response Time',
-      value: '-',
-      change: 'Awaiting dispatch timing data',
+      value: avgResponseMinutes == null ? '-' : formatResponseDuration(avgResponseMinutes),
+      change: avgResponseMinutes == null ? 'Awaiting dispatch timing data' : 'Based on dispatch and arrival times',
       icon: Clock,
       color: 'text-purple-400',
       bg: 'bg-purple-500/10',
@@ -272,7 +301,7 @@ export default function Dashboard() {
       border: availableAmbulances <= 2 ? 'border-red-500/20' : 'border-purple-500/20',
       trend: availableAmbulances <= 2 ? 'up' : 'neutral',
     },
-  ], [activeIncidents.length, activeResponses, ambulanceTotal, availableAmbulances, todayAnalytics]);
+  ], [activeIncidents.length, activeResponses, ambulanceTotal, availableAmbulances, avgResponseMinutes, todayAnalytics]);
 
   const openAmbulancePanel = () => {
     setAmbulancePanelOpen(true);

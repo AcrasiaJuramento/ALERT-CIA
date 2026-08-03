@@ -3,6 +3,7 @@ import {
   dispatchPayloadFromForm,
   dispatchToApp,
   isValidIncidentCoordinate,
+  patientBirthdayFromRecord,
   responsePayloadFromDispatch,
   toDbDispatchStatus,
 } from "./mappers";
@@ -18,6 +19,53 @@ const DISPATCH_SELECT = `
     assigned_unit:ambulance_units(id, call_sign, plate_number)
   ),
   dispatch_patients(*)
+`;
+
+const DISPATCH_LIST_SELECT = `
+  id,
+  client_generated_id,
+  response_id,
+  dispatch_time,
+  arrival_scene_time,
+  departure_scene_time,
+  arrival_hospital_time,
+  departure_hospital_time,
+  arrival_office_time,
+  hospital_name,
+  number_of_patients,
+  assistance_needed,
+  notes,
+  status,
+  sent_at,
+  created_at,
+  updated_at,
+  response:responses(
+    id,
+    client_generated_id,
+    response_number,
+    date_of_incident,
+    time_of_incident,
+    place_of_incident,
+    location_text,
+    latitude,
+    longitude,
+    patient_name,
+    patient_age,
+    patient_birthday,
+    patient_sex,
+    patient_address,
+    initial_assessment,
+    caller_name,
+    caller_contact,
+    caller_address,
+    responding_team_id,
+    assigned_unit_id,
+    resolved_at,
+    status,
+    barangay:barangays(id, name, normalized_name),
+    responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
+    assigned_unit:ambulance_units(id, call_sign)
+  )
 `;
 
 async function resolveDispatchIds(form) {
@@ -45,17 +93,19 @@ async function replaceDispatchPatients(client, dispatchFormId, patients = []) {
   if (!patients.length) return;
 
   const payload = patients.map((patient, index) => ({
+    id: patient.id || patient.dispatchPatientId || patient.patientClientId || undefined,
     dispatch_form_id: dispatchFormId,
+    client_generated_id: patient.patientClientId || patient.id || patient.dispatchPatientId || null,
     patient_order: index + 1,
     patient_name: patient.name || null,
     age: patient.age ? Number(patient.age) : null,
-    birthday: patient.birthdate || null,
+    birthday: patientBirthdayFromRecord(patient),
     sex: patient.gender || null,
     address: patient.address || null,
     assessment_findings: patient.assessmentFindings || null,
   }));
 
-  const { error } = await client.from("dispatch_patients").insert(payload);
+  const { error } = await client.from("dispatch_patients").upsert(payload, { onConflict: "id" });
   if (error) throw error;
 }
 
@@ -63,7 +113,7 @@ export async function listDispatchRecords({ status, teamId, limit = 100, from = 
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("dispatch_forms")
-      .select(DISPATCH_SELECT)
+      .select(DISPATCH_LIST_SELECT)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
@@ -101,16 +151,23 @@ export async function createDispatchRecord(form) {
   }
 
   return runSupabaseRequest(async client => {
+    const responsePayload = responsePayloadFromDispatch(form, ids);
+    if (form.responseId) responsePayload.id = form.responseId;
+
     const { data: response, error: responseError } = await client
       .from("responses")
-      .insert(responsePayloadFromDispatch(form, ids))
+      .upsert(responsePayload, { onConflict: "id" })
       .select("*")
       .single();
     if (responseError) return { data: null, error: responseError };
 
+    const dispatchPayload = { ...dispatchPayloadFromForm(form), response_id: response.id };
+    const dispatchId = form.dispatchId || form.id;
+    if (dispatchId) dispatchPayload.id = dispatchId;
+
     const { data: dispatch, error: dispatchError } = await client
       .from("dispatch_forms")
-      .insert({ ...dispatchPayloadFromForm(form), response_id: response.id })
+      .upsert(dispatchPayload, { onConflict: "id" })
       .select("*")
       .single();
     if (dispatchError) return { data: null, error: dispatchError };
@@ -132,7 +189,9 @@ export async function updateDispatchRecord(dispatchId, form) {
     throw new Error("A responding team is required before saving this dispatch.");
   }
   const existing = await getDispatchRecord(dispatchId);
-  if (!existing) throw new Error("Dispatch record was not found.");
+  if (!existing) {
+    return createDispatchRecord({ ...form, id: dispatchId, dispatchId: form.dispatchId || dispatchId });
+  }
 
   return runSupabaseRequest(async client => {
     const { error: responseError } = await client

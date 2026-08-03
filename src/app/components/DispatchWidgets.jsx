@@ -1,9 +1,12 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { X, FileText, Edit3, Send } from "lucide-react";
 
-const DISPATCH_STATUSES = {
-  SENT: "Sent",
-};
+const isPcrCompleted = record =>
+  String(record?.status || "").includes("PCR Completed")
+  || String(record?.localStatus || "").includes("PCR Completed")
+  || ["Submitted", "Submitted Locally", "Verified"].includes(record?.status)
+  || ["Submitted Locally", "Verified"].includes(record?.localStatus);
 
 const checkbox = (value) =>
   value ? "inline-flex h-4 w-4 items-center justify-center rounded-sm border border-black text-[10px] font-bold" : "inline-flex h-4 w-4 rounded-sm border border-black";
@@ -38,6 +41,8 @@ const CheckboxLabel = ({ checked, label }) => (
 const getPatient = (selected, index) => selected?.patients?.[index] || {};
 
 const yes = (val) => val === true || val === "yes" || val === "Yes" || val === "+" || val === "positive";
+const hasNature = (record, label, legacyKey) => Boolean(record?.[legacyKey]) || (record?.natureTypes || []).includes(label);
+const hasAssistance = (record, label, legacyKey) => Boolean(record?.[legacyKey]) || (record?.assistanceNeeded || []).includes(label);
 
 export default function DispatchPreviewModal({
   selected,
@@ -48,11 +53,24 @@ export default function DispatchPreviewModal({
   send,
   findLinkedPCR,
 }) {
+  React.useEffect(() => {
+    if (!selected) return undefined;
+    const closeOnEscape = event => event.key === "Escape" && setSelected(null);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [selected, setSelected]);
+
   if (!selected) return null;
 
   const patient1 = getPatient(selected, 0);
   const patient2 = getPatient(selected, 1);
   const patient3 = getPatient(selected, 2);
+  const linkedPcr = selected.linkedPcr || selected.pcr || findLinkedPCR?.(selected);
 
   const patientCount =
     selected.numberOfPatients ||
@@ -164,11 +182,11 @@ export default function DispatchPreviewModal({
     </div>
   );
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-3">
-      <div className="flex max-h-[95vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
+  return createPortal((
+    <div className="fixed inset-0 z-[10000] flex items-start justify-center overflow-y-auto bg-black/70 p-3 md:p-5" role="dialog" aria-modal="true" onMouseDown={() => setSelected(null)}>
+      <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-7xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onMouseDown={event => event.stopPropagation()}>
         {/* Modal Header */}
-        <div className="flex items-center justify-between gap-3 border-b border-border p-4 print:hidden">
+        <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-card p-4 print:hidden">
           <div>
             <h2 className="font-bold">
               {selected.responseNumber || "Dispatch Form Preview"}
@@ -180,7 +198,8 @@ export default function DispatchPreviewModal({
 
           <button
             onClick={() => setSelected(null)}
-            className="rounded-lg p-2 hover:bg-secondary"
+            aria-label="Close dispatch preview"
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"
           >
             <X size={18} />
           </button>
@@ -188,6 +207,14 @@ export default function DispatchPreviewModal({
 
         {/* Document Body */}
         <div className="overflow-auto bg-muted/20 p-4">
+          {linkedPcr && (
+            <div className="mx-auto mb-3 grid w-full max-w-275 gap-2 rounded-xl border border-green-500/30 bg-green-500/10 p-3 text-xs text-foreground md:grid-cols-4">
+              <div><span className="text-muted-foreground">Linked PCR</span><div className="font-semibold text-green-400">{linkedPcr.responseNumber || linkedPcr.id}</div></div>
+              <div><span className="text-muted-foreground">Patient</span><div className="font-semibold">{linkedPcr.patientName || patient1.name || "Unnamed patient"}</div></div>
+              <div><span className="text-muted-foreground">Status</span><div className="font-semibold">{linkedPcr.localStatus || linkedPcr.status || "Submitted"}</div></div>
+              <div><span className="text-muted-foreground">Hospital</span><div className="font-semibold">{linkedPcr.hospitalName || linkedPcr.endorsementHospital || "Not entered"}</div></div>
+            </div>
+          )}
           <div className="mx-auto w-full max-w-275 rounded-lg bg-white p-4 text-black shadow">
             {/* Paper */}
             <div className="border border-black">
@@ -247,31 +274,31 @@ export default function DispatchPreviewModal({
                   {/* Left side */}
                   <div className="col-span-8 border-r border-black p-2 text-[11px]">
                     <div className="grid grid-cols-2 gap-y-1">
-                      <CheckboxLabel checked={selected.conduction} label="Conduction" />
-                      <CheckboxLabel checked={selected.transport} label="Transport" />
+                      <CheckboxLabel checked={hasNature(selected, "Conduction", "conduction")} label="Conduction" />
+                      <CheckboxLabel checked={hasNature(selected, "Transport", "transport")} label="Transport" />
 
-                      <CheckboxLabel checked={selected.medical} label="Medical" />
-                      <CheckboxLabel checked={selected.pediatric} label="Pediatric" />
+                      <CheckboxLabel checked={hasNature(selected, "Medical", "medical")} label="Medical" />
+                      <CheckboxLabel checked={hasNature(selected, "Pediatric", "pediatric")} label="Pediatric" />
 
-                      <CheckboxLabel checked={selected.psychiatric} label="Psychiatric" />
-                      <CheckboxLabel checked={selected.surgical} label="Surgical" />
+                      <CheckboxLabel checked={hasNature(selected, "Psychiatric", "psychiatric")} label="Psychiatric" />
+                      <CheckboxLabel checked={hasNature(selected, "Surgical", "surgical")} label="Surgical" />
 
-                      <CheckboxLabel checked={selected.obstetrical} label="Obstetrical" />
-                      <CheckboxLabel checked={selected.drowning} label="Drowning" />
+                      <CheckboxLabel checked={hasNature(selected, "Obstetrical", "obstetrical")} label="Obstetrical" />
+                      <CheckboxLabel checked={hasNature(selected, "Drowning", "drowning")} label="Drowning" />
 
-                      <CheckboxLabel checked={selected.trauma} label="Trauma" />
-                      <CheckboxLabel checked={selected.fall} label="Fall" />
+                      <CheckboxLabel checked={hasNature(selected, "Trauma", "trauma")} label="Trauma" />
+                      <CheckboxLabel checked={hasNature(selected, "Fall", "fall")} label="Fall" />
 
-                      <CheckboxLabel checked={selected.electrocution} label="Electrocution" />
-                      <CheckboxLabel checked={selected.domesticViolence} label="Domestic Violence" />
+                      <CheckboxLabel checked={hasNature(selected, "Electrocution", "electrocution")} label="Electrocution" />
+                      <CheckboxLabel checked={hasNature(selected, "Domestic Violence", "domesticViolence")} label="Domestic Violence" />
 
-                      <CheckboxLabel checked={selected.waterRescueIncident} label="Water Rescue Incident" />
-                      <CheckboxLabel checked={selected.fireIncident} label="Fire Incident" />
+                      <CheckboxLabel checked={hasNature(selected, "Water Rescue Incident", "waterRescueIncident")} label="Water Rescue Incident" />
+                      <CheckboxLabel checked={hasNature(selected, "Fire Incident", "fireIncident")} label="Fire Incident" />
 
-                      <CheckboxLabel checked={selected.assault} label="Assault" />
-                      <CheckboxLabel checked={selected.animalBite} label="Animal Bite" />
+                      <CheckboxLabel checked={hasNature(selected, "Assault", "assault")} label="Assault" />
+                      <CheckboxLabel checked={hasNature(selected, "Animal Bite", "animalBite")} label="Animal Bite" />
 
-                      <CheckboxLabel checked={selected.motorVehicleCrash} label="Motor Vehicle Crash" />
+                      <CheckboxLabel checked={hasNature(selected, "Motor Vehicle Crash", "motorVehicleCrash")} label="Motor Vehicle Crash" />
                     </div>
 
                     <div className="mt-2 border-t border-black pt-2">
@@ -288,29 +315,29 @@ export default function DispatchPreviewModal({
                       <div>
                         <div className="mb-1 font-semibold">Nature:</div>
                         <div className="flex gap-4">
-                          <CheckboxLabel checked={selected.injuryNature === "Self-Inflicted"} label="Self-Inflicted" />
-                          <CheckboxLabel checked={selected.injuryNature === "Accidental"} label="Accidental" />
+                          <CheckboxLabel checked={(selected.injuryNature || selected.incidentNature) === "Self-Inflicted"} label="Self-Inflicted" />
+                          <CheckboxLabel checked={(selected.injuryNature || selected.incidentNature) === "Accidental"} label="Accidental" />
                         </div>
                       </div>
 
                       <div>
                         <div className="font-semibold">If ingestion:</div>
                         <div className="min-h-7 border-b border-black px-1 py-1">
-                          {selected.ingestionDetails || ""}
+                          {selected.ingestionDetails || selected.ifIngestion || selected.ingestionItem || ""}
                         </div>
                       </div>
 
                       <div>
                         <div className="font-semibold">Quantity:</div>
                         <div className="min-h-6 border-b border-black px-1 py-1">
-                          {selected.ingestionQuantity || ""}
+                          {selected.ingestionQuantity || selected.quantity || ""}
                         </div>
                       </div>
 
                       <div>
                         <div className="font-semibold">If Fall:</div>
                         <div className="min-h-6 border-b border-black px-1 py-1">
-                          {selected.fallDetails || ""}
+                          {selected.fallDetails || selected.ifFall || ""}
                         </div>
                       </div>
                     </div>
@@ -343,12 +370,12 @@ export default function DispatchPreviewModal({
               <div className="border-b border-black p-2 text-[11px]">
                 <div className="flex flex-wrap items-center gap-4">
                   <span className="font-bold uppercase">Assistance Needed</span>
-                  <CheckboxLabel checked={selected.assistancePNP} label="PNP" />
-                  <CheckboxLabel checked={selected.assistanceBFP} label="BFP" />
-                  <CheckboxLabel checked={selected.assistanceBrgyOfficials} label="Brgy. Officials" />
-                  <CheckboxLabel checked={selected.assistanceOthers} label="Others" />
+                  <CheckboxLabel checked={hasAssistance(selected, "PNP", "assistancePNP")} label="PNP" />
+                  <CheckboxLabel checked={hasAssistance(selected, "BFP", "assistanceBFP")} label="BFP" />
+                  <CheckboxLabel checked={hasAssistance(selected, "BRGY. OFFICIALS", "assistanceBrgyOfficials")} label="Brgy. Officials" />
+                  <CheckboxLabel checked={hasAssistance(selected, "OTHERS", "assistanceOthers")} label="Others" />
                   <span className="min-w-35 border-b border-black px-1">
-                    {selected.assistanceOthersText || ""}
+                    {selected.assistanceOthersText || selected.assistanceOther || ""}
                   </span>
                 </div>
               </div>
@@ -357,11 +384,11 @@ export default function DispatchPreviewModal({
               <div className="border-b border-black">
                 <div className="grid grid-cols-6 text-[11px]">
                   <PreviewField label="Dispatched Time" value={selected.dispatchedTime} />
-                  <PreviewField label="Arrival at the Scene" value={selected.arrivalAtScene} />
-                  <PreviewField label="Departure at the Scene" value={selected.departureAtScene} />
-                  <PreviewField label="Arrival at the Hospital" value={selected.arrivalAtHospital} />
-                  <PreviewField label="Departure at the Hospital" value={selected.departureAtHospital} />
-                  <PreviewField label="Arrival at the Office" value={selected.arrivalAtOffice} />
+                  <PreviewField label="Arrival at the Scene" value={selected.arrivalAtScene || selected.arrivalScene} />
+                  <PreviewField label="Departure at the Scene" value={selected.departureAtScene || selected.departureScene} />
+                  <PreviewField label="Arrival at the Hospital" value={selected.arrivalAtHospital || selected.arrivalHospital} />
+                  <PreviewField label="Departure at the Hospital" value={selected.departureAtHospital || selected.departureHospital} />
+                  <PreviewField label="Arrival at the Office" value={selected.arrivalAtOffice || selected.arrivalOffice || selected.backToBase} />
                 </div>
               </div>
 
@@ -400,7 +427,7 @@ export default function DispatchPreviewModal({
         </div>
 
         {/* Footer actions */}
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border p-4 print:hidden">
+        <div className="sticky bottom-0 z-30 flex flex-wrap justify-end gap-2 border-t border-border bg-card p-4 print:hidden">
           {canCreate && (
             <button
               onClick={() => edit(selected)}
@@ -420,8 +447,10 @@ export default function DispatchPreviewModal({
           </button>
 
           {canCreate &&
-            selected.status !== DISPATCH_STATUSES.SENT &&
-            !findLinkedPCR(selected) && (
+            typeof send === "function" &&
+            selected.status !== "Sent to Responding Team" &&
+            !isPcrCompleted(selected) &&
+            !linkedPcr && (
               <button
                 onClick={() => send(selected)}
                 className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"
@@ -433,5 +462,5 @@ export default function DispatchPreviewModal({
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }

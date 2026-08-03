@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowUpRight, Circle, Eraser, Hand, Pen, Redo2, RotateCcw, Save, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { ArrowUpRight, Circle, Eraser, Hand, Maximize2, Minimize2, Pen, Redo2, RotateCcw, Save, Trash2, Type, Undo2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { GCS_OPTIONS, INTERVENTIONS } from "../utils/pcrStorage";
+import { randomUuid } from "../utils/uuid";
 
 const anatomyPath = "M150 28c-18 0-29 13-29 31 0 15 9 27 21 31l-5 25-30 18-19 71 13 4 22-59 2 62-13 97 15 3 23-83 23 83 15-3-13-97 2-62 22 59 13-4-19-71-30-18-5-25c12-4 21-16 21-31 0-18-11-31-29-31Z";
 const backPath = "M450 28c-18 0-29 13-29 31 0 15 9 27 21 31l-5 25-30 18-19 71 13 4 22-59 2 62-13 97 15 3 23-83 23 83 15-3-13-97 2-62 22 59 13-4-19-71-30-18-5-25c12-4 21-16 21-31 0-18-11-31-29-31Z";
@@ -29,7 +30,7 @@ export function AnatomyEditor({ value, onSave, onClose }) {
   const [color, setColor] = useState("#dc2626"); const [draft, setDraft] = useState(null); const [zoom, setZoom] = useState(1); const [pan, setPan] = useState({ x: 0, y: 0 });
   const [label, setLabel] = useState("Cut"); const [customLabel, setCustomLabel] = useState(""); const svgRef = useRef(null); const pointerRef = useRef(null);
   const point = e => { const rect = svgRef.current.getBoundingClientRect(); return { x: (e.clientX - rect.left - pan.x) / zoom * (600 / (rect.width / zoom)), y: (e.clientY - rect.top - pan.y) / zoom * (330 / (rect.height / zoom)) }; };
-  const down = e => { e.currentTarget.setPointerCapture(e.pointerId); pointerRef.current = { screen: { x: e.clientX, y: e.clientY }, pan }; if (tool === "pan") return; const p = point(e); if (tool === "text") { const text = label === "Others" ? customLabel : label; if (text) setMarks(m => [...m, { id: crypto.randomUUID(), type: "text", x: p.x, y: p.y, text, color }]); return; } setDraft(tool === "pen" || tool === "eraser" ? { id: crypto.randomUUID(), type: tool, points: [p], color } : { id: crypto.randomUUID(), type: tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color }); };
+  const down = e => { e.currentTarget.setPointerCapture(e.pointerId); pointerRef.current = { screen: { x: e.clientX, y: e.clientY }, pan }; if (tool === "pan") return; const p = point(e); if (tool === "text") { const text = label === "Others" ? customLabel : label; if (text) setMarks(m => [...m, { id: randomUuid(), type: "text", x: p.x, y: p.y, text, color }]); return; } setDraft(tool === "pen" || tool === "eraser" ? { id: randomUuid(), type: tool, points: [p], color } : { id: randomUuid(), type: tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color }); };
   const move = e => { if (!pointerRef.current) return; if (tool === "pan") { setPan({ x: pointerRef.current.pan.x + e.clientX - pointerRef.current.screen.x, y: pointerRef.current.pan.y + e.clientY - pointerRef.current.screen.y }); return; } if (!draft) return; const p = point(e); setDraft(d => d.type === "pen" || d.type === "eraser" ? { ...d, points: [...d.points, p] } : { ...d, x2: p.x, y2: p.y }); };
   const up = () => { pointerRef.current = null; if (draft) { setMarks(m => [...m, draft]); setDraft(null); setRedo([]); } };
   const save = () => { const all = draft ? [...marks, draft] : marks; const clone = svgRef.current.cloneNode(true); clone.removeAttribute("style"); clone.setAttribute("xmlns", "http://www.w3.org/2000/svg"); const svg = new XMLSerializer().serializeToString(clone); onSave({ marks: all, image: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}` }); };
@@ -60,14 +61,14 @@ export function AnatomyEditor({ value, onSave, onClose }) {
 }
 
 export function SignaturePad({ value, onChange, label = "Digital Signature" }) {
-  const ref = useRef(null); const drawing = useRef(false);
+  const ref = useRef(null); const drawing = useRef(false); const [expanded, setExpanded] = useState(false);
   useEffect(() => { if (!value) return; const image = new Image(); image.onload = () => ref.current?.getContext("2d").drawImage(image, 0, 0, ref.current.width, ref.current.height); image.src = value; }, [value]);
   const pos = e => { const r = ref.current.getBoundingClientRect(); const p = e.touches?.[0] || e; return { x: (p.clientX-r.left)*(ref.current.width/r.width), y: (p.clientY-r.top)*(ref.current.height/r.height) }; };
   const start = e => { e.preventDefault(); drawing.current = true; const p=pos(e); const c=ref.current.getContext("2d"); c.beginPath(); c.moveTo(p.x,p.y); };
   const move = e => { if(!drawing.current)return; e.preventDefault(); const p=pos(e); const c=ref.current.getContext("2d"); c.lineWidth=2; c.lineCap="round"; c.strokeStyle="#0f172a"; c.lineTo(p.x,p.y); c.stroke(); };
   const end = () => { if (!drawing.current) return; drawing.current=false; onChange(ref.current.toDataURL("image/png")); };
   const clear = () => { ref.current.getContext("2d").clearRect(0,0,ref.current.width,ref.current.height); onChange(""); };
-  return <div><div className="flex justify-between mb-1"><span className="text-xs font-medium text-slate-600">{label}</span><button type="button" onClick={clear} className="text-[11px] text-red-500 flex items-center gap-1"><RotateCcw size={11}/>Clear</button></div><canvas ref={ref} width="520" height="130" onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end} className="w-full h-28 bg-white border border-slate-300 rounded-lg touch-none" /></div>;
+  return <div><div className="flex justify-between mb-1"><span className="text-xs font-medium text-slate-600">{label}</span><div className="flex items-center gap-2"><button type="button" onClick={() => setExpanded(value => !value)} className="text-[11px] text-blue-500 flex items-center gap-1" aria-label={expanded ? "Minimize signature pad" : "Expand signature pad"} title={expanded ? "Minimize" : "Expand"}>{expanded ? <Minimize2 size={11}/> : <Maximize2 size={11}/>}</button><button type="button" onClick={clear} className="text-[11px] text-red-500 flex items-center gap-1"><RotateCcw size={11}/>Clear</button></div></div><canvas ref={ref} width="520" height="130" onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerLeave={end} className={`w-full ${expanded ? "h-[42vh] min-h-72" : "h-28"} bg-white border border-slate-300 rounded-lg touch-none`} /></div>;
 }
 
 const Yn = ({ value }) => <span>{value === "yes" || value === true ? "☒ YES  ☐ NO" : value === "no" || value === false ? "☐ YES  ☒ NO" : "☐ YES  ☐ NO"}</span>;
@@ -75,6 +76,16 @@ const Checked = ({ on }) => <span>{on ? "☒" : "☐"}</span>;
 const Cell = ({ label, value, className = "" }) => <div className={`pcr-cell ${className}`}><b>{label}</b>{value != null && <span> {value || ""}</span>}</div>;
 const PaperCheck = ({ on, label }) => <span className="mr-2">{on ? "[x]" : "[ ]"} {label}</span>;
 const TriageMark = ({ color, label, selected }) => <span className={`pcr-triage pcr-triage-${color} ${selected ? "pcr-triage-selected" : ""}`}>{selected ? "[x]" : "[ ]"} {label}</span>;
+
+const cleanPreviewValue = value => {
+  if (value === null || value === undefined || value === false) return "";
+  return String(value).replace(/\bundefined\b/g, "").replace(/\s*\/\s*\/\s*/g, " / ").replace(/\s{2,}/g, " ").trim();
+};
+const joinPreviewValues = (values, separator = " / ") => values.map(cleanPreviewValue).filter(Boolean).join(separator);
+const previewLabelValue = (label, value) => {
+  const next = cleanPreviewValue(value);
+  return next ? `${label}: ${next}` : "";
+};
 
 function arrayValue(value) {
   return Array.isArray(value) ? value : [];
@@ -89,6 +100,7 @@ function normalizePrintableRecord(record = {}) {
     ...record,
     respondingTeam: record.respondingTeam || record.team || "",
     dispatchTime: record.dispatchTime || record.dispatchedTime || "",
+    groupLeader: record.groupLeader || "",
     airway: arrayValue(record.airway),
     breathing: arrayValue(record.breathing),
     pulseFindings: arrayValue(record.pulseFindings),
@@ -112,18 +124,35 @@ function normalizePrintableRecord(record = {}) {
     signatureNames: objectValue(record.signatureNames),
     signatureDates: objectValue(record.signatureDates),
     gcs: objectValue(record.gcs),
+    gcsRows: arrayValue(record.gcsRows).length ? arrayValue(record.gcsRows) : record.gcs ? [record.gcs] : [],
+    hospitalDate: record.hospitalDate || "",
+    hospitalTime: record.hospitalTime || "",
+    oxygenLpm: record.oxygenLpm || "",
+    oxygenVia: record.oxygenVia || "",
+    bleeding: record.bleeding || "",
+    bleedingLocation: record.bleedingLocation || "",
+    bleedingControlled: record.bleedingControlled || "",
+    capillary: record.capillary || "",
+    painPositive: record.painPositive || "",
+    painScore: record.painScore || "",
+    painOnset: record.painOnset || "",
+    painOther: record.painOther || "",
+    medicalHistoryOther: record.medicalHistoryOther || "",
+    oralIntake: record.oralIntake || "",
+    oralIntakeDateTime: record.oralIntakeDateTime || "",
   };
 }
 
 export function PrintablePCR({ record: sourceRecord, printOnly = false }) {
   if (!sourceRecord) return null;
   const record = normalizePrintableRecord(sourceRecord);
-  const gcsTotal = [record.gcs?.eye, record.gcs?.verbal, record.gcs?.motor].reduce((a,b)=>a+Number(b||0),0);
+  const currentGcs = [...record.gcsRows].reverse().find(row => row?.eye || row?.verbal || row?.motor) || record.gcsRows[record.gcsRows.length - 1] || record.gcs;
+  const gcsTotal = [currentGcs?.eye, currentGcs?.verbal, currentGcs?.motor].reduce((a,b)=>a+Number(b||0),0);
   return <div className={`pcr-paper ${printOnly ? "pcr-print-source" : "pcr-preview"} text-black bg-white`} data-pcr-export-id={record.id}>
     <style>{`@media screen{.pcr-print-source{position:absolute;left:-10000px;width:210mm}}@media print{body *{visibility:hidden!important}.pcr-preview{display:none!important}.pcr-print-source,.pcr-print-source *{visibility:visible!important}.pcr-print-source{position:absolute!important;left:0!important;top:0!important;width:100%!important}.pcr-page{page-break-after:always}.pcr-page:last-child{page-break-after:auto}}.pcr-paper{font-family:Arial,sans-serif;font-size:9px}.pcr-page{padding:7mm}.pcr-title{text-align:center;font-weight:700;font-size:16px;margin:4px}.pcr-grid{display:grid;border-left:1px solid #111;border-top:1px solid #111}.pcr-cell{min-height:25px;padding:4px;border-right:1px solid #111;border-bottom:1px solid #111}.pcr-cell b{font-size:8px;text-transform:uppercase}.pcr-section{text-align:center;font-weight:700;background:#eee;padding:3px;border:1px solid #111;border-bottom:0}.pcr-table{width:100%;border-collapse:collapse}.pcr-table td,.pcr-table th{border:1px solid #111;padding:3px}.pcr-sign{height:55px;object-fit:contain;max-width:100%}.pcr-anatomy{height:235px;width:100%}.pcr-triage{display:inline-block;width:24%;padding:4px 6px;margin-right:1%;border:1px solid #111;text-align:center;font-weight:700}.pcr-triage-red{background:#dc2626;color:#fff}.pcr-triage-yellow{background:#fde047;color:#111}.pcr-triage-green{background:#16a34a;color:#fff}.pcr-triage-black{background:#111827;color:#fff}.pcr-triage-selected{outline:2px solid #111;outline-offset:-3px}`}</style>
     <section className="pcr-page">
       <div className="text-center text-[9px]">Republic of the Philippines<br/>Province of Isabela<br/><b>MUNICIPALITY OF ECHAGUE</b></div><div className="pcr-title">PATIENT CARE REPORT</div><div className="text-center mb-2">Echague Rescue Emergency Medical Service</div>
-      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr 1fr"}}><Cell label="Response No." value={record.responseNumber}/><Cell label="Responding Team" value={record.respondingTeam}/><Cell label="Vehicle" value={record.vehicle}/><Cell label="Driver" value={record.driver}/><Cell label="Main Aider" value={record.mainAider}/><Cell label="Assistant Aider" value={record.assistantAider}/></div>
+      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr 1fr"}}><Cell label="Response No." value={record.responseNumber}/><Cell label="Responding Team" value={record.respondingTeam}/><Cell label="Vehicle" value={record.vehicle}/><Cell label="Driver" value={record.driver}/><Cell label="Main Aider" value={record.mainAider}/><Cell label="Group Leader" value={record.groupLeader}/><Cell label="Assistant Aider" value={record.assistantAider}/></div>
       <div className="pcr-grid mt-1" style={{gridTemplateColumns:"2fr .5fr 1fr .7fr 1fr"}}><Cell label="Patient Name" value={record.patientName}/><Cell label="Age" value={record.age}/><Cell label="Birthday" value={record.birthday}/><Cell label="Gender" value={record.gender}/><Cell label="Civil Status" value={record.civilStatus}/></div>
       <div className="pcr-grid" style={{gridTemplateColumns:"2fr 1.3fr 1fr"}}><Cell label="Address" value={record.address}/><Cell label="Contact Person" value={record.contactPerson}/><Cell label="Contact Number" value={record.contactNumber}/></div>
       <div className="pcr-grid mt-1" style={{gridTemplateColumns:"1fr 1fr 1fr 1fr"}}><Cell label="Nature of Call" value={record.natureOfCall}/><Cell label="Date of Incident" value={record.dateOfIncident}/><Cell label="Time of Incident" value={record.timeOfIncident}/><Cell label="Place of Incident" value={record.placeOfIncident}/></div>
@@ -151,7 +180,7 @@ export function PrintablePCR({ record: sourceRecord, printOnly = false }) {
         </div>
       </div>
       <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1.45fr"}}>
-        <Cell label="Obstetric Data" value={`LMP ${record.obstetric?.lmp} G ${record.obstetric?.g} P ${record.obstetric?.p} EDC ${record.obstetric?.edc} BOW ${record.obstetric?.bow} AOG ${record.obstetric?.aog} BABY ${record.obstetric?.baby} IE ${record.obstetric?.ie} PLACENTA ${record.obstetric?.placenta}`}/>
+        <Cell label="Obstetric Data" value={joinPreviewValues([previewLabelValue("LMP", record.obstetric?.lmp), previewLabelValue("G", record.obstetric?.g), previewLabelValue("P", record.obstetric?.p), previewLabelValue("EDC", record.obstetric?.edc), previewLabelValue("BOW", record.obstetric?.bow), previewLabelValue("AOG", record.obstetric?.aog), previewLabelValue("BABY", record.obstetric?.baby), previewLabelValue("IE", record.obstetric?.ie), previewLabelValue("PLACENTA", record.obstetric?.placenta)], " ")}/>
         <div className="pcr-cell">
           <PaperCheck on={record.crash?.selfAccident} label="SELF-ACCIDENT"/> <PaperCheck on={record.crash?.collision} label="COLLISION"/><br/>
           <b>Vehicle Involved:</b> {record.crash?.vehicle}<br/>
@@ -163,12 +192,12 @@ export function PrintablePCR({ record: sourceRecord, printOnly = false }) {
         <div className="pcr-cell row-span-2"><AnatomyFigure marks={record.bodyMap?.marks} className="pcr-anatomy"/></div>
         <div className="pcr-cell"><b>VITAL SIGNS</b><table className="pcr-table"><thead><tr><th>Time</th><th>BP</th><th>Pulse</th><th>Resp.</th><th>Temp.</th><th>SpO2</th></tr></thead><tbody>{record.vitals.map(v=><tr key={v.id}><td>{v.time}</td><td>{v.bp}</td><td>{v.pulse}</td><td>{v.respiratory}</td><td>{v.temperature}</td><td>{v.oxygen}</td></tr>)}</tbody></table></div>
       </div>
-      <div className="pcr-section">GLASGOW COMA SCALE (GCS)</div><table className="pcr-table"><tbody><tr>{Object.entries(GCS_OPTIONS).map(([k,opts])=><td key={k}><b>{k.toUpperCase()} RESPONSE</b><br/>{opts.map(([n,s])=><span key={s}><Checked on={Number(record.gcs?.[k])===s}/> {n} ({s})<br/></span>)}</td>)}<td><b>TOTAL SCORE</b><br/><span className="text-xl">{gcsTotal || ""}</span><br/>Best Response = 15<br/>Comatose = 8 or less<br/>Unresponsive = 3</td></tr></tbody></table>
-      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Consent for Care" value={record.consentForCare}/><Cell label="Endorsed To / Received By / Hospital" value={`${record.endorsedTo} / ${record.receivedBy} / ${record.endorsementHospital}`}/><Cell label="Endorsement of Valuables" value={record.valuables}/><Cell label="Received By / Contact" value={`${record.valuablesReceivedBy} / ${record.valuablesContact}`}/></div>
+      <div className="pcr-section">GLASGOW COMA SCALE (GCS)</div><table className="pcr-table"><thead><tr><th>Time</th><th>Eye</th><th>Verbal</th><th>Motor</th><th>Total</th></tr></thead><tbody>{record.gcsRows.map((row,index)=>{ const rowTotal = Number(row.eye || 0) + Number(row.verbal || 0) + Number(row.motor || 0); return <tr key={row.id || index}><td>{row.time}</td><td>{row.eye}</td><td>{row.verbal}</td><td>{row.motor}</td><td>{rowTotal || ""}</td></tr>; })}<tr><td colSpan="5"><b>Latest Total Score:</b> <span className="text-xl">{gcsTotal || ""}</span> &nbsp; Best Response = 15; Comatose = 8 or less; Unresponsive = 3</td></tr></tbody></table>
+      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Consent for Care" value={record.consentForCare}/><Cell label="Endorsed To / Received By / Hospital" value={joinPreviewValues([record.endorsedTo, record.receivedBy, record.endorsementHospital])}/><Cell label="Endorsement of Valuables" value={record.valuables}/><Cell label="Received By / Contact" value={joinPreviewValues([record.valuablesReceivedBy, record.valuablesContact])}/></div>
     </section>
     <section className="pcr-page">
-      <div className="pcr-title">PATIENT CARE REPORT - CONTINUATION</div><div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Suspected Spinal Injury" value={record.suspectedSpinal}/><Cell label="Airway" value={record.airway.join(", ")}/><Cell label="Breathing" value={`${record.breathing.join(", ")} O2 ${record.oxygenLpm} LPM via ${record.oxygenVia}`}/><Cell label="Circulation" value={`Pulse: ${record.pulseFindings.join(", ")} Bleeding: ${record.bleeding} ${record.bleedingLocation} Controlled: ${record.bleedingControlled}`}/><Cell label="Capillary Refill / Pupils" value={`${record.capillary}; ${record.pupils.join(", ")}`}/><Cell label="Skin" value={record.skin.join(", ")}/><Cell label="Pain Assessment" value={`${record.painPositive} Score ${record.painScore}; ${record.painOnset}; ${record.painQuality.join(", ")} ${record.painOther}`}/><Cell label="Events Prior to Injury" value={record.eventsPrior}/></div>
-      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Allergies" value={`${record.allergies?.status}; Food: ${record.allergies?.food}; Drug: ${record.allergies?.drug}; Other: ${record.allergies?.other}`}/><Cell label="Medications" value={record.medications.map(m=>`${m.drug} ${m.dose} ${m.dateTime}`).join("; ")}/><Cell label="Medical History" value={`${record.medicalHistory.join(", ")} ${record.medicalHistoryOther}`}/><Cell label="Hospitalization History" value={`${record.hospitalization?.status}; ${record.hospitalization?.date}; ${record.hospitalization?.where}; ${record.hospitalization?.reason}`}/><Cell label="Last Oral Intake" value={`${record.oralIntake} ${record.oralIntakeDateTime}`}/><Cell label="Smoking / Alcohol" value={`Smoke: ${record.smoking?.status} ${record.smoking?.sticks}; Alcohol: ${record.alcohol?.status} ${record.alcohol?.frequency}`}/></div>
+      <div className="pcr-title">PATIENT CARE REPORT - CONTINUATION</div><div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Suspected Spinal Injury" value={record.suspectedSpinal}/><Cell label="Airway" value={record.airway.join(", ")}/><Cell label="Breathing" value={joinPreviewValues([record.breathing.join(", "), record.oxygenLpm && `O2 ${record.oxygenLpm} LPM`, record.oxygenVia && `via ${record.oxygenVia}`], " ")}/><Cell label="Circulation" value={joinPreviewValues([previewLabelValue("Pulse", record.pulseFindings.join(", ")), previewLabelValue("Bleeding", joinPreviewValues([record.bleeding, record.bleedingLocation], " ")), previewLabelValue("Controlled", record.bleedingControlled)], "; ")}/><Cell label="Capillary Refill / Pupils" value={joinPreviewValues([record.capillary, record.pupils.join(", ")], "; ")}/><Cell label="Skin" value={record.skin.join(", ")}/><Cell label="Pain Assessment" value={joinPreviewValues([record.painPositive, previewLabelValue("Score", record.painScore), record.painOnset, record.painQuality.join(", "), record.painOther], "; ")}/><Cell label="Events Prior to Injury" value={record.eventsPrior}/></div>
+      <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Allergies" value={joinPreviewValues([record.allergies?.status, previewLabelValue("Food", record.allergies?.food), previewLabelValue("Drug", record.allergies?.drug), previewLabelValue("Other", record.allergies?.other)], "; ")}/><Cell label="Medications" value={record.medications.map(m=>joinPreviewValues([m.drug, m.dose, m.dateTime], " ")).filter(Boolean).join("; ")}/><Cell label="Medical History" value={joinPreviewValues([record.medicalHistory.join(", "), record.medicalHistoryOther], " ")}/><Cell label="Hospitalization History" value={joinPreviewValues([record.hospitalization?.status, record.hospitalization?.date, record.hospitalization?.where, record.hospitalization?.reason], "; ")}/><Cell label="Last Oral Intake" value={joinPreviewValues([record.oralIntake, record.oralIntakeDateTime], " ")}/><Cell label="Smoking / Alcohol" value={joinPreviewValues([previewLabelValue("Smoke", joinPreviewValues([record.smoking?.status, record.smoking?.sticks], " ")), previewLabelValue("Alcohol", joinPreviewValues([record.alcohol?.status, record.alcohol?.frequency], " "))], "; ")}/></div>
       <div className="pcr-section">INTERVENTIONS</div><table className="pcr-table"><tbody>{INTERVENTIONS.map((item,i)=>i%2===0&&<tr key={item}><td>{item}</td><td><Yn value={record.interventions[item]}/></td><td>{INTERVENTIONS[i+1]}</td><td><Yn value={record.interventions[INTERVENTIONS[i+1]]}/></td></tr>)}</tbody></table>
       <div className="pcr-grid mt-1" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Reason/s for Transfer / Not Admitting" value={record.transferReason}/><Cell label="Name of Hospital / Facility" value={record.hospitalName}/><Cell label="Resident on Duty" value={record.residentOnDuty}/><Cell label="Date / Time" value={`${record.hospitalDate} ${record.hospitalTime}`}/></div>
       <div className="pcr-section">WAIVER (PATIENT'S / VICTIM'S REFUSAL OF TREATMENT AND/OR TRANSPORT)</div><div className="pcr-cell text-justify">I, the undersigned, have been advised that medical assistance on my behalf is necessary and that refusal of medical assistance and/or transportation for further treatment may result in death or imperil my health. Nevertheless, I refuse treatment and/or transport, assume all risks and consequences of my decision, and release the emergency services crew from liability arising from my refusal.<br/><b>Reason:</b> {record.waiverReason}</div>

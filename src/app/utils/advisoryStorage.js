@@ -1,4 +1,5 @@
 import { cachedJsonStorage, setCachedJsonStorage } from './cache';
+import { randomUuid } from './uuid';
 
 export const ADVISORY_STORAGE_KEY = 'alert-cia-advisories';
 export const ADVISORY_EVENT = 'alert-cia-advisories-updated';
@@ -14,7 +15,7 @@ const getNormalizedCoordinates = (advisory) => {
 };
 
 const normalizeAdvisory = (advisory) => ({
-  id: advisory.id || crypto.randomUUID(),
+  id: advisory.id || randomUuid(),
   title: advisory.title || 'Public Advisory',
   message: advisory.message || '',
   severity: advisory.severity || 'warning',
@@ -45,7 +46,7 @@ export function saveAdvisory(advisory) {
   const records = loadAdvisories();
   const next = normalizeAdvisory({
     ...advisory,
-    id: advisory.id || crypto.randomUUID(),
+    id: advisory.id || randomUuid(),
     updatedAt: nowIso(),
     createdAt: advisory.createdAt || nowIso(),
   });

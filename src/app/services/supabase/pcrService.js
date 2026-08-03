@@ -1,5 +1,49 @@
 import { runSupabaseRequest } from "./errors";
-import { isValidIncidentCoordinate, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
+import { isValidIncidentCoordinate, patientBirthdayFromRecord, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
+import { randomUuid } from "../../utils/uuid";
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const TIME_PATTERN = /^\d{1,2}:\d{2}(:\d{2})?$/;
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function validUuid(value) {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+function validTime(value) {
+  return typeof value === "string" && TIME_PATTERN.test(value);
+}
+
+function validDate(value) {
+  return typeof value === "string" && DATE_PATTERN.test(value);
+}
+
+function validNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? String(value) : null;
+}
+
+function lanDispatchParentPayload(record = {}) {
+  const payload = { ...record };
+  const uuidFields = ["id", "dispatchId", "dispatchClientId", "responseId", "responseClientId", "respondingTeamId", "vehicleId", "dispatchPatientId", "patientId"];
+  uuidFields.forEach(field => {
+    if (payload[field] && !validUuid(payload[field])) delete payload[field];
+  });
+  ["dateOfIncident", "birthday"].forEach(field => {
+    if (payload[field] && !validDate(payload[field])) delete payload[field];
+  });
+  ["timeOfIncident", "dispatchedTime", "dispatchTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase"].forEach(field => {
+    if (payload[field] && !validTime(payload[field])) delete payload[field];
+  });
+  const latitude = validNumber(payload.latitude);
+  const longitude = validNumber(payload.longitude);
+  payload.latitude = latitude;
+  payload.longitude = longitude;
+  if (payload.age && !/^\d{1,3}$/.test(String(payload.age))) delete payload.age;
+  if (payload.numberOfPatients && !/^\d+$/.test(String(payload.numberOfPatients))) delete payload.numberOfPatients;
+  return payload;
+}
 
 const PCR_SELECT = `
   *,
@@ -18,8 +62,87 @@ const PCR_SELECT = `
   pcr_attachments(*)
 `;
 
+const PCR_LIGHT_SELECT = `
+  id,
+  client_generated_id,
+  response_id,
+  dispatch_form_id,
+  dispatch_patient_id,
+  responding_team_id,
+  field_officer_id,
+  status,
+  triage,
+  chief_complaint,
+  emergency_types,
+  trauma_types,
+  incident_nature,
+  hospital_name,
+  resident_on_duty,
+  endorsed_to,
+  received_by,
+  transfer_reason,
+  notes,
+  back_to_base_time,
+  completed_at,
+  submitted_at,
+  created_at,
+  updated_at
+`;
+
+const PCR_LIST_SELECT = `
+  id,
+  client_generated_id,
+  response_id,
+  dispatch_form_id,
+  dispatch_patient_id,
+  responding_team_id,
+  field_officer_id,
+  status,
+  triage,
+  chief_complaint,
+  emergency_types,
+  trauma_types,
+  incident_nature,
+  hospital_name,
+  resident_on_duty,
+  endorsed_to,
+  received_by,
+  transfer_reason,
+  notes,
+  back_to_base_time,
+  completed_at,
+  submitted_at,
+  created_at,
+  updated_at,
+  response:responses(
+    id,
+    client_generated_id,
+    response_number,
+    date_of_incident,
+    time_of_incident,
+    place_of_incident,
+    location_text,
+    latitude,
+    longitude,
+    patient_name,
+    patient_age,
+    patient_birthday,
+    patient_sex,
+    patient_address,
+    initial_assessment,
+    responding_team_id,
+    assigned_unit_id,
+    resolved_at,
+    status,
+    barangay:barangays(id, name, normalized_name),
+    responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
+    assigned_unit:ambulance_units(id, call_sign)
+  ),
+  dispatch:dispatch_forms(id, response_id)
+`;
+
 const ADMIN_PCR_MAP_STATUSES = ["in_progress", "submitted", "verified", "completed"];
-const PUBLIC_PCR_MAP_STATUSES = ["verified", "completed"];
+const PUBLIC_PCR_MAP_STATUSES = ["verified"];
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
@@ -29,7 +152,7 @@ export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("pcr_reports")
-      .select(PCR_SELECT)
+      .select(PCR_LIST_SELECT)
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
@@ -66,7 +189,7 @@ function geographyPoint(value) {
 }
 
 function isVerifiedMapStatus(status = "") {
-  return ["verified", "completed", "resolved", "approved"].includes(String(status || "").trim().toLowerCase());
+  return ["verified", "resolved", "approved"].includes(String(status || "").trim().toLowerCase());
 }
 
 function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {}) {
@@ -78,7 +201,7 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
   const dateValue = response.date_of_incident || row.completed_at || row.submitted_at || row.created_at;
   const date = dateValue ? new Date(dateValue) : new Date();
   const relatedIncidentId = incident.id || null;
-  const isCompleted = incident.status === "pcr_completed" || row.status === "completed";
+  const isCompleted = incident.status === "pcr_completed";
 
   return {
     id: publicSafe ? `PCR-${String(row.id).slice(0, 8)}` : `PCR-${String(row.id).slice(0, 8)}`,
@@ -110,7 +233,7 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
     description: publicSafe
       ? "Emergency response activity has been confirmed in this area. Use caution nearby."
       : row.chief_complaint || row.incident_nature || response.initial_assessment || "PCR report linked to this response.",
-    publicVisible: publicSafe || Boolean(incident.public_visible) || ["verified", "completed"].includes(row.status),
+    publicVisible: publicSafe || Boolean(incident.public_visible) || row.status === "verified",
     is_verified: isVerifiedMapStatus(row.status),
     is_public_visible: publicSafe || Boolean(incident.public_visible) || isVerifiedMapStatus(row.status),
     pcrStatus: row.status,
@@ -194,21 +317,59 @@ export async function getPCRReport(pcrId) {
 }
 
 export async function getPCRReportByResponse(responseId) {
+  if (!responseId || responseId === "undefined") return null;
   const row = await runSupabaseRequest(client =>
-    client.from("pcr_reports").select(PCR_SELECT).eq("response_id", responseId).maybeSingle(),
+    client.from("pcr_reports").select(PCR_LIGHT_SELECT).eq("response_id", responseId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
   "Unable to load linked PCR report.");
 
   return row ? pcrToApp(row) : null;
 }
 
+export async function listPCRReportsByResponses(responseIds = []) {
+  const ids = [...new Set(responseIds.filter(id => id && id !== "undefined"))];
+  if (!ids.length) return [];
+  const rows = await runSupabaseRequest(client =>
+    client
+      .from("pcr_reports")
+      .select(PCR_LIGHT_SELECT)
+      .in("response_id", ids)
+      .order("updated_at", { ascending: false }),
+  "Unable to load linked PCR reports.");
+  const byResponse = new Map();
+  for (const row of asRows(rows)) {
+    if (!byResponse.has(row.response_id)) byResponse.set(row.response_id, row);
+  }
+  return [...byResponse.values()].map(pcrToApp);
+}
+
+export async function listPCRReportsByDispatches(dispatchIds = []) {
+  const ids = [...new Set(dispatchIds.filter(id => id && id !== "undefined"))];
+  if (!ids.length) return [];
+  const rows = await runSupabaseRequest(client =>
+    client
+      .from("pcr_reports")
+      .select(PCR_LIGHT_SELECT)
+      .in("dispatch_form_id", ids)
+      .order("updated_at", { ascending: false }),
+  "Unable to load linked PCR reports.");
+  const byDispatch = new Map();
+  for (const row of asRows(rows)) {
+    if (!byDispatch.has(row.dispatch_form_id)) byDispatch.set(row.dispatch_form_id, row);
+  }
+  return [...byDispatch.values()].map(pcrToApp);
+}
+
 export async function savePCRReport(pcrId, record) {
   return runSupabaseRequest(async client => {
-    if (record.responseId && isValidIncidentCoordinate(record.latitude, record.longitude)) {
-      const { error: responseError } = await client
-        .from("responses")
-        .update(responseLocationPayloadFromRecord(record))
-        .eq("id", record.responseId);
-      if (responseError) return { data: null, error: responseError };
+    if (record.responseId) {
+      const responsePatch = responseDemographicsPayloadFromPcr(record);
+      if (Object.keys(responsePatch).length) {
+        const { error: responseError } = await client
+          .from("responses")
+          .update(responsePatch)
+          .eq("id", record.responseId);
+        if (responseError) return { data: null, error: responseError };
+      }
     }
 
     return client
@@ -219,6 +380,251 @@ export async function savePCRReport(pcrId, record) {
       .single();
   },
   "Unable to save PCR report.").then(pcrToApp);
+}
+
+async function selectCanonicalPcr(client, { responseId, pcrId }) {
+  let query = client.from("pcr_reports").select(PCR_LIGHT_SELECT);
+  if (pcrId) query = query.eq("id", pcrId);
+  else query = query.eq("response_id", responseId);
+  const result = await query.order("updated_at", { ascending: false }).limit(1);
+  if (result.error) return result;
+  return { data: result.data?.[0] || null, error: null };
+}
+
+function validDateTimeOrNull(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function responseDemographicsPayloadFromPcr(record = {}) {
+  const age = Number(record.age);
+  const payload = {
+    ...(isValidIncidentCoordinate(record.latitude, record.longitude) ? responseLocationPayloadFromRecord(record) : {}),
+    patient_name: record.patientName || null,
+    patient_age: Number.isInteger(age) && age >= 0 ? age : null,
+    patient_birthday: patientBirthdayFromRecord(record),
+    patient_sex: record.gender || null,
+    patient_address: record.address || null,
+    initial_assessment: record.chiefComplaint || null,
+  };
+  Object.keys(payload).forEach(key => payload[key] === null && delete payload[key]);
+  return payload;
+}
+
+function uuidCandidates(...values) {
+  return [...new Set(values.filter(validUuid))];
+}
+
+async function findResponseByAnyId(client, ids = []) {
+  const candidates = uuidCandidates(...ids);
+  if (!candidates.length) return { data: null, error: null };
+
+  const { data, error } = await client
+    .from("responses")
+    .select("id, client_generated_id, responding_team_id")
+    .or(`id.in.(${candidates.join(",")}),client_generated_id.in.(${candidates.join(",")})`)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  if (error) return { data: null, error };
+  return { data: data?.[0] || null, error: null };
+}
+
+async function findDispatchByAnyId(client, record = {}) {
+  const dispatchIds = uuidCandidates(record.dispatchId, record.dispatchClientId, record.id);
+  const responseIds = uuidCandidates(record.responseId, record.responseClientId);
+  const filters = [];
+  if (dispatchIds.length) filters.push(`id.in.(${dispatchIds.join(",")})`, `client_generated_id.in.(${dispatchIds.join(",")})`);
+  if (responseIds.length) filters.push(`response_id.in.(${responseIds.join(",")})`);
+  if (!filters.length) return { data: null, error: null };
+
+  const { data, error } = await client
+    .from("dispatch_forms")
+    .select("id, client_generated_id, response_id, response:responses(id, client_generated_id, responding_team_id)")
+    .or(filters.join(","))
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  if (error) return { data: null, error };
+  return { data: data?.[0] || null, error: null };
+}
+
+async function resolveCloudParentIds(client, record = {}) {
+  const dispatchResult = await findDispatchByAnyId(client, record);
+  if (dispatchResult.error) return { data: null, error: dispatchResult.error };
+  if (dispatchResult.data?.response_id) {
+    return {
+      data: {
+        ...record,
+        responseId: dispatchResult.data.response_id,
+        responseClientId: dispatchResult.data.response?.client_generated_id || record.responseClientId || record.responseId,
+        dispatchId: dispatchResult.data.id,
+        dispatchClientId: dispatchResult.data.client_generated_id || record.dispatchClientId || record.dispatchId,
+        respondingTeamId: record.respondingTeamId || dispatchResult.data.response?.responding_team_id || null,
+      },
+      error: null,
+    };
+  }
+
+  const responseResult = await findResponseByAnyId(client, [record.responseId, record.responseClientId]);
+  if (responseResult.error) return { data: null, error: responseResult.error };
+  if (!responseResult.data?.id) return { data: record, error: null };
+
+  const dispatchByResponse = await findDispatchByAnyId(client, {
+    ...record,
+    responseId: responseResult.data.id,
+    responseClientId: responseResult.data.client_generated_id || record.responseClientId,
+  });
+  if (dispatchByResponse.error) return { data: null, error: dispatchByResponse.error };
+
+  return {
+    data: {
+      ...record,
+      responseId: responseResult.data.id,
+      responseClientId: responseResult.data.client_generated_id || record.responseClientId || record.responseId,
+      dispatchId: dispatchByResponse.data?.id || record.dispatchId,
+      dispatchClientId: dispatchByResponse.data?.client_generated_id || record.dispatchClientId || record.dispatchId,
+      respondingTeamId: record.respondingTeamId || responseResult.data.responding_team_id || null,
+    },
+    error: null,
+  };
+}
+
+async function resolveCloudDispatchFormId(client, record) {
+  if (record.dispatchId) {
+    const byId = await client
+      .from("dispatch_forms")
+      .select("id")
+      .eq("id", record.dispatchId)
+      .eq("response_id", record.responseId)
+      .limit(1);
+    if (byId.error) return { data: null, error: byId.error };
+    if (byId.data?.[0]?.id) return { data: byId.data[0].id, error: null };
+  }
+
+  const byResponse = await client
+    .from("dispatch_forms")
+    .select("id")
+    .eq("response_id", record.responseId)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+  if (byResponse.error) return { data: null, error: byResponse.error };
+  return { data: byResponse.data?.[0]?.id || null, error: null };
+}
+
+async function ensureLanDispatchParent(client, record) {
+  if (!record.responseId || !record.dispatchId) return { data: null, error: null };
+  const { data: existingResponse, error: responseError } = await client
+    .from("responses")
+    .select("id, responding_team_id")
+    .eq("id", record.responseId)
+    .limit(1)
+    .maybeSingle();
+  if (responseError) return { data: null, error: responseError };
+  if (existingResponse?.responding_team_id) return { data: existingResponse, error: null };
+
+  const shouldMaterializeParent = record.source === "local_server"
+    || record.localStatus
+    || record.responseClientId
+    || record.dispatchClientId;
+  if (!shouldMaterializeParent) return { data: null, error: null };
+
+  return client.rpc("sync_lan_dispatch_parent", {
+    dispatch_payload: lanDispatchParentPayload({
+      ...record,
+      status: "PCR In Progress",
+    }),
+  });
+}
+
+export async function upsertPCRReport(record, { submit = false } = {}) {
+  let pcrId = validUuid(record.pcrId) ? record.pcrId : validUuid(record.id) ? record.id : validUuid(record.pcrClientId) ? record.pcrClientId : randomUuid();
+  if (!record.responseId) throw new Error("Linked response ID is required before synchronizing a PCR.");
+  const syncStatus = submit || record.status === "Completed" || record.status === "Submitted Locally"
+    ? "Submitted"
+    : record.status;
+
+  return runSupabaseRequest(async client => {
+    const resolvedParent = await resolveCloudParentIds(client, record);
+    if (resolvedParent.error) return { data: null, error: resolvedParent.error };
+    let syncRecord = resolvedParent.data || record;
+
+    const parentResult = await ensureLanDispatchParent(client, syncRecord);
+    if (parentResult.error && parentResult.error.code !== "PGRST202" && parentResult.error.code !== "42883") {
+      return parentResult;
+    }
+    if (parentResult.data?.id) {
+      syncRecord = {
+        ...syncRecord,
+        dispatchId: parentResult.data.id,
+        dispatchClientId: parentResult.data.client_generated_id || syncRecord.dispatchClientId || syncRecord.dispatchId,
+        responseId: parentResult.data.response_id || syncRecord.responseId,
+      };
+      const refreshedParent = await resolveCloudParentIds(client, syncRecord);
+      if (refreshedParent.error) return { data: null, error: refreshedParent.error };
+      syncRecord = refreshedParent.data || syncRecord;
+    }
+
+    const { data: existingByResponse, error: existingError } = await client
+      .from("pcr_reports")
+      .select("id")
+      .eq("response_id", syncRecord.responseId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existingError) return { data: null, error: existingError };
+    pcrId = existingByResponse?.id || (validUuid(pcrId) ? pcrId : randomUuid());
+
+    const rpcPayload = { ...syncRecord, id: pcrId, pcrId };
+    const normalizedBirthday = patientBirthdayFromRecord(rpcPayload);
+    const serializedPayload = pcrPayloadFromRecord({ ...rpcPayload, birthday: normalizedBirthday || rpcPayload.birthday, status: syncStatus });
+    const rpcResult = await client.rpc("sync_offline_pcr_report", {
+      report_payload: { ...rpcPayload, birthday: normalizedBirthday || rpcPayload.birthday || null, status: syncStatus, notes: serializedPayload.notes },
+      vital_payload: syncRecord.vitals || [],
+      submit_report: submit,
+    });
+    if (!rpcResult.error) {
+      return selectCanonicalPcr(client, { pcrId: rpcResult.data.id, responseId: syncRecord.responseId });
+    }
+    if (!["PGRST202", "42883", "57014"].includes(rpcResult.error.code)) {
+      return rpcResult;
+    }
+
+    if (syncRecord.responseId) {
+      const responsePatch = responseDemographicsPayloadFromPcr(syncRecord);
+      if (Object.keys(responsePatch).length) {
+        const { error: responseError } = await client
+          .from("responses")
+          .update(responsePatch)
+          .eq("id", syncRecord.responseId);
+        if (responseError) return { data: null, error: responseError };
+      }
+    }
+
+    const dispatchFormId = await resolveCloudDispatchFormId(client, syncRecord);
+    if (dispatchFormId.error) return dispatchFormId;
+
+    const payload = {
+      id: pcrId,
+      response_id: syncRecord.responseId,
+      dispatch_form_id: dispatchFormId.data,
+      dispatch_patient_id: syncRecord.dispatchPatientId || syncRecord.patientId || null,
+      responding_team_id: syncRecord.respondingTeamId || null,
+      field_officer_id: syncRecord.fieldOfficerId || syncRecord.createdBy || null,
+      ...pcrPayloadFromRecord({ ...syncRecord, birthday: normalizedBirthday || syncRecord.birthday, status: syncStatus }),
+    };
+    if (submit || syncStatus === "Submitted") payload.submitted_at = syncRecord.submittedAt || new Date().toISOString();
+
+    const upsertResult = await client
+      .from("pcr_reports")
+      .upsert(payload, { onConflict: "response_id" })
+      .select("id")
+      .limit(1)
+      .maybeSingle();
+    if (upsertResult.error) return upsertResult;
+
+    return selectCanonicalPcr(client, { pcrId: upsertResult.data.id, responseId: syncRecord.responseId });
+  },
+  "Unable to synchronize PCR report.").then(pcrToApp);
 }
 
 export async function submitPCRReport(pcrId) {
@@ -248,6 +654,63 @@ export async function replacePCRVitals(pcrReportId, vitals = []) {
       oxygen_saturation: vital.oxygen || null,
     }))).select("*");
   }, "Unable to save PCR vital signs.");
+}
+
+export async function replacePCRMedications(pcrReportId, medications = []) {
+  return runSupabaseRequest(async client => {
+    const { error: deleteError } = await client.from("pcr_medications").delete().eq("pcr_report_id", pcrReportId);
+    if (deleteError) return { data: null, error: deleteError };
+    const rows = medications.filter(medication => medication.drug || medication.dose || medication.dateTime);
+    if (!rows.length) return { data: [], error: null };
+
+    return client.from("pcr_medications").insert(rows.map(medication => ({
+      pcr_report_id: pcrReportId,
+      drug: medication.drug || null,
+      dose: medication.dose || null,
+      given_at: validDateTimeOrNull(medication.dateTime),
+    }))).select("*");
+  }, "Unable to save PCR medications.");
+}
+
+export async function replacePCRInterventions(pcrReportId, interventions = {}, interventionDetails = {}) {
+  return runSupabaseRequest(async client => {
+    const { error: deleteError } = await client.from("pcr_interventions").delete().eq("pcr_report_id", pcrReportId);
+    if (deleteError) return { data: null, error: deleteError };
+    const rows = Object.entries(interventions)
+      .filter(([, result]) => result)
+      .map(([name, result]) => ({
+        pcr_report_id: pcrReportId,
+        intervention_name: name,
+        result,
+        notes: interventionDetails[name] || null,
+      }));
+    if (!rows.length) return { data: [], error: null };
+
+    return client.from("pcr_interventions").insert(rows).select("*");
+  }, "Unable to save PCR interventions.");
+}
+
+export async function replacePCRAttachments(pcrReportId, attachments = []) {
+  return runSupabaseRequest(async client => {
+    const { error: deleteError } = await client.from("pcr_attachments").delete().eq("pcr_report_id", pcrReportId);
+    if (deleteError) return { data: null, error: deleteError };
+    const rows = attachments.filter(attachment => attachment.name || attachment.fileName || attachment.data);
+    if (!rows.length) return { data: [], error: null };
+
+    return client.from("pcr_attachments").insert(rows.map(attachment => ({
+      pcr_report_id: pcrReportId,
+      attachment_type: attachment.type || "document",
+      storage_path: attachment.storagePath || null,
+      file_name: attachment.name || attachment.fileName || null,
+      metadata: {
+        id: attachment.id || null,
+        size: attachment.size || null,
+        location: attachment.location || null,
+        capturedAt: attachment.capturedAt || null,
+        data: attachment.data || null,
+      },
+    }))).select("*");
+  }, "Unable to save PCR attachments.");
 }
 
 export async function archivePCRReport(pcrId) {

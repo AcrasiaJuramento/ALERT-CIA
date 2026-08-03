@@ -1,0 +1,13 @@
+{
+  "name": "ALERT-CIA",
+  "short_name": "ALERT-CIA",
+  "description": "Accident Logging and Emergency Response Tracking with Comprehensive Incident Analytics",
+  "start_url": "/admin",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#dc2626",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

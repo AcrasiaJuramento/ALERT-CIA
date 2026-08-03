@@ -52,6 +52,53 @@ export async function listAmbulanceUnits({ activeOnly = true } = {}) {
   }, "Unable to load ambulance units.");
 }
 
+export async function listCrewMembers({ activeOnly = true, role } = {}) {
+  return runSupabaseRequest(client => {
+    let query = client
+      .from("crew_members")
+      .select("*")
+      .order("role", { ascending: true })
+      .order("name", { ascending: true });
+    if (activeOnly) query = query.eq("active", true);
+    if (role) query = query.eq("role", role);
+    return query;
+  }, "Unable to load crew roster.");
+}
+
+export async function createCrewMember({ name, role, contactNumber = "", respondingTeamId = null, active = true }) {
+  return runSupabaseRequest(client =>
+    client
+      .from("crew_members")
+      .insert({
+        name,
+        role,
+        contact_number: contactNumber || null,
+        responding_team_id: respondingTeamId || null,
+        active,
+      })
+      .select("*")
+      .single(),
+  "Unable to add crew member.");
+}
+
+export async function updateCrewMember(crewMemberId, updates) {
+  return runSupabaseRequest(client =>
+    client
+      .from("crew_members")
+      .update({
+        ...(updates.name !== undefined ? { name: updates.name } : {}),
+        ...(updates.role !== undefined ? { role: updates.role } : {}),
+        ...(updates.contactNumber !== undefined ? { contact_number: updates.contactNumber || null } : {}),
+        ...(updates.respondingTeamId !== undefined ? { responding_team_id: updates.respondingTeamId || null } : {}),
+        ...(updates.active !== undefined ? { active: updates.active } : {}),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", crewMemberId)
+      .select("*")
+      .single(),
+  "Unable to update crew member.");
+}
+
 export async function createAmbulanceUnit({ callSign, plateNumber, description, status = "available", respondingTeamId = null }) {
   return runSupabaseRequest(client =>
     client

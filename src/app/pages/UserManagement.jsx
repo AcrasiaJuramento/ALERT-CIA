@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Edit2, Power, Radio, Save, Search, Shield, UserCog, X } from 'lucide-react';
-import { assignProfileRole, assignProfileToRespondingTeam, deactivateProfile, getActiveTeamMembership, listProfiles, listRespondingTeams, updateProfile } from '../services/supabase';
+import { CheckCircle2, Edit2, Plus, Power, Radio, Save, Search, Shield, UserCog, X } from 'lucide-react';
+import { assignProfileRole, assignProfileToRespondingTeam, createCrewMember, deactivateProfile, getActiveTeamMembership, listCrewMembers, listProfiles, listRespondingTeams, updateCrewMember, updateProfile } from '../services/supabase';
 
 const roleBadge = {
   administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -36,6 +36,19 @@ const roleOptions = [
 ];
 
 const editableFields = ['display_name', 'email', 'contact_number', 'position_title', 'agency'];
+const crewRoleOptions = [
+  ['driver', 'Driver'],
+  ['main_aider', 'Main Aider'],
+  ['group_leader', 'Group Leader'],
+  ['assistant_aider', 'Assistant Aider'],
+];
+const teamRoleOptions = [
+  'Field Officer',
+  'Driver',
+  'Main Aider',
+  'Group Leader',
+  'Assistant Aider',
+];
 
 function profileToRow(profile = {}) {
   const name = profile.display_name || profile.email || 'Unnamed user';
@@ -70,6 +83,9 @@ export default function UserManagement() {
   const [roleUser, setRoleUser] = useState(null);
   const [teamUser, setTeamUser] = useState(null);
   const [teamOptions, setTeamOptions] = useState([]);
+  const [crewRoster, setCrewRoster] = useState([]);
+  const [crewForm, setCrewForm] = useState({ name: '', role: 'driver', contactNumber: '', respondingTeamId: '' });
+  const [editingCrew, setEditingCrew] = useState({});
   const [formError, setFormError] = useState('');
 
   const loadUsers = async () => {
@@ -80,6 +96,7 @@ export default function UserManagement() {
       setUserList(rows.map(profileToRow));
       const teams = await listRespondingTeams();
       setTeamOptions(teams);
+      setCrewRoster(await listCrewMembers({ activeOnly: false }));
     } catch (requestError) {
       setError(requestError.message || 'Unable to load user profiles.');
     } finally {
@@ -100,6 +117,16 @@ export default function UserManagement() {
   const replaceRow = profile => {
     setUserList(current => current.map(row => (row.id === profile.id ? profileToRow(profile) : row)));
   };
+
+  const teamNameById = teamId => teamOptions.find(team => team.id === teamId)?.name || '';
+  const groupLeadersForTeam = teamId => crewRoster
+    .filter(member => member.active)
+    .filter(member => member.role === 'group_leader')
+    .filter(member => !teamId || member.responding_team_id === teamId)
+    .map(member => member.name);
+  const visibleGroupLeadersForTeam = teamUser?.teamId && teamUser.isTeamLeader
+    ? [...new Set([...groupLeadersForTeam(teamUser.teamId), teamUser.name])]
+    : groupLeadersForTeam(teamUser?.teamId);
 
   const openTeamAssignment = row => {
     setFormError('');
@@ -176,6 +203,28 @@ export default function UserManagement() {
         teamRole: teamUser.teamRole,
         isLeader: teamUser.isTeamLeader,
       });
+      if (teamUser.teamId && teamUser.isTeamLeader) {
+        const contactNumber = userList.find(user => user.id === teamUser.id)?.contact || '';
+        const existingLeader = crewRoster.find(member => member.name === teamUser.name && member.role === 'group_leader');
+        const savedLeader = existingLeader
+          ? await updateCrewMember(existingLeader.id, {
+            name: teamUser.name,
+            role: 'group_leader',
+            contactNumber,
+            respondingTeamId: teamUser.teamId,
+            active: true,
+          })
+          : await createCrewMember({
+            name: teamUser.name,
+            role: 'group_leader',
+            contactNumber,
+            respondingTeamId: teamUser.teamId,
+            active: true,
+          });
+        setCrewRoster(current => existingLeader
+          ? current.map(member => member.id === savedLeader.id ? savedLeader : member)
+          : [...current, savedLeader].sort((a, b) => `${a.role}${a.name}`.localeCompare(`${b.role}${b.name}`)));
+      }
       replaceRow(profile);
       setTeamUser(null);
     } catch (requestError) {
@@ -183,6 +232,22 @@ export default function UserManagement() {
     } finally {
       setSavingId('');
     }
+  };
+
+  const updateTeamRoleDraft = value => {
+    setTeamUser(user => ({
+      ...user,
+      teamRole: value,
+      isTeamLeader: value === 'Group Leader' ? true : user.isTeamLeader,
+    }));
+  };
+
+  const updateTeamLeaderDraft = checked => {
+    setTeamUser(user => ({
+      ...user,
+      isTeamLeader: checked,
+      teamRole: checked ? 'Group Leader' : user.teamRole === 'Group Leader' ? 'Field Officer' : user.teamRole,
+    }));
   };
 
   const handleDelete = async id => {
@@ -196,6 +261,66 @@ export default function UserManagement() {
     } finally {
       setSavingId('');
     }
+  };
+
+  const handleAddCrew = async event => {
+    event.preventDefault();
+    if (!crewForm.name.trim()) return;
+    setFormError('');
+    try {
+      const saved = await createCrewMember({
+        name: crewForm.name.trim(),
+        role: crewForm.role,
+        contactNumber: crewForm.contactNumber.trim(),
+        respondingTeamId: crewForm.respondingTeamId || null,
+      });
+      setCrewRoster(current => [...current, saved].sort((a, b) => `${a.role}${a.name}`.localeCompare(`${b.role}${b.name}`)));
+      setCrewForm({ name: '', role: crewForm.role, contactNumber: '', respondingTeamId: crewForm.respondingTeamId });
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to add crew member.');
+    }
+  };
+
+  const toggleCrewActive = async member => {
+    try {
+      const saved = await updateCrewMember(member.id, { active: !member.active });
+      setCrewRoster(current => current.map(row => row.id === saved.id ? saved : row));
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to update crew member.');
+    }
+  };
+
+  const saveCrewEdit = async member => {
+    const draft = editingCrew[member.id];
+    if (!draft?.name?.trim()) return;
+    try {
+      const saved = await updateCrewMember(member.id, {
+        name: draft.name.trim(),
+        role: draft.role,
+        contactNumber: draft.contactNumber?.trim() || '',
+        respondingTeamId: draft.respondingTeamId || null,
+      });
+      setCrewRoster(current => current.map(row => row.id === saved.id ? saved : row));
+      setEditingCrew(current => {
+        const next = { ...current };
+        delete next[member.id];
+        return next;
+      });
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to save crew member.');
+    }
+  };
+
+  const startCrewEdit = member => {
+    setEditingCrew(current => ({
+      ...current,
+      [member.id]: {
+        name: member.name || '',
+        contactNumber: member.contact_number || '',
+        role: member.role || 'driver',
+        respondingTeamId: member.responding_team_id || '',
+      },
+    }));
   };
 
   const roleCounts = {
@@ -252,6 +377,62 @@ export default function UserManagement() {
             onChange={e => setSearch(e.target.value)}
             className="w-full pl-9 pr-4 py-2 bg-input-background border border-border rounded-lg text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:border-blue-500 transition-all"
           />
+        </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Crew Roster</h2>
+            <p className="text-xs text-muted-foreground">Names listed here appear in Dispatch and PCR form crew dropdowns.</p>
+          </div>
+        </div>
+        <form onSubmit={handleAddCrew} className="mb-4 grid gap-2 md:grid-cols-[1fr_170px_170px_190px_auto]">
+          <input value={crewForm.name} onChange={event => setCrewForm(form => ({ ...form, name: event.target.value }))} className="rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500" placeholder="Crew member name" />
+          <input value={crewForm.contactNumber} onChange={event => setCrewForm(form => ({ ...form, contactNumber: event.target.value }))} className="rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500" placeholder="Contact number" />
+          <select value={crewForm.role} onChange={event => setCrewForm(form => ({ ...form, role: event.target.value }))} className="rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
+            {crewRoleOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+          <select value={crewForm.respondingTeamId} onChange={event => setCrewForm(form => ({ ...form, respondingTeamId: event.target.value }))} className="rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
+            <option value="">No team</option>
+            {teamOptions.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
+          </select>
+          <button type="submit" className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"><Plus className="h-3.5 w-3.5" />Add</button>
+        </form>
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full text-xs">
+            <thead className="bg-secondary/50 text-muted-foreground">
+              <tr>
+                {['Crew name', 'Contact number', 'Role', 'Responding team', 'Status', 'Actions'].map(label => <th key={label} className="px-3 py-2 text-left font-semibold">{label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {crewRoster.map(member => {
+                const draft = editingCrew[member.id];
+                const roleLabel = crewRoleOptions.find(([value]) => value === member.role)?.[1] || member.role;
+                return (
+                  <tr key={member.id} className="border-t border-border">
+                    <td className="px-3 py-2">{draft ? <input value={draft.name} onChange={event => setEditingCrew(current => ({ ...current, [member.id]: { ...draft, name: event.target.value } }))} className="w-full rounded border border-border bg-input-background px-2 py-1 text-xs" /> : <span className={member.active ? 'font-semibold text-foreground' : 'text-muted-foreground line-through'}>{member.name}</span>}</td>
+                    <td className="px-3 py-2">{draft ? <input value={draft.contactNumber} onChange={event => setEditingCrew(current => ({ ...current, [member.id]: { ...draft, contactNumber: event.target.value } }))} className="w-full rounded border border-border bg-input-background px-2 py-1 text-xs" /> : (member.contact_number || '-')}</td>
+                    <td className="px-3 py-2">{draft ? <select value={draft.role} onChange={event => setEditingCrew(current => ({ ...current, [member.id]: { ...draft, role: event.target.value } }))} className="w-full rounded border border-border bg-input-background px-2 py-1 text-xs">{crewRoleOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select> : roleLabel}</td>
+                    <td className="px-3 py-2">{draft ? <select value={draft.respondingTeamId} onChange={event => setEditingCrew(current => ({ ...current, [member.id]: { ...draft, respondingTeamId: event.target.value } }))} className="w-full rounded border border-border bg-input-background px-2 py-1 text-xs"><option value="">No team</option>{teamOptions.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select> : (teamNameById(member.responding_team_id) || '-')}</td>
+                    <td className="px-3 py-2"><button type="button" onClick={() => toggleCrewActive(member)} className={`rounded px-2 py-1 font-semibold ${member.active ? 'bg-green-500/15 text-green-400' : 'bg-slate-500/15 text-slate-400'}`}>{member.active ? 'Active' : 'Hidden'}</button></td>
+                    <td className="px-3 py-2">
+                      {draft ? (
+                        <div className="flex gap-1">
+                          <button type="button" onClick={() => saveCrewEdit(member)} className="rounded bg-blue-600 px-2 py-1 font-semibold text-white">Save</button>
+                          <button type="button" onClick={() => setEditingCrew(current => { const next = { ...current }; delete next[member.id]; return next; })} className="rounded bg-secondary px-2 py-1 font-semibold">Cancel</button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => startCrewEdit(member)} className="inline-flex items-center gap-1 rounded bg-secondary px-2 py-1 font-semibold text-blue-400"><Edit2 className="h-3.5 w-3.5" />Edit</button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+              {!crewRoster.length && <tr><td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">No crew roster entries yet</td></tr>}
+            </tbody>
+          </table>
         </div>
       </div>
 
@@ -485,15 +666,30 @@ export default function UserManagement() {
                 {teamOptions.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
               </select>
             </label>
-            <Field label="Team Role" value={teamUser.teamRole} onChange={value => setTeamUser(user => ({ ...user, teamRole: value }))} />
+            {teamUser.teamId && (
+              <div className="rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-semibold text-foreground">Roster group leader:</span>{' '}
+                {visibleGroupLeadersForTeam.join(', ') || 'No active group leader set for this team'}
+              </div>
+            )}
+            <label className="block">
+              <span className="block text-xs font-medium text-muted-foreground mb-1.5">Team Role</span>
+              <select
+                value={teamUser.teamRole}
+                onChange={event => updateTeamRoleDraft(event.target.value)}
+                className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
+              >
+                {teamRoleOptions.map(option => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </label>
             <label className="flex items-center gap-2 rounded-lg border border-border bg-secondary/30 px-3 py-2 text-xs text-foreground">
               <input
                 type="checkbox"
                 checked={teamUser.isTeamLeader}
-                onChange={event => setTeamUser(user => ({ ...user, isTeamLeader: event.target.checked }))}
+                onChange={event => updateTeamLeaderDraft(event.target.checked)}
                 className="accent-blue-600"
               />
-              Team leader
+              Team leader / Group Leader
             </label>
             {formError && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{formError}</div>}
             <div className="flex justify-end gap-2">
