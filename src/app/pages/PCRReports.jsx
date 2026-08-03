@@ -1,18 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Archive, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
-  FilePlus2, FileText, Filter, RefreshCw, Search, X, XCircle,
+  FilePlus2, FileText, Filter, Search, X, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { PERMISSIONS, ROLES } from '../access/rbac';
+import { PERMISSIONS } from '../access/rbac';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
-import { archivePCRReport, listPCRReports, savePCRReport } from '../services/supabase';
+import { archivePCRReport, listPCRReports, savePCRReport, supabase } from '../services/supabase';
+
+const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Submitted', 'Verified', 'Rejected', 'Completed'];
+const displayStatus = record => record?.status || 'Draft';
+const isReviewable = record => displayStatus(record) === 'Submitted';
+const logicalRecordKey = record => record?.pcrId || record?.id || record?.responseId || record?.responseNumber;
 
 export default function PCRReports() {
-  const { can, user } = useAuth();
+  const { can } = useAuth();
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,7 +30,6 @@ export default function PCRReports() {
   const [rejectingRecord, setRejectingRecord] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [page, setPage] = useState(1);
-  const [connection, setConnection] = useState(getConnectionState());
   const pageSize = 10;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
   const canReview = can(PERMISSIONS.REVIEW_PCR);
@@ -32,48 +37,32 @@ export default function PCRReports() {
   const loadReports = async () => {
     setLoading(true);
     try {
-      const currentConnection = getConnectionState();
-      let cloudRecords = await listPCRReports({ limit: 100 }).catch(error => {
-        if (currentConnection.mode === 'cloud') throw error;
-        return [];
-      });
-      const localDeviceRecords = await hybridRepository.getLocalPcrReports().catch(() => []);
-      const localServerRecords = currentConnection.localOnline
-        ? await localServerClient.listPcrReports().catch(() => [])
-        : [];
-      if (currentConnection.cloudOnline && localServerRecords.length) {
-        const autoUploadResult = await autoUploadLocalServerPcrReports(localServerRecords, cloudRecords);
-        cloudRecords = autoUploadResult.cloudRecords;
-      }
-      if (cloudRecords.length) {
-        await hybridRepository.reconcileCloudPcrReports(cloudRecords).catch(() => 0);
-      }
-      const visibleLocalServerRecords = currentConnection.cloudOnline
-        ? localServerRecords.filter(record => !hasCloudEquivalent(record, cloudRecords))
-        : localServerRecords;
-      const reconciledLocalRecords = cloudRecords.length
-        ? await hybridRepository.getLocalPcrReports().catch(() => localDeviceRecords)
-        : localDeviceRecords;
-      const allRecords = mergeById([
-        ...reconciledLocalRecords.map(record => ({ ...record, recordSource: 'device', syncLabel: record.synced_to_cloud ? 'Cloud synced' : 'Pending cloud synchronization' })),
-        ...visibleLocalServerRecords.map(record => ({ ...record, recordSource: 'local_server', syncLabel: 'Saved on local server' })),
-        ...cloudRecords.map(record => ({ ...record, recordSource: 'cloud', syncLabel: 'Cloud synced' })),
-      ]);
-      setRecords(allRecords.map(record => ({ ...record, archived: false })));
+      const cloudRecords = await listPCRReports({ limit: 300 });
+      setRecords(cloudRecords.map(record => ({ ...record, archived: false, recordSource: 'cloud', syncLabel: 'Cloud synced' })));
     } catch (error) {
       toast.error(error.message || 'Unable to load Patient Care Records.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
     loadReports();
+    const refresh = () => loadReports();
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    const channel = supabase?.channel('web-pcr-records-live').on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refresh).subscribe();
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      if (channel) supabase.removeChannel(channel);
+    };
   }, []);
 
   const filtered = useMemo(() => records.filter(record =>
     (archiveView === 'Archived' ? record.archived : !record.archived)
-    && (status === 'All' || workflowStage(record) === status)
+    && (status === 'All' || record.status === status)
     && [record.responseNumber, record.patientName, record.placeOfIncident, record.hospitalName, record.respondingTeam].join(' ').toLowerCase().includes(query.toLowerCase())
   ), [records, query, status, archiveView]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -150,71 +139,6 @@ export default function PCRReports() {
     setRejectingRecord(null);
     setRejectionReason('');
   };
-  const uploadRecordToCloud = async record => {
-    try {
-      const ids = new Set([record.id, record.pcrId, record.pcrClientId, record.responseId, record.responseClientId].filter(Boolean));
-      const rows = await getAllRecords('sync_queue');
-      const matching = rows.filter(row => {
-        const payload = row.payload || {};
-        return row.entity_type === 'pcr'
-          && row.destination === 'cloud'
-          && (
-            ids.has(row.entity_id)
-            || ids.has(payload.id)
-            || ids.has(payload.pcrId)
-            || ids.has(payload.pcrClientId)
-            || ids.has(payload.responseId)
-            || ids.has(payload.responseClientId)
-          );
-      });
-      const now = new Date().toISOString();
-      await Promise.all(matching.map(row => putRecord('sync_queue', {
-        ...row,
-        attempts: 0,
-        sync_status: 'pending',
-        error_category: null,
-        blocked_reason: null,
-        last_sync_error: null,
-        next_attempt_at: now,
-        updated_at_device: now,
-      })));
-      toast.info(matching.length ? 'Uploading this PCR to cloud...' : 'No queued upload was found. Uploading PCR header directly...');
-      const saved = await cloudClient.submitPcrHeader({
-        ...record,
-        status: 'Submitted',
-        localStatus: record.localStatus || 'Submitted Locally',
-        source: record.source || 'local_server',
-      });
-      const confirmed = await confirmCloudPcrUpload(saved, record);
-      const syncedAt = new Date().toISOString();
-      await putRecord('local_pcr_reports', {
-        ...record,
-        ...confirmed,
-        id: record.id || confirmed.id,
-        pcrId: confirmed.pcrId || confirmed.id || record.pcrId,
-        localStatus: null,
-        syncLabel: 'Cloud synced',
-        sync_status: 'synced',
-        synced_to_cloud: true,
-        cloud_synced_at: syncedAt,
-        updatedAt: confirmed.updatedAt || syncedAt,
-      });
-      await Promise.all(matching.map(row => putRecord('sync_queue', {
-        ...row,
-        sync_status: 'synced',
-        synced_to_cloud: true,
-        cloud_synced_at: syncedAt,
-        last_sync_error: null,
-        blocked_reason: null,
-        next_attempt_at: null,
-        updated_at_device: syncedAt,
-      })));
-      await loadReports({ silent: true });
-      toast.success('PCR header uploaded to cloud. Records refreshed.');
-    } catch (error) {
-      toast.error(error.message || 'Unable to upload this PCR to cloud.');
-    }
-  };
   const statusCounts = {
     submitted: records.filter(record => !record.archived && isReviewable(record)).length,
     verified: records.filter(record => !record.archived && record.status === 'Verified').length,
@@ -274,7 +198,6 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(record)} title="View" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><Eye size={15} /></button>
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
                 <button onClick={() => doPdf(record)} title="Download PDF" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><Download size={15} /></button>
-                {needsCloudUpload(record) && <button onClick={() => uploadRecordToCloud(record)} title="Sync this PCR to cloud" aria-label="Sync this PCR to cloud" className="grid h-8 w-8 place-items-center rounded text-cyan-500 hover:bg-cyan-500/10"><RefreshCw size={15} /></button>}
                 {canReview && isReviewable(record) && <button onClick={() => updateStatus(record, 'Verified')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {canReview && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {canCreate && <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>}
