@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Archive, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
@@ -10,6 +10,7 @@ import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { archivePCRReport, listPCRReports, savePCRReport } from '../services/supabase';
+import { supabase } from '../lib/supabaseClient';
 
 export default function PCRReports() {
   const { can } = useAuth();
@@ -28,21 +29,33 @@ export default function PCRReports() {
   const canCreate = can(PERMISSIONS.CREATE_PCR);
   const canReview = can(PERMISSIONS.REVIEW_PCR);
 
-  const loadReports = async () => {
-    setLoading(true);
+  const loadReports = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true);
     try {
       const allRecords = await listPCRReports({ limit: 300 });
       setRecords(allRecords.map(record => ({ ...record, archived: false })));
     } catch (error) {
       toast.error(error.message || 'Unable to load Patient Care Records.');
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadReports();
-  }, []);
+    const refresh = () => loadReports({ quiet: true });
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    const channel = supabase?.channel('web-pcr-records-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refresh)
+      .subscribe();
+    return () => {
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, [loadReports]);
 
   const filtered = useMemo(() => records.filter(record =>
     (archiveView === 'Archived' ? record.archived : !record.archived)
