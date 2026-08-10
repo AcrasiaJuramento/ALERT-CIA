@@ -23,7 +23,6 @@ const formatDate = value => {
 
 const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher Review', 'Accepted by Dispatcher', 'Pending Admin Verification', 'Returned to Field Officer', 'Returned for Correction', 'Submitted', 'Verified', 'Rejected', 'Completed'];
 const displayStatus = record => record?.status || 'Draft';
-const formatDateTime = value => formatLongDateTime(value);
 const isReviewable = record => displayStatus(record) === 'Submitted';
 const isReverseWorkflowRecord = record => record?.workflowOrigin === 'reverse'
   || (!record?.dispatchId && ['Pending Dispatcher Review', 'Accepted by Dispatcher'].includes(displayStatus(record)));
