@@ -51,6 +51,18 @@ export async function markNotificationAsRead(notificationId) {
   "Unable to mark notification as read.").then(notificationToApp);
 }
 
+export async function markNotificationsAsRead(notificationIds = []) {
+  const ids = [...new Set(notificationIds.filter(Boolean))];
+  if (!ids.length) return [];
+  return runSupabaseRequest(client =>
+    client
+      .from("notifications")
+      .update({ read_at: new Date().toISOString() })
+      .in("id", ids)
+      .select("*"),
+  "Unable to mark notifications as read.").then(rows => rows.map(notificationToApp));
+}
+
 export async function updateNotificationPreferences(profileId, preferences) {
   return runSupabaseRequest(client =>
     client.from("notification_preferences").upsert({

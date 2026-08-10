@@ -8,6 +8,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cancelScraperJob, getScraperJobState, subscribeScraperJob } from '../services/scraperJobService';
+import { listIncidents, supabase } from '../services/supabase';
+import { isIncidentCompleted } from '../utils/incidentStatus';
 import { formatLongDate } from '../utils/dateFormat';
 import ConnectionIndicator from './ConnectionIndicator';
 import PwaStatusPrompts from './PwaStatusPrompts';
@@ -28,6 +30,52 @@ function HeaderClock() {
   );
 }
 
+function ActiveIncidentBadge() {
+  const [activeCount, setActiveCount] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    let refreshTimer;
+
+    const refresh = async () => {
+      try {
+        const rows = await listIncidents({ limit: 500 });
+        if (mounted) setActiveCount(rows.filter(incident => !isIncidentCompleted(incident.status)).length);
+      } catch {
+        if (mounted) setActiveCount(null);
+      }
+    };
+    const scheduleRefresh = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(refresh, 250);
+    };
+
+    refresh();
+    const channel = supabase
+      ?.channel('layout-active-incidents')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'dispatch_forms' }, scheduleRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      mounted = false;
+      clearTimeout(refreshTimer);
+      if (channel) supabase.removeChannel(channel);
+    };
+  }, []);
+
+  return (
+    <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-red-600/10 border border-red-500/30 rounded-lg">
+      <Radio className="w-3 h-3 text-red-400" />
+      <span className="text-xs text-red-400 font-medium">
+        {activeCount ?? '-'} ACTIVE INCIDENT{activeCount === 1 ? '' : 'S'}
+      </span>
+    </div>
+  );
+}
+
 export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -38,7 +86,7 @@ export default function Layout() {
   const navigate = useNavigate();
   const { user, roleLabel, can, logout } = useAuth();
   const { isDarkMode, toggleDarkMode } = useTheme();
-  const { notifications, unreadCount, markAsRead } = useNotifications();
+  const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const navItems = getAuthorizedNavigation(user.role);
   const currentPage = getCurrentPage(location.pathname);
   const showGlobalScraperJob = scraperJob.running && !location.pathname.startsWith('/admin/map');
@@ -112,7 +160,7 @@ export default function Layout() {
             <div className="text-[10px] text-muted-foreground truncate">Command Center / {currentPage?.group ? `${currentPage.group} / ` : ''}{currentPage?.label ?? 'Restricted Page'}</div>
           </div>
           <ConnectionIndicator />
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-red-600/10 border border-red-500/30 rounded-lg"><Radio className="w-3 h-3 text-red-400" /><span className="text-xs text-red-400 font-medium">8 ACTIVE INCIDENTS</span></div>
+          <ActiveIncidentBadge />
           <div className="flex-1" />
           <HeaderClock />
           <button onClick={toggleDarkMode} className="w-9 h-9 grid place-items-center rounded-lg text-muted-foreground hover:bg-secondary" title={isDarkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}>{isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}</button>
@@ -126,9 +174,19 @@ export default function Layout() {
                     <div className="text-sm font-semibold text-foreground">Notifications</div>
                     <div className="text-[10px] text-muted-foreground">{unreadCount} unread</div>
                   </div>
-                  <button onClick={() => setNotifOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground" title="Close notifications">
-                    <X className="h-4 w-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={markAllAsRead}
+                        className="rounded-md bg-blue-600 px-2.5 py-1.5 text-[10px] font-semibold text-white hover:bg-blue-500"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                    <button onClick={() => setNotifOpen(false)} className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground hover:bg-secondary hover:text-foreground" title="Close notifications">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
                 <div className="max-h-[min(420px,calc(100vh-6rem))] overflow-y-auto">
                   {notifications.slice(0, 10).map(n => (

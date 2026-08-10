@@ -244,10 +244,9 @@ export default function IncidentList() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border bg-secondary/50">
-                <th className="text-left px-5 py-3 text-muted-foreground font-medium">Incident</th>
+                <th className="text-left px-5 py-3 text-muted-foreground font-medium">Incidents</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Type</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Location</th>
-                <th className="text-left px-3 py-3 text-muted-foreground font-medium">Date & Time</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Severity</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Status</th>
                 <th className="text-left px-3 py-3 text-muted-foreground font-medium">Response Team</th>
@@ -267,7 +266,9 @@ export default function IncidentList() {
                     <td className="px-5 py-3.5">
                       <div className="max-w-72">
                         <div className="truncate font-semibold text-foreground">{incidentSummary(incident)}</div>
-                        <div className="mt-1 font-mono text-[10px] text-blue-400">{incident.id}</div>
+                        <div className="mt-1 text-[10px] text-muted-foreground">
+                          {formatLongDate(incident.date)}{incident.time ? ` • ${incident.time}` : ''}
+                        </div>
                       </div>
                     </td>
                     <td className="px-3 py-3.5">
@@ -278,10 +279,6 @@ export default function IncidentList() {
                     </td>
                     <td className="px-3 py-3.5 text-foreground max-w-40">
                       <div className="truncate">{incident.location}</div>
-                    </td>
-                    <td className="px-3 py-3.5 text-muted-foreground">
-                      <div>{formatLongDate(incident.date)}</div>
-                      <div className="opacity-70">{incident.time}</div>
                     </td>
                     <td className="px-3 py-3.5">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${severityBadge[incident.severity]}`}>

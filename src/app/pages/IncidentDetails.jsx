@@ -2,7 +2,7 @@ import { createElement, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, ArrowLeft, Camera, Car, CheckCircle2, ChevronRight,
-  Clock, Droplets, Edit2, ExternalLink, FileText, Flame, Heart, MapPin, Plus,
+  Clock, Droplets, Edit2, ExternalLink, FileText, Flame, Heart, MapPin, Maximize2, Minimize2, Plus,
   Radio, Share2, Users,
 } from 'lucide-react';
 import { getDispatchRecordByResponse, getIncident, getPCRReportByResponse, listAuditLogs } from '../services/supabase';
@@ -47,6 +47,16 @@ const RESPONSE_STATUS_ORDER = ['draft', 'sent_to_responding_team', 'accepted_by_
 const formatDateTime = value => formatLongDateTime(value);
 
 const displayValue = value => value || '-';
+const titleCase = value => String(value || '')
+  .replace(/_/g, ' ')
+  .replace(/\b\w/g, letter => letter.toUpperCase());
+
+const incidentTitle = incident => {
+  if (incident.title) return incident.title;
+  const type = incident.type === 'vehicular' ? 'Vehicular' : titleCase(incident.type || incident.classification || 'Emergency');
+  const subtype = incident.subtype || incident.incidentNature || '';
+  return subtype ? `${type} Incident - ${titleCase(subtype)}` : `${type} Incident`;
+};
 
 export default function IncidentDetails() {
   const { id } = useParams();
@@ -55,6 +65,7 @@ export default function IncidentDetails() {
   const [dispatch, setDispatch] = useState(null);
   const [pcr, setPcr] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -119,6 +130,13 @@ export default function IncidentDetails() {
         type: log.action === 'create' ? 'new' : log.action === 'accept' ? 'dispatch' : log.action === 'back_to_base' ? 'report' : 'assess',
       }))
     : [];
+  const visibleTimeline = timelineExpanded ? timeline : timeline.slice(0, 3);
+  const patientSummary = {
+    name: pcr?.patientName || dispatch?.patients?.[0]?.name || 'Unnamed patient',
+    ageGender: [pcr?.age || dispatch?.patients?.[0]?.age, pcr?.gender || dispatch?.patients?.[0]?.gender].filter(Boolean).join(' yrs '),
+    address: pcr?.address || dispatch?.patients?.[0]?.address || dispatch?.callerAddress || '',
+    complaint: pcr?.chiefComplaint || dispatch?.patients?.[0]?.assessmentFindings || incident.description || '',
+  };
 
   const shareIncident = async () => {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(window.location.href);
@@ -142,7 +160,6 @@ export default function IncidentDetails() {
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-3 mb-1">
-                <span className="font-mono text-blue-400 font-bold text-lg">{incident.id}</span>
                 <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${severityBadge[incident.severity] || severityBadge.moderate}`}>
                   {String(incident.severity || 'moderate').toUpperCase()}
                 </span>
@@ -150,9 +167,10 @@ export default function IncidentDetails() {
                   {getIncidentStatusLabel(incident.status)}
                 </span>
               </div>
-              <h2 className="text-base font-bold text-white capitalize mb-1">
-                {incident.type} Incident - {displayValue(incident.location)}
+              <h2 className="text-lg font-bold text-white capitalize mb-1">
+                {incidentTitle(incident)}
               </h2>
+              <div className="mb-2 font-mono text-[10px] text-slate-500">Incident ID: {incident.id}</div>
               <p className="text-slate-400 text-sm max-w-2xl">
                 {incident.description || 'No narrative has been added for this incident yet.'}
               </p>
@@ -280,13 +298,52 @@ export default function IncidentDetails() {
           </div>
 
           <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Clock className="w-4 h-4 text-blue-400" />
-              <span className="text-sm font-semibold text-white">Incident Timeline</span>
+            <div className="flex items-center gap-2 mb-3">
+              <Users className="w-4 h-4 text-green-400" />
+              <span className="text-sm font-semibold text-white">Patient / Incident Summary</span>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div className="rounded-lg bg-slate-800/60 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Patient</div>
+                <div className="mt-1 font-semibold text-slate-100">{patientSummary.name}</div>
+                <div className="mt-0.5 text-slate-400">{patientSummary.ageGender || 'Age and gender not entered'}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-slate-800/60 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Casualties</div>
+                  <div className="mt-1 font-semibold text-slate-100">{incident.casualties || dispatch?.numberOfPatients || dispatch?.patients?.length || 0}</div>
+                </div>
+                <div className="rounded-lg bg-slate-800/60 p-3">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Reported</div>
+                  <div className="mt-1 font-semibold text-slate-100">{formatDateAndTime(incident.date, incident.time)}</div>
+                </div>
+              </div>
+              <div className="rounded-lg bg-slate-800/60 p-3">
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Address / Notes</div>
+                <div className="mt-1 line-clamp-3 text-slate-300">{patientSummary.address || patientSummary.complaint || 'No patient summary has been entered yet.'}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-700/50 rounded-xl p-4">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-blue-400" />
+                <span className="text-sm font-semibold text-white">Incident Timeline</span>
+              </div>
+              {timeline.length > 3 && (
+                <button
+                  onClick={() => setTimelineExpanded(value => !value)}
+                  className="grid h-8 w-8 place-items-center rounded-lg bg-slate-800 text-slate-400 hover:text-white"
+                  title={timelineExpanded ? 'Minimize timeline' : 'Maximize timeline'}
+                >
+                  {timelineExpanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                </button>
+              )}
             </div>
             <div className="space-y-3 relative">
               <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-slate-700" />
-              {timeline.map((item, i) => (
+              {visibleTimeline.map((item, i) => (
                 <div key={`${item.time}-${i}`} className="flex gap-4 relative">
                   <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 z-10 ${timelineColor[item.type]}`}>
                     <div className="w-2 h-2 bg-white rounded-full" />
@@ -298,6 +355,9 @@ export default function IncidentDetails() {
                 </div>
               ))}
               {!timeline.length && <p className="text-xs text-slate-400">No audit timeline is available for this incident.</p>}
+              {!timelineExpanded && timeline.length > 3 && (
+                <p className="pl-10 text-[10px] text-slate-500">Showing latest 3 of {timeline.length} timeline entries.</p>
+              )}
             </div>
           </div>
 

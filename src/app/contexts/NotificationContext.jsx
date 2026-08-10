@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { isSupabaseConfigured, markNotificationAsRead, listNotifications, supabase } from '../services/supabase';
+import { isSupabaseConfigured, markNotificationAsRead, markNotificationsAsRead, listNotifications, supabase } from '../services/supabase';
 import { subscribeLiveSyncEvents } from '../network/live-sync-events';
 
 const NOTIFICATION_PREFS_KEY = 'alert-cia-notification-preferences';
@@ -171,10 +171,10 @@ export function NotificationProvider({ children }) {
   useEffect(() => {
     if (!user || !isSupabaseConfigured) return undefined;
     let mounted = true;
-    listNotifications({ limit: 50 })
+    listNotifications({ unreadOnly: true, limit: 50 })
       .then(rows => {
         if (!mounted) return;
-        setNotifications(prev => persistNotifications([...rows.map(normalizeNotification), ...prev]));
+        setNotifications(prev => persistNotifications([...rows.map(normalizeNotification), ...prev].filter(item => !item.read)));
       })
       .catch(() => undefined);
     return () => {
@@ -191,7 +191,10 @@ export function NotificationProvider({ children }) {
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, payload => {
         const updated = normalizeNotification({ ...payload.new, source: 'cloud' });
-        setNotifications(prev => persistNotifications(prev.map(item => item.id === updated.id ? updated : item)));
+        setNotifications(prev => persistNotifications(updated.read
+          ? prev.filter(item => item.id !== updated.id)
+          : prev.map(item => item.id === updated.id ? updated : item)
+        ));
       })
       .subscribe();
     return () => {
@@ -205,9 +208,15 @@ export function NotificationProvider({ children }) {
   }), [addNotification]);
 
   const markAsRead = useCallback(id => {
-    setNotifications(prev => persistNotifications(prev.map(item => item.id === id ? { ...item, read: true, readAt: new Date().toISOString() } : item)));
+    setNotifications(prev => persistNotifications(prev.filter(item => item.id !== id)));
     markNotificationAsRead(id).catch(() => undefined);
   }, [persistNotifications]);
+
+  const markAllAsRead = useCallback(() => {
+    const unreadIds = notifications.filter(item => !item.read).map(item => item.id);
+    setNotifications(prev => persistNotifications(prev.filter(item => item.read)));
+    markNotificationsAsRead(unreadIds).catch(() => undefined);
+  }, [notifications, persistNotifications]);
 
   const clearAll = useCallback(() => {
     setNotifications([]);
@@ -231,12 +240,13 @@ export function NotificationProvider({ children }) {
     notifications,
     addNotification,
     markAsRead,
+    markAllAsRead,
     clearAll,
     unreadCount,
     preferences,
     updatePreferences,
     requestBrowserPermission,
-  }), [notifications, addNotification, markAsRead, clearAll, unreadCount, preferences, updatePreferences, requestBrowserPermission]);
+  }), [notifications, addNotification, markAsRead, markAllAsRead, clearAll, unreadCount, preferences, updatePreferences, requestBrowserPermission]);
 
   return (
     <NotificationContext.Provider value={value}>

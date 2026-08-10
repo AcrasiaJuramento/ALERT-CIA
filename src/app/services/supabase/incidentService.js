@@ -100,7 +100,7 @@ function incidentToApp(row = {}) {
     longitude: lng,
     assignedTeam: team || "Unassigned",
     responders: team ? 1 : 0,
-    casualties: 0,
+    casualties: Number(row.casualties || 0),
     publicVisible: row.public_visible,
     sourceKind: row.record_origin || "official",
     sourceLabel: row.record_origin === "promoted_scraped" ? "Promoted scraper record" : "Official incident record",
@@ -110,6 +110,28 @@ function incidentToApp(row = {}) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+async function casualtyCountsByResponse(responseIds = []) {
+  const ids = [...new Set(responseIds.filter(Boolean))];
+  if (!ids.length) return new Map();
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("dispatch_forms")
+        .select("response_id, number_of_patients, dispatch_patients(id)")
+        .in("response_id", ids)
+        .is("deleted_at", null),
+    "Unable to load dispatch patient counts.");
+
+    return new Map(asRows(rows).map(row => {
+      const patientCount = Number(row.number_of_patients);
+      const fallbackCount = row.dispatch_patients?.length || 0;
+      return [row.response_id, Number.isFinite(patientCount) ? patientCount : fallbackCount];
+    }));
+  } catch {
+    return new Map();
+  }
 }
 
 function incidentPayload(record = {}, barangayId) {
@@ -198,7 +220,12 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
     return query;
   }, "Unable to load incidents.");
 
-  const rows = asRows(data).map(incidentToApp);
+  const baseRows = asRows(data);
+  const casualtiesByResponse = await casualtyCountsByResponse(baseRows.map(row => row.response_id));
+  const rows = baseRows.map(row => incidentToApp({
+    ...row,
+    casualties: casualtiesByResponse.get(row.response_id) || 0,
+  }));
   rows.totalCount = count ?? rows.length;
   return rows;
 }
