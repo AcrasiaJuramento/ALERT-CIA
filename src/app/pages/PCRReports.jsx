@@ -12,6 +12,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { archivePCRReport, createStandalonePCRShell, listPCRReports, listPCRWorkflowHistory, returnNormalPCRToFieldOfficer, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase } from '../services/supabase';
 
+const formatDate = value => {
+  if (!value) return '-';
+  const normalized = typeof value === 'object'
+    ? value.toDate?.() || value.toISOString?.() || value.updated_at || value.created_at
+    : value;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? '-' : parsed.toLocaleString();
+};
+
 const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher Review', 'Accepted by Dispatcher', 'Pending Admin Verification', 'Returned to Field Officer', 'Returned for Correction', 'Submitted', 'Verified', 'Rejected', 'Completed'];
 const displayStatus = record => record?.status || 'Draft';
 const isReviewable = record => displayStatus(record) === 'Submitted';
@@ -217,7 +226,7 @@ export default function PCRReports() {
                 <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${isReviewable(record) ? 'bg-amber-500/15 text-amber-500' : record.status === 'Verified' ? 'bg-green-500/15 text-green-500' : record.status === 'Rejected' ? 'bg-red-500/15 text-red-500' : 'bg-slate-500/15 text-slate-400'}`}>{displayStatus(record)}</span>
                 {record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}
               </td>
-              <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(record.updatedAt).toLocaleString()}</td>
+              <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
               <td className="px-4 py-3"><div className="flex gap-1" onClick={event => event.stopPropagation()}>
                 <button onClick={() => setSelected(record)} title="View" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><Eye size={15} /></button>
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
@@ -258,7 +267,7 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
               </div>
             </div>
-            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {new Date(entry.timestamp).toLocaleString()}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
+            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {formatDate(entry.timestamp)}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
             <div className="overflow-auto bg-slate-300 p-4">
               <div className="mx-auto max-w-[210mm] shadow-xl"><PrintablePCR record={selected} /></div>
             </div>

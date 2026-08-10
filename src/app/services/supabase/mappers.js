@@ -290,6 +290,8 @@ export function dispatchToApp(row = {}) {
     notes: notesBlob.text,
     status: fromDbDispatchStatus(row.status || row.response?.status || row.responses?.status),
     sentAt: row.sent_at || "",
+    createdAt: row.created_at || response.createdAt || "",
+    updatedAt: row.updated_at || response.updatedAt || row.created_at || response.createdAt || "",
     patients: (row.dispatch_patients || []).length ? (row.dispatch_patients || []).map((patient, index) => ({
       ...(extendedPatients[index] || {}),
       id: patient.id,
@@ -367,6 +369,8 @@ export function pcrToApp(row = {}) {
     backToBase: row.back_to_base_time || extended.backToBase || "",
     completedAt: row.completed_at || "",
     submittedAt: row.submitted_at || "",
+    createdAt: row.created_at || response.createdAt || "",
+    updatedAt: row.updated_at || response.updatedAt || row.created_at || response.createdAt || "",
     vitals: vitalRows.length ? vitalRows : extended.vitals || [],
     medications: medicationRows.length ? medicationRows : extended.medications || [],
     interventions: Object.keys(extended.interventions || {}).length

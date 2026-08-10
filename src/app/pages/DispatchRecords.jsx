@@ -44,8 +44,11 @@ const statusClass = (status = "Draft") => {
 
 const formatDate = value => {
   if (!value) return "-";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  const normalized = typeof value === "object"
+    ? value.toDate?.() || value.toISOString?.() || value.updated_at || value.created_at
+    : value;
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString();
 };
 
 const SOURCE_RANK = {
