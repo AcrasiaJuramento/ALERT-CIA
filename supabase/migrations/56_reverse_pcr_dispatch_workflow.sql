@@ -295,14 +295,14 @@ begin
   if report.status not in ('pending_admin_verification', 'returned_for_correction') then raise exception 'PCR is not ready for admin review'; end if;
   if decision not in ('approve', 'return', 'reject') then raise exception 'Decision must be approve, return, or reject'; end if;
   if decision <> 'approve' and nullif(trim(remarks), '') is null then raise exception 'Remarks are required'; end if;
-  next_status := case when decision = 'approve' then 'verified'::public.pcr_status when decision = 'reject' then 'rejected'::public.pcr_status else 'returned_for_correction'::public.pcr_status end;
+  next_status := case when decision = 'approve' then 'verified'::public.pcr_status else 'returned_for_correction'::public.pcr_status end;
 
   update public.pcr_reports set status = next_status, verified_by = case when decision = 'approve' then auth.uid() else verified_by end,
     verified_at = case when decision = 'approve' then now() else verified_at end,
     admin_reviewed_by = auth.uid(), admin_reviewed_at = now(), return_remarks = case when decision = 'approve' then null else remarks end,
     rejection_reason = case when decision = 'reject' then remarks else rejection_reason end, updated_by = auth.uid(), updated_at = now()
   where id = target_pcr_id;
-  update public.dispatch_forms set status = case when decision = 'approve' then 'verified'::public.dispatch_status when decision = 'reject' then 'cancelled'::public.dispatch_status else 'returned_for_correction'::public.dispatch_status end,
+  update public.dispatch_forms set status = case when decision = 'approve' then 'verified'::public.dispatch_status else 'returned_for_correction'::public.dispatch_status end,
     updated_by = auth.uid(), updated_at = now() where id = report.dispatch_form_id;
   insert into public.pcr_dispatch_workflow_history(pcr_report_id, dispatch_form_id, response_id, action, previous_status, new_status, remarks)
     values (target_pcr_id, report.dispatch_form_id, report.response_id,

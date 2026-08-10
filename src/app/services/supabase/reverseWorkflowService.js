@@ -1,3 +1,4 @@
+import { getSupabaseClient } from '../../lib/supabaseClient';
 import { runSupabaseRequest } from './errors';
 
 const transition = (name, args, message) => runSupabaseRequest(
@@ -28,16 +29,36 @@ export function createDispatchFromPCR(pcrId, dispatch = {}) {
   }, 'Unable to create a Dispatch Form from this PCR.');
 }
 
-export function reviewReverseWorkflowAsAdmin(pcrId, decision, remarks = '') {
-  return transition('review_reverse_workflow_admin', {
-    target_pcr_id: pcrId,
-    decision,
-    remarks: remarks || null,
-  }, 'Unable to complete final verification.');
+export async function reviewReverseWorkflowAsAdmin(pcrId, decision, remarks = '') {
+  try {
+    return await transition('review_reverse_workflow_admin', {
+      target_pcr_id: pcrId,
+      decision,
+      remarks: remarks || null,
+    }, 'Unable to complete final verification.');
+  } catch (error) {
+    if (error?.code !== 'PGRST116') throw error;
+
+    const expectedStatus = decision === 'approve' ? 'verified' : 'returned_for_correction';
+    const { data, error: verificationError } = await getSupabaseClient()
+      .from('pcr_reports')
+      .select('id, status')
+      .eq('id', pcrId)
+      .limit(1);
+    if (verificationError || data?.[0]?.status !== expectedStatus) throw error;
+    return data[0].id;
+  }
 }
 
 export function resubmitReverseWorkflow(pcrId) {
   return transition('resubmit_reverse_workflow_admin', { target_pcr_id: pcrId }, 'Unable to resubmit corrected records.');
+}
+
+export function returnNormalPCRToFieldOfficer(pcrId, remarks) {
+  return transition('return_normal_pcr_to_field_officer', {
+    target_pcr_id: pcrId,
+    remarks,
+  }, 'Unable to return the PCR to the Field Officer.');
 }
 
 export async function listPCRWorkflowHistory(pcrId) {

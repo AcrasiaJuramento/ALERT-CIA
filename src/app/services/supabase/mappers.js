@@ -146,11 +146,14 @@ const DISPATCH_EXTENDED_FIELDS = [
 ];
 
 const PCR_EXTENDED_FIELDS = [
-  "respondingTeam", "vehicle", "driver", "mainAider", "groupLeader", "assistantAider",
-  "natureOfCall", "dateOfIncident", "timeOfIncident", "placeOfIncident", "barangay",
+  "respondingTeam", "respondingTeamId", "team", "vehicle", "vehicleId", "driver",
+  "mainAider", "groupLeader", "assistantAider",
+  "natureOfCall", "natureTypes", "otherMedical", "otherTrauma", "otherNature",
+  "dateOfIncident", "timeOfIncident", "placeOfIncident", "barangay",
   "locationText", "latitude", "longitude", "locationGeography", "dispatchTime", "arrivalScene",
   "departureScene", "arrivalHospital", "departureHospital", "backToBase", "timeline",
-  "patientName", "age", "birthday", "gender", "civilStatus", "address", "contactPerson",
+  "patientName", "age", "birthday", "birthYear", "birthMonth", "birthDay",
+  "gender", "civilStatus", "address", "contactPerson", "contactAddress",
   "contactNumber", "emergencyOther", "assaultDetails", "animalBiteDetails", "ingestionItem",
   "ingestionQuantity", "fallDetails", "obstetric", "crash", "gcs", "gcsRows", "bodyMap",
   "suspectedSpinal", "airway", "breathing", "oxygenLpm", "oxygenVia", "pulseFindings",
@@ -294,6 +297,7 @@ export function dispatchToApp(row = {}) {
     dispatchClientId: row.client_generated_id || row.id || response.dispatchId,
     id: row.id || response.id,
     responseId: row.response_id || response.id,
+    sourcePcrId: row.source_pcr_id || null,
     dispatchedTime: row.dispatch_time || "",
     arrivalScene: row.arrival_scene_time || "",
     departureScene: row.departure_scene_time || "",
@@ -306,6 +310,8 @@ export function dispatchToApp(row = {}) {
     notes: notesBlob.text,
     status: fromDbDispatchStatus(row.status || row.response?.status || row.responses?.status),
     sentAt: row.sent_at || "",
+    createdAt: row.created_at || response.createdAt || "",
+    updatedAt: row.updated_at || response.updatedAt || row.created_at || response.createdAt || "",
     patients: (row.dispatch_patients || []).length ? (row.dispatch_patients || []).map((patient, index) => ({
       ...(extendedPatients[index] || {}),
       id: patient.id,

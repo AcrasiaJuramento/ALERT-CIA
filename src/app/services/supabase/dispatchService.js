@@ -25,6 +25,7 @@ const DISPATCH_LIST_SELECT = `
   id,
   client_generated_id,
   response_id,
+  source_pcr_id,
   dispatch_time,
   arrival_scene_time,
   departure_scene_time,
@@ -58,6 +59,9 @@ const DISPATCH_LIST_SELECT = `
     caller_name,
     caller_contact,
     caller_address,
+    driver_name,
+    main_aider_name,
+    assistant_aider_name,
     responding_team_id,
     assigned_unit_id,
     resolved_at,
@@ -65,7 +69,8 @@ const DISPATCH_LIST_SELECT = `
     barangay:barangays(id, name, normalized_name),
     responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
     assigned_unit:ambulance_units(id, call_sign)
-  )
+  ),
+  dispatch_patients(*)
 `;
 
 async function resolveDispatchIds(form) {

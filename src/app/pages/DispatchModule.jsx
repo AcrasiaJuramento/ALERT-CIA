@@ -152,6 +152,109 @@ function newDispatch() {
   };
 }
 
+function dispatchPrefillFromPCR(pcr) {
+  const obstetric = pcr.obstetric || {};
+  const crash = pcr.crash || {};
+  const vital = [...(pcr.vitals || [])].reverse().find(row =>
+    [row?.bp, row?.pulse, row?.respiratory, row?.temperature, row?.oxygen].some(Boolean)
+  ) || {};
+  const gcsRow = [...(pcr.gcsRows || (pcr.gcs ? [pcr.gcs] : []))].reverse().find(row =>
+    [row?.eye, row?.verbal, row?.motor].some(Boolean)
+  ) || {};
+  const gcsTotal = [gcsRow.eye, gcsRow.verbal, gcsRow.motor]
+    .reduce((total, score) => total + Number(score || 0), 0);
+  const normalizeFinding = value => {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (["positive", "+"].includes(normalized)) return "+";
+    if (["negative", "-"].includes(normalized)) return "-";
+    if (["n/a", "not applicable", "unknown"].includes(normalized)) return "Unknown";
+    return "";
+  };
+  const birthday = pcr.birthday || pcr.birthdate || "";
+  const birthdateParts = splitBirthdate(birthday);
+  const natureTypes = [...new Set([
+    ...(pcr.natureTypes || []),
+    ...(pcr.emergencyTypes || []).map(type => type === "Obstetric" ? "Obstetrical" : type),
+    ...(pcr.traumaTypes || []),
+    ...(pcr.natureOfCall === "Conduction" ? ["Conduction"] : []),
+  ].filter(Boolean))];
+
+  return {
+    ...pcr,
+    respondingTeamId: pcr.respondingTeamId || "",
+    team: pcr.team || pcr.respondingTeam || "",
+    callerName: pcr.callerName || pcr.contactPerson || "",
+    callerAddress: pcr.callerAddress || pcr.contactAddress || pcr.address || "",
+    callerContact: pcr.callerContact || pcr.contactNumber || "",
+    natureTypes,
+    otherMedical: pcr.otherMedical || pcr.emergencyOther || "",
+    otherTrauma: pcr.otherTrauma || "",
+    selfAccident: Boolean(pcr.selfAccident || crash.selfAccident),
+    collision: Boolean(pcr.collision || crash.collision),
+    vehicleInvolved: pcr.vehicleInvolved || crash.vehicle || "",
+    ifIngestion: pcr.ifIngestion || pcr.ingestionItem || "",
+    quantity: pcr.quantity || pcr.ingestionQuantity || "",
+    ifFall: pcr.ifFall || pcr.fallDetails || "",
+    patients: [{
+      ...newPatient(),
+      name: pcr.patientName || "",
+      age: pcr.age || "",
+      birthdate: birthday,
+      birthYear: pcr.birthYear || birthdateParts.year,
+      birthMonth: pcr.birthMonth || birthdateParts.month,
+      birthDay: pcr.birthDay || birthdateParts.day,
+      gender: pcr.gender || "",
+      address: pcr.address || "",
+      assessmentFindings: pcr.chiefComplaint || "",
+      bp: vital.bp || "",
+      pr: vital.pulse || "",
+      rr: vital.respiratory || "",
+      temp: vital.temperature || "",
+      o2Sat: vital.oxygen || "",
+      gcs: gcsTotal || "",
+      g: obstetric.g || "",
+      p: obstetric.p || "",
+      t: obstetric.t || "",
+      pa: obstetric.pa || "",
+      l: obstetric.l || obstetric.baby || "",
+      lmp: obstetric.lmp || "",
+      aog: obstetric.aog || "",
+      edc: obstetric.edc || "",
+      fht: obstetric.fht || "",
+      ie: obstetric.ie || "",
+      bow: obstetric.bow || "",
+      driver: String(crash.role || "").toLowerCase() === "driver",
+      passenger: String(crash.role || "").toLowerCase() === "passenger",
+      pedestrian: String(crash.role || "").toLowerCase() === "pedestrian",
+      helmet: normalizeFinding(crash.helmet),
+      alcoholBreath: normalizeFinding(crash.alcohol),
+      driversLicense: normalizeFinding(crash.license),
+    }],
+  };
+}
+
+function mergeDispatchWithPCR(dispatch, pcr) {
+  if (!pcr) return dispatch;
+  const fallback = dispatchPrefillFromPCR(pcr);
+  const hasValue = value => value !== null
+    && value !== undefined
+    && value !== ""
+    && (!Array.isArray(value) || value.length > 0);
+  const merged = { ...fallback };
+  Object.entries(dispatch || {}).forEach(([key, value]) => {
+    if (hasValue(value)) merged[key] = value;
+  });
+  const dispatchPatients = dispatch?.patients || [];
+  const fallbackPatients = fallback.patients || [];
+  merged.patients = Array.from({ length: Math.max(dispatchPatients.length, fallbackPatients.length, 1) }, (_, index) => {
+    const patient = dispatchPatients[index] || {};
+    const fallbackPatient = fallbackPatients[index] || newPatient();
+    return Object.fromEntries([...new Set([...Object.keys(fallbackPatient), ...Object.keys(patient)])]
+      .map(key => [key, hasValue(patient[key]) ? patient[key] : fallbackPatient[key]]));
+  });
+  return merged;
+}
+
 // ─── Timeline row ────────────────────────────────────────────────────────────
 function TimelineField({ label, value, onChange, error }) {
   return (
@@ -451,11 +554,19 @@ export default function DispatchModule({ onBack }) {
           ? await localServerClient.getDispatch(editId).catch(() => getCachedDispatch(editId))
           : await getDispatchRecord(editId).catch(() => getCachedDispatch(editId));
         if (mounted && found) {
-          setForm({ ...newDispatch(), ...found, responseNumber: found.responseNumber || generateResponseNumber(), patients: found.patients?.length ? found.patients : [newPatient()] });
           const pcr = mode === "local"
             ? await localServerClient.getPcrByResponse(found.responseId).catch(() => null)
             : await getPCRReportByResponse(found.responseId).catch(() => null);
-          if (mounted) setLinkedPCR(pcr);
+          if (mounted) {
+            const hydrated = mergeDispatchWithPCR(found, pcr);
+            setForm({
+              ...newDispatch(),
+              ...hydrated,
+              responseNumber: hydrated.responseNumber || generateResponseNumber(),
+              patients: hydrated.patients?.length ? hydrated.patients : [newPatient()],
+            });
+            setLinkedPCR(pcr);
+          }
         }
       } catch (error) {
         toast.error(error.message || "Unable to load dispatch form.");
@@ -473,7 +584,13 @@ export default function DispatchModule({ onBack }) {
     getPCRReport(sourcePcrId).then(pcr => {
       if (!pcr) return;
       setLinkedPCR(pcr);
-      setForm(current => ({ ...current, ...pcr, status: 'Draft', dispatchId: null, id: null, patients: [{ ...newPatient(), name: pcr.patientName, age: pcr.age, birthday: pcr.birthday, gender: pcr.gender, address: pcr.address, assessmentFindings: pcr.chiefComplaint }] }));
+      setForm(current => ({
+        ...current,
+        ...dispatchPrefillFromPCR(pcr),
+        status: 'Draft',
+        dispatchId: null,
+        id: null,
+      }));
     }).catch(error => toast.error(error.message || 'Unable to prefill Dispatch Form from PCR.'));
   }, [sourcePcrId]);
 
@@ -492,6 +609,8 @@ export default function DispatchModule({ onBack }) {
     .map(member => ({ value: member.name, label: member.name }));
   const selectedTeamId = form.respondingTeamId || teamOptions.find(team => team.name === form.team)?.id || "";
   const selectedVehicleId = form.vehicleId || vehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
+  const reverseSourcePcrId = sourcePcrId || form.sourcePcrId || (linkedPCR?.workflowOrigin === 'reverse' ? linkedPCR.id : null);
+  const isReverseWorkflow = Boolean(reverseSourcePcrId);
   const updateIncidentLocation = location => setForm(f => ({
     ...f,
     barangay: location.barangay || f.barangay,
@@ -532,8 +651,16 @@ export default function DispatchModule({ onBack }) {
   const handleSave = async () => {
     if (!requirePinnedLocation()) return;
     try {
-      if (sourcePcrId) {
-        const dispatchId = await createDispatchFromPCR(sourcePcrId, form);
+      if (reverseSourcePcrId) {
+        const existingDispatchId = form.dispatchId || editId;
+        const dispatchId = existingDispatchId || await createDispatchFromPCR(reverseSourcePcrId, form);
+        await hybridRepository.updateDispatch(dispatchId, {
+          ...form,
+          id: dispatchId,
+          dispatchId,
+          sourcePcrId: reverseSourcePcrId,
+          status: 'Pending Admin Verification',
+        });
         toast.success('Dispatch Form created and linked. Both records are pending Admin verification.');
         navigate(`/admin/dispatch/new?edit=${dispatchId}`);
         return;
@@ -589,6 +716,8 @@ export default function DispatchModule({ onBack }) {
     }
   };
 
+  const handlePrimarySend = () => isReverseWorkflow ? handleSave() : handleSendToFieldOfficer();
+
   const handlePrint = () => window.print();
 
   const natureHas = (t) => form.natureTypes.includes(t);
@@ -625,8 +754,8 @@ export default function DispatchModule({ onBack }) {
           <button onClick={handleSave} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center hover:bg-secondary/80">
             <Save size={15} /> Save Draft
           </button>
-          <button onClick={handleSendToFieldOfficer} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm flex gap-2 items-center hover:bg-green-500">
-            <Send size={15} /> Send to Responding Team
+          <button onClick={handlePrimarySend} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm flex gap-2 items-center hover:bg-green-500">
+            <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
           </button>
           <button onClick={handlePrint} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center hover:bg-blue-500">
             <Download size={15} /> Print / Export
@@ -881,8 +1010,8 @@ export default function DispatchModule({ onBack }) {
         <button onClick={handleSave} className="px-4 py-2 bg-secondary rounded-lg flex gap-2 text-sm items-center hover:bg-secondary/80">
           <Save size={15} /> Save Draft
         </button>
-        <button onClick={handleSendToFieldOfficer} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-green-500">
-          <Send size={15} /> Send to Responding Team
+        <button onClick={handlePrimarySend} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-green-500">
+          <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
         </button>
         <button onClick={handlePrint} className="px-5 py-2 bg-blue-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-blue-500">
           <Download size={15} /> Print / Export PDF

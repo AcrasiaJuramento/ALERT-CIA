@@ -43,7 +43,11 @@ const statusClass = (status = "Draft") => {
 };
 
 const formatDate = value => {
-  return formatLongDateTime(value);
+  if (!value) return "-";
+  const normalized = typeof value === "object"
+    ? value.toDate?.() || value.toISOString?.() || value.updated_at || value.created_at
+    : value;
+  return formatLongDateTime(normalized);
 };
 
 const SOURCE_RANK = {
@@ -64,6 +68,8 @@ const DISPATCH_FILTER_STATUSES = [
   "PCR Completed",
   "Submitted",
   "Submitted Locally",
+  "Pending Admin Verification",
+  "Returned for Correction",
   "Verified",
   "Cancelled",
 ];
@@ -110,6 +116,9 @@ function needsCloudUpload(record = {}, linkedPcr = null) {
 
 function dispatchStatusRank(record = {}) {
   const status = record.localStatus || record.status || "";
+  if (status.includes("Verified")) return 8;
+  if (status.includes("Pending Admin Verification")) return 7;
+  if (status.includes("Returned for Correction")) return 6;
   if (status.includes("PCR Completed")) return 5;
   if (status.includes("Submitted")) return 5;
   if (status.includes("PCR In Progress")) return 4;
@@ -120,11 +129,13 @@ function dispatchStatusRank(record = {}) {
 }
 
 function logicalDispatchKey(record = {}) {
-  return record.responseClientId
-    || record.responseId
+  // A response can have more than one dispatch form. Keep each dispatch form
+  // distinct so a verified record is not hidden by a draft for the response.
+  return record.dispatchId
+    || record.id
     || record.dispatchClientId
-    || record.dispatchId
-    || record.id;
+    || record.responseClientId
+    || record.responseId;
 }
 
 function normalizeKeyPart(value) {
@@ -139,6 +150,47 @@ function pcrPatientKey(record = {}) {
     normalizeKeyPart(record.latitude || "").slice(0, 8),
     normalizeKeyPart(record.longitude || "").slice(0, 8),
   ].filter(Boolean).join("|");
+}
+
+function dispatchPreviewRecord(record = {}, pcr = null) {
+  if (!pcr) return { ...record, linkedPcr: null, pcr: null };
+  const pcrPatient = {
+    name: pcr.patientName || "",
+    age: pcr.age || "",
+    birthdate: pcr.birthday || pcr.birthdate || "",
+    gender: pcr.gender || "",
+    address: pcr.address || "",
+    assessmentFindings: pcr.chiefComplaint || "",
+  };
+  const patients = record.patients?.length
+    ? record.patients.map((patient, index) => index ? patient : Object.fromEntries(
+      [...new Set([...Object.keys(pcrPatient), ...Object.keys(patient)])]
+        .map(key => [key, patient[key] || pcrPatient[key] || ""]),
+    ))
+    : [pcrPatient];
+  return {
+    ...pcr,
+    ...record,
+    team: record.team || pcr.team || pcr.respondingTeam || "",
+    vehicle: record.vehicle || pcr.vehicle || "",
+    driver: record.driver || pcr.driver || "",
+    mainAider: record.mainAider || pcr.mainAider || "",
+    groupLeader: record.groupLeader || pcr.groupLeader || "",
+    assistantAider: record.assistantAider || pcr.assistantAider || "",
+    callerName: record.callerName || pcr.callerName || pcr.contactPerson || "",
+    callerAddress: record.callerAddress || pcr.callerAddress || pcr.contactAddress || "",
+    callerContact: record.callerContact || pcr.callerContact || pcr.contactNumber || "",
+    placeOfIncident: record.placeOfIncident || pcr.placeOfIncident || pcr.locationText || "",
+    locationText: record.locationText || pcr.locationText || pcr.placeOfIncident || "",
+    barangay: record.barangay || pcr.barangay || "",
+    barangayId: record.barangayId || pcr.barangayId || null,
+    latitude: record.latitude || pcr.latitude || "",
+    longitude: record.longitude || pcr.longitude || "",
+    locationGeography: record.locationGeography || pcr.locationGeography || "",
+    patients,
+    linkedPcr: pcr,
+    pcr,
+  };
 }
 
 function samePcrRecord(local = {}, cloud = {}) {
@@ -546,16 +598,16 @@ export default function DispatchRecords() {
                 {visibleRecords.map(record => {
                   const pcr = linkedPCRs[record.responseId];
                   return (
-                    <tr key={record.id} onClick={() => setSelected({ ...record, linkedPcr: linkedPCRs[record.responseId], pcr: linkedPCRs[record.responseId] })} className="cursor-pointer border-t border-border hover:bg-secondary/40">
+                    <tr key={record.id} onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} className="cursor-pointer border-t border-border hover:bg-secondary/40">
                       <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber || "Unnumbered"}</td>
                       <td className="px-4 py-3"><div className="font-semibold">{[...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified"}</div><div className="text-xs text-muted-foreground">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</div></td>
-                      <td className="max-w-56 px-4 py-3"><div className="truncate">{record.placeOfIncident || record.callerAddress || "-"}</div><div className="text-xs text-muted-foreground">{record.barangay || "No barangay"}</div></td>
+                      <td className="max-w-56 px-4 py-3"><div className="truncate">{record.placeOfIncident || pcr?.placeOfIncident || pcr?.locationText || record.callerAddress || "-"}</div><div className="text-xs text-muted-foreground">{record.barangay || pcr?.barangay || "No barangay"}</div></td>
                       <td className="px-4 py-3">{record.team || "-"}<div className="text-xs text-muted-foreground">{record.vehicle || "No unit"}</div></td>
                       <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusClass(displayStatus(record, pcr))}`}>{displayStatus(record, pcr)}</span>{record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}</td>
                       <td className="px-4 py-3 text-xs">{pcr ? <span className="font-semibold text-green-400">{pcr.responseNumber || pcr.id}</span> : <span className="text-muted-foreground">Not created</span>}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
                       <td className="px-4 py-3"><div className="flex gap-1" onClick={event => event.stopPropagation()}>
-                        <button onClick={() => setSelected({ ...record, linkedPcr: pcr, pcr })} title="View dispatch" className="rounded p-2 text-blue-400 hover:bg-blue-500/10"><Eye size={15} /></button>
+                        <button onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} title="View dispatch" className="rounded p-2 text-blue-400 hover:bg-blue-500/10"><Eye size={15} /></button>
                         {canCreate && <button onClick={() => edit(record)} title="Edit dispatch" className="rounded p-2 text-amber-400 hover:bg-amber-500/10"><Edit3 size={15} /></button>}
                         <button onClick={() => openPCR(record)} title="Open linked PCR" className="rounded p-2 text-green-400 hover:bg-green-500/10"><FileText size={15} /></button>
                         {needsCloudUpload(record, pcr) && <button onClick={() => uploadRecordToCloud(record, pcr)} title="Sync this dispatch and linked PCR to cloud" aria-label="Sync this dispatch and linked PCR to cloud" className="grid h-8 w-8 place-items-center rounded text-cyan-400 hover:bg-cyan-500/10"><RefreshCw size={15} /></button>}

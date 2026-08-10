@@ -11,12 +11,22 @@ import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
-import { archivePCRReport, createStandalonePCRShell, listPCRReports, listPCRWorkflowHistory, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase } from '../services/supabase';
+import { archivePCRReport, createStandalonePCRShell, listPCRReports, listPCRWorkflowHistory, returnNormalPCRToFieldOfficer, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase } from '../services/supabase';
+
+const formatDate = value => {
+  if (!value) return '-';
+  const normalized = typeof value === 'object'
+    ? value.toDate?.() || value.toISOString?.() || value.updated_at || value.created_at
+    : value;
+  return formatLongDateTime(normalized);
+};
 
 const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher Review', 'Accepted by Dispatcher', 'Pending Admin Verification', 'Returned to Field Officer', 'Returned for Correction', 'Submitted', 'Verified', 'Rejected', 'Completed'];
 const displayStatus = record => record?.status || 'Draft';
 const formatDateTime = value => formatLongDateTime(value);
 const isReviewable = record => displayStatus(record) === 'Submitted';
+const isReverseWorkflowRecord = record => record?.workflowOrigin === 'reverse'
+  || (!record?.dispatchId && ['Pending Dispatcher Review', 'Accepted by Dispatcher'].includes(displayStatus(record)));
 const logicalRecordKey = record => record?.pcrId || record?.id || record?.responseId || record?.responseNumber;
 
 export default function PCRReports() {
@@ -37,7 +47,7 @@ export default function PCRReports() {
   const refreshTimer = useRef(null);
   const pageSize = 20;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
-  const canReview = can(PERMISSIONS.REVIEW_PCR);
+  const canReview = user?.role === 'administrator' && can(PERMISSIONS.REVIEW_PCR);
 
   const loadReports = useCallback(async () => {
     setLoading(true);
@@ -156,7 +166,9 @@ export default function PCRReports() {
     decision === 'approve' ? 'PCR and Dispatch Form verified.' : 'Records returned for correction.',
   );
   const normalDecision = (record, decision, remarks = '') => refreshAfter(
-    () => savePCRReport(record.id, { ...record, status: decision === 'approve' ? 'Verified' : 'Rejected', rejectionReason: remarks }),
+    () => decision === 'approve'
+      ? savePCRReport(record.id, { ...record, status: 'Verified', rejectionReason: '' })
+      : returnNormalPCRToFieldOfficer(record.id, remarks),
     decision === 'approve' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.',
   );
   const rejectRecord = () => {
@@ -225,14 +237,14 @@ export default function PCRReports() {
                 <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${isReviewable(record) ? 'bg-amber-500/15 text-amber-500' : record.status === 'Verified' ? 'bg-green-500/15 text-green-500' : record.status === 'Rejected' ? 'bg-red-500/15 text-red-500' : 'bg-slate-500/15 text-slate-400'}`}>{displayStatus(record)}</span>
                 {record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}
               </td>
-              <td className="px-4 py-3 text-xs text-muted-foreground">{formatDateTime(record.updatedAt)}</td>
+              <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
               <td className="px-4 py-3"><div className="flex gap-1" onClick={event => event.stopPropagation()}>
                 <button onClick={() => setSelected(record)} title="View" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><Eye size={15} /></button>
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
                 <button onClick={() => doPdf(record)} title="Download PDF" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><Download size={15} /></button>
-                {user?.role === 'dispatcher' && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
-                {user?.role === 'dispatcher' && record.status === 'Pending Dispatcher Review' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {user?.role === 'dispatcher' && record.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${record.id}`)} title="Create connected Dispatch Form" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><FilePlus2 size={15} /></button>}
+                {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${record.id}`)} title="Create connected Dispatch Form" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><FilePlus2 size={15} /></button>}
                 {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(record, 'approve')} title="Verify connected records" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
@@ -255,10 +267,10 @@ export default function PCRReports() {
                 <p className="text-xs text-muted-foreground">{selected.patientName || 'Unnamed patient'}</p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                {user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(selected, 'accept')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
-                {user?.role === 'dispatcher' && selected.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${selected.id}`)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><FilePlus2 size={14} />Create Dispatch</button>}
+                {user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(selected, 'accept')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
+                {user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${selected.id}`)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><FilePlus2 size={14} />Create Dispatch</button>}
                 {user?.role === 'administrator' && selected.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify Both</button>}
-                {canReview && ['Pending Dispatcher Review', 'Pending Admin Verification'].includes(selected.status) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
+                {isReverseWorkflowRecord(selected) && ((user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review') || (user?.role === 'administrator' && selected.status === 'Pending Admin Verification')) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
                 {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
                 {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
                 {canCreate && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
@@ -266,7 +278,7 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
               </div>
             </div>
-            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {formatDateTime(entry.timestamp)}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
+            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {formatDate(entry.timestamp)}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
             <div className="overflow-auto bg-slate-300 p-4">
               <div className="mx-auto max-w-[210mm] shadow-xl"><PrintablePCR record={selected} /></div>
             </div>
@@ -277,14 +289,14 @@ export default function PCRReports() {
         <div className="fixed inset-0 z-[5010] flex items-center justify-center bg-black/70 p-3">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
             <div className="mb-4">
-              <h2 className="text-base font-bold text-foreground">Reject Patient Care Record</h2>
+              <h2 className="text-base font-bold text-foreground">{rejectingRecord.workflowOrigin === 'reverse' ? 'Return PCR to Field Officer' : 'Reject Patient Care Record'}</h2>
               <p className="mt-1 text-xs text-muted-foreground">{rejectingRecord.responseNumber}</p>
             </div>
-            <label className="mb-2 block text-xs font-semibold text-muted-foreground">Reason for rejection</label>
+            <label className="mb-2 block text-xs font-semibold text-muted-foreground">{rejectingRecord.workflowOrigin === 'reverse' ? 'Corrections required' : 'Reason for rejection'}</label>
             <textarea value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} rows={4} className="w-full resize-none rounded-lg border border-border bg-input-background p-3 text-sm text-foreground outline-none focus:border-red-500" placeholder="Explain what needs correction..." />
             <div className="mt-4 flex gap-2">
               <button onClick={() => { setRejectingRecord(null); setRejectionReason(''); }} className="flex-1 rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-foreground">Cancel</button>
-              <button onClick={rejectRecord} className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white">Confirm Reject</button>
+              <button onClick={rejectRecord} className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white">{rejectingRecord.workflowOrigin === 'reverse' ? 'Return to Field Officer' : 'Confirm Reject'}</button>
             </div>
           </div>
         </div>
