@@ -10,6 +10,8 @@ const DISPATCH_STATUS_TO_DB = {
   "Submitted Locally": "pcr_completed",
   Verified: "completed",
   Cancelled: "cancelled",
+  "Pending Admin Verification": "pending_admin_verification",
+  "Returned for Correction": "returned_for_correction",
 };
 
 const DISPATCH_STATUS_FROM_DB = {
@@ -21,6 +23,9 @@ const DISPATCH_STATUS_FROM_DB = {
   pcr_completed: "Submitted",
   completed: "Verified",
   cancelled: "Cancelled",
+  pending_admin_verification: "Pending Admin Verification",
+  verified: "Verified",
+  returned_for_correction: "Returned for Correction",
 };
 
 const PCR_STATUS_TO_DB = {
@@ -31,6 +36,12 @@ const PCR_STATUS_TO_DB = {
   Verified: "verified",
   Rejected: "rejected",
   Completed: "submitted",
+  "Pending Dispatcher Review": "pending_dispatcher_review",
+  "Accepted by Dispatcher": "accepted_by_dispatcher",
+  "Linked to Dispatch": "linked_to_dispatch",
+  "Pending Admin Verification": "pending_admin_verification",
+  "Returned to Field Officer": "returned_to_field_officer",
+  "Returned for Correction": "returned_for_correction",
 };
 
 const PCR_STATUS_FROM_DB = {
@@ -40,6 +51,12 @@ const PCR_STATUS_FROM_DB = {
   verified: "Verified",
   rejected: "Rejected",
   completed: "Submitted",
+  pending_dispatcher_review: "Pending Dispatcher Review",
+  accepted_by_dispatcher: "Accepted by Dispatcher",
+  linked_to_dispatch: "Linked to Dispatch",
+  pending_admin_verification: "Pending Admin Verification",
+  returned_to_field_officer: "Returned to Field Officer",
+  returned_for_correction: "Returned for Correction",
 };
 
 const ECHAGUE_COORDINATE_BOUNDS = {
@@ -326,6 +343,11 @@ export function pcrToApp(row = {}) {
     respondingTeamId: row.responding_team_id || response.respondingTeamId || null,
     respondingTeam: response.team || row.responding_team?.name || extended.respondingTeam || "",
     fieldOfficerId: row.field_officer_id || row.created_by || null,
+    workflowOrigin: row.workflow_origin || "normal",
+    workflowLabel: row.workflow_origin === "reverse" ? "Reverse workflow" : "Normal workflow",
+    dispatcherReviewedAt: row.dispatcher_reviewed_at || "",
+    adminReviewedAt: row.admin_reviewed_at || "",
+    returnRemarks: row.return_remarks || "",
     status: fromDbPCRStatus(row.status),
     triage: row.triage || extended.triage || "",
     chiefComplaint: row.chief_complaint || response.chiefComplaint || extended.chiefComplaint || "",
@@ -422,5 +444,6 @@ export function pcrPayloadFromRecord(record = {}) {
     back_to_base_time: record.backToBase || timeline.backToBase || null,
     client_generated_id: record.pcrClientId || record.pcrId || record.id || null,
     dispatch_patient_id: record.dispatchPatientId || record.patientId || null,
+    workflow_origin: record.workflowOrigin || undefined,
   };
 }

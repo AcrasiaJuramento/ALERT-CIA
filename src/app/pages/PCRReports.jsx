@@ -10,15 +10,15 @@ import { PERMISSIONS } from '../access/rbac';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
-import { archivePCRReport, listPCRReports, savePCRReport, supabase } from '../services/supabase';
+import { archivePCRReport, createStandalonePCRShell, listPCRReports, listPCRWorkflowHistory, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase } from '../services/supabase';
 
-const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Submitted', 'Verified', 'Rejected', 'Completed'];
+const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher Review', 'Accepted by Dispatcher', 'Pending Admin Verification', 'Returned to Field Officer', 'Returned for Correction', 'Submitted', 'Verified', 'Rejected', 'Completed'];
 const displayStatus = record => record?.status || 'Draft';
 const isReviewable = record => displayStatus(record) === 'Submitted';
 const logicalRecordKey = record => record?.pcrId || record?.id || record?.responseId || record?.responseNumber;
 
 export default function PCRReports() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +29,7 @@ export default function PCRReports() {
   const [exportingRecord, setExportingRecord] = useState(null);
   const [rejectingRecord, setRejectingRecord] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [workflowHistory, setWorkflowHistory] = useState([]);
   const [page, setPage] = useState(1);
   const pageSize = 10;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
@@ -87,6 +88,10 @@ export default function PCRReports() {
     const freshRecord = records.find(record => record.id === selected.id || record.pcrId === selected.pcrId || logicalRecordKey(record) === logicalRecordKey(selected));
     if (freshRecord && freshRecord !== selected) setSelected(freshRecord);
   }, [records, selected]);
+  useEffect(() => {
+    if (!selected?.id || selected.workflowOrigin !== 'reverse') { setWorkflowHistory([]); return; }
+    listPCRWorkflowHistory(selected.id).then(setWorkflowHistory).catch(() => setWorkflowHistory([]));
+  }, [selected?.id, selected?.workflowOrigin]);
 
   const edit = record => {
     sessionStorage.setItem(PCR_EDIT_KEY, record.id);
@@ -113,34 +118,49 @@ export default function PCRReports() {
       setExportingRecord(null);
     }
   };
-  const updateStatus = async (record, nextStatus, reason = '') => {
+  const refreshAfter = async (operation, success) => {
     try {
-      const nextRecord = await savePCRReport(record.id, {
-        ...record,
-        status: nextStatus,
-        rejectionReason: reason,
-        reviewedAt: new Date().toISOString(),
-        verifiedAt: nextStatus === 'Verified' ? new Date().toISOString() : record.verifiedAt,
-        updatedAt: new Date().toISOString(),
-      });
-      setRecords(current => current.map(item => item.id === record.id ? nextRecord : item));
-      setSelected(current => current?.id === record.id ? { ...current, ...nextRecord, status: nextStatus, localStatus: null, syncLabel: 'Cloud synced' } : current);
-      toast.success(nextStatus === 'Verified' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.');
+      await operation();
+      await loadReports();
+      setSelected(null);
+      toast.success(success);
     } catch (error) {
       toast.error(error.message || 'Unable to update Patient Care Record.');
     }
   };
+  const createManual = async () => {
+    try {
+      const pcrId = await createStandalonePCRShell({ dateOfIncident: new Date().toISOString().slice(0, 10) });
+      sessionStorage.setItem(PCR_EDIT_KEY, pcrId);
+      navigate(`/admin/pcr/new?edit=${pcrId}`);
+    } catch (error) { toast.error(error.message || 'Unable to create standalone PCR.'); }
+  };
+  const dispatcherDecision = (record, decision, remarks = '') => refreshAfter(
+    () => reviewStandalonePCR(record.id, decision, remarks),
+    decision === 'accept' ? 'PCR accepted. Create its connected Dispatch Form next.' : 'PCR returned to the Field Officer.',
+  );
+  const adminDecision = (record, decision, remarks = '') => refreshAfter(
+    () => reviewReverseWorkflowAsAdmin(record.id, decision, remarks),
+    decision === 'approve' ? 'PCR and Dispatch Form verified.' : 'Records returned for correction.',
+  );
+  const normalDecision = (record, decision, remarks = '') => refreshAfter(
+    () => savePCRReport(record.id, { ...record, status: decision === 'approve' ? 'Verified' : 'Rejected', rejectionReason: remarks }),
+    decision === 'approve' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.',
+  );
   const rejectRecord = () => {
     if (!rejectionReason.trim()) {
       toast.error('Please provide a reason for rejection.');
       return;
     }
-    updateStatus(rejectingRecord, 'Rejected', rejectionReason.trim());
+    if (rejectingRecord.workflowOrigin === 'reverse') {
+      if (user?.role === 'dispatcher') dispatcherDecision(rejectingRecord, 'return', rejectionReason.trim());
+      else adminDecision(rejectingRecord, 'return', rejectionReason.trim());
+    } else normalDecision(rejectingRecord, 'return', rejectionReason.trim());
     setRejectingRecord(null);
     setRejectionReason('');
   };
   const statusCounts = {
-    submitted: records.filter(record => !record.archived && isReviewable(record)).length,
+    submitted: records.filter(record => !record.archived && ['Submitted', 'Pending Dispatcher Review', 'Pending Admin Verification'].includes(record.status)).length,
     verified: records.filter(record => !record.archived && record.status === 'Verified').length,
     rejected: records.filter(record => !record.archived && record.status === 'Rejected').length,
   };
@@ -153,7 +173,7 @@ export default function PCRReports() {
           <p className="text-xs text-muted-foreground">Unified records, review, verification, exports, and archival for Patient Care Reports.</p>
         </div>
         {canCreate && <div className="flex flex-wrap gap-2">
-          <button onClick={() => navigate('/admin/pcr/new')} className="px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Create Manual PCR</button>
+          <button onClick={createManual} className="px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Standalone / Manual PCR</button>
           <button onClick={() => navigate('/admin/dispatch/received')} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Accept Dispatch for PCR</button>
         </div>}
       </div>
@@ -188,7 +208,7 @@ export default function PCRReports() {
               <td className="px-4 py-3"><div className="font-semibold">{record.patientName || 'Unnamed patient'}</div><div className="text-xs text-muted-foreground">{record.age && `${record.age} yrs`} {record.gender}</div></td>
               <td className="px-4 py-3">{record.dateOfIncident}<div className="text-xs text-muted-foreground">{record.timeOfIncident}</div></td>
               <td className="px-4 py-3 max-w-52 truncate">{record.placeOfIncident || '-'}</td>
-              <td className="px-4 py-3 text-xs">{record.dispatchId ? <span className="rounded-full bg-blue-500/15 px-2 py-1 font-semibold text-blue-400">Linked</span> : <span className="text-muted-foreground">Manual PCR</span>}</td>
+              <td className="px-4 py-3 text-xs"><div>{record.dispatchId ? <span className="rounded-full bg-blue-500/15 px-2 py-1 font-semibold text-blue-400">Linked</span> : <span className="text-muted-foreground">Unlinked</span>}</div><div className="mt-1 text-[10px] text-muted-foreground">{record.workflowLabel}</div></td>
               <td className="px-4 py-3">
                 <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${isReviewable(record) ? 'bg-amber-500/15 text-amber-500' : record.status === 'Verified' ? 'bg-green-500/15 text-green-500' : record.status === 'Rejected' ? 'bg-red-500/15 text-red-500' : 'bg-slate-500/15 text-slate-400'}`}>{displayStatus(record)}</span>
                 {record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}
@@ -198,8 +218,13 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(record)} title="View" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><Eye size={15} /></button>
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
                 <button onClick={() => doPdf(record)} title="Download PDF" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><Download size={15} /></button>
-                {canReview && isReviewable(record) && <button onClick={() => updateStatus(record, 'Verified')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
-                {canReview && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {user?.role === 'dispatcher' && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {user?.role === 'dispatcher' && record.status === 'Pending Dispatcher Review' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {user?.role === 'dispatcher' && record.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${record.id}`)} title="Create connected Dispatch Form" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><FilePlus2 size={15} /></button>}
+                {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(record, 'approve')} title="Verify connected records" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {canCreate && <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>}
               </div></td>
             </tr>)}</tbody>
@@ -218,13 +243,18 @@ export default function PCRReports() {
                 <p className="text-xs text-muted-foreground">{selected.patientName || 'Unnamed patient'}</p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                {canReview && isReviewable(selected) && <button onClick={() => updateStatus(selected, 'Verified')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
-                {canReview && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
+                {user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(selected, 'accept')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
+                {user?.role === 'dispatcher' && selected.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${selected.id}`)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><FilePlus2 size={14} />Create Dispatch</button>}
+                {user?.role === 'administrator' && selected.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify Both</button>}
+                {canReview && ['Pending Dispatcher Review', 'Pending Admin Verification'].includes(selected.status) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
+                {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
+                {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
                 {canCreate && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
                 <button onClick={() => doPdf(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Download size={14} />PDF</button>
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
               </div>
             </div>
+            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {new Date(entry.timestamp).toLocaleString()}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
             <div className="overflow-auto bg-slate-300 p-4">
               <div className="mx-auto max-w-[210mm] shadow-xl"><PrintablePCR record={selected} /></div>
             </div>

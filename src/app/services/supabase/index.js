@@ -8,6 +8,7 @@ export * from "./hazardService";
 export * from "./incidentService";
 export * from "./notificationService";
 export * from "./pcrService";
+export * from "./reverseWorkflowService";
 export * from "./referenceService";
 export * from "./scraperService";
 export * from "./tableService";

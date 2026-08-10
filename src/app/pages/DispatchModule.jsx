@@ -9,7 +9,7 @@ import {
   DISPATCH_STATUSES,
   generateResponseNumber,
 } from "../utils/dispatchWorkflow";
-import { getDispatchRecord, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams } from "../services/supabase";
+import { createDispatchFromPCR, getDispatchRecord, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import SyncStatusPanel from "../components/SyncStatusPanel";
@@ -411,6 +411,7 @@ export default function DispatchModule({ onBack }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const editId = params.get("edit") || sessionStorage.getItem(DISPATCH_EDIT_KEY);
+  const sourcePcrId = params.get("sourcePcr");
   const [form, setForm] = useState(() => newDispatch());
   const [saved, setSaved] = useState("");
   const [linkedPCR, setLinkedPCR] = useState(null);
@@ -467,6 +468,14 @@ export default function DispatchModule({ onBack }) {
       mounted = false;
     };
   }, [editId]);
+  useEffect(() => {
+    if (!sourcePcrId) return;
+    getPCRReport(sourcePcrId).then(pcr => {
+      if (!pcr) return;
+      setLinkedPCR(pcr);
+      setForm(current => ({ ...current, ...pcr, status: 'Draft', dispatchId: null, id: null, patients: [{ ...newPatient(), name: pcr.patientName, age: pcr.age, birthday: pcr.birthday, gender: pcr.gender, address: pcr.address, assessmentFindings: pcr.chiefComplaint }] }));
+    }).catch(error => toast.error(error.message || 'Unable to prefill Dispatch Form from PCR.'));
+  }, [sourcePcrId]);
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
   const updateTeam = teamId => {
@@ -523,6 +532,12 @@ export default function DispatchModule({ onBack }) {
   const handleSave = async () => {
     if (!requirePinnedLocation()) return;
     try {
+      if (sourcePcrId) {
+        const dispatchId = await createDispatchFromPCR(sourcePcrId, form);
+        toast.success('Dispatch Form created and linked. Both records are pending Admin verification.');
+        navigate(`/admin/dispatch/new?edit=${dispatchId}`);
+        return;
+      }
       const next = form.dispatchId || editId
         ? await hybridRepository.updateDispatch(form.dispatchId || editId, form)
         : await hybridRepository.createDispatch(form);

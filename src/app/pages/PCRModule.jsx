@@ -6,7 +6,7 @@ import { AnatomyEditor, AnatomyFigure, PrintablePCR, SignaturePad } from "../com
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import { DISPATCH_EDIT_KEY } from "../utils/dispatchWorkflow";
 import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newGcsRow, newVital, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
-import { getDispatchRecord, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams } from "../services/supabase";
+import { getDispatchRecord, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams, resubmitReverseWorkflow, submitStandalonePCR } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import { hybridRepository } from "../api/hybrid-client";
 import { localServerClient } from "../api/local-server-client";
@@ -442,21 +442,27 @@ export default function PCRModule() {
     }
     setSavingStatus(status);
     try {
+      const reverseSubmit = form.workflowOrigin === "reverse" && status !== "Draft";
       const submitTimeline = status === "Draft"
         ? form.timeline
         : { ...(form.timeline || {}), backToBase: "" };
       const payload = {
         ...form,
-        status,
+        status: reverseSubmit ? "Draft" : status,
         id: form.id || randomUuid(),
         timeline: submitTimeline,
         backToBase: status === "Draft" ? form.backToBase : "",
         completedAt: status === "Draft" ? form.completedAt : "",
         resolvedAt: status === "Draft" ? form.resolvedAt : "",
       };
-      const saved = status === "Draft"
+      const saved = status === "Draft" || reverseSubmit
         ? await hybridRepository.savePcrDraft(payload)
         : await hybridRepository.submitPcr(payload);
+      if (reverseSubmit) {
+        const pcrId = saved.id || saved.pcrId || form.id;
+        if (form.status === 'Returned for Correction') await resubmitReverseWorkflow(pcrId);
+        else await submitStandalonePCR(pcrId);
+      }
       setForm(synchronizePCR({ ...form, ...saved }));
       setMessage(saved.hybridMessage || (status === "Draft" ? "Draft saved." : "PCR submitted successfully."));
       if (status !== "Draft") setTimeout(() => navigate("/admin/pcr"), 800);
