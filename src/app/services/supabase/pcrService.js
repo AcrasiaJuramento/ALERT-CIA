@@ -574,6 +574,19 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
     if (existingError) return { data: null, error: existingError };
     pcrId = existingByResponse?.id || (validUuid(pcrId) ? pcrId : randomUuid());
 
+    if (syncRecord.workflowOrigin === "reverse") {
+      return client
+        .from("pcr_reports")
+        .update({
+          ...pcrPayloadFromRecord({ ...syncRecord, status: syncStatus }),
+          workflow_origin: "reverse",
+        })
+        .eq("id", pcrId)
+        .eq("workflow_origin", "reverse")
+        .select(PCR_SELECT)
+        .single();
+    }
+
     const rpcPayload = { ...syncRecord, id: pcrId, pcrId };
     const normalizedBirthday = patientBirthdayFromRecord(rpcPayload);
     const serializedPayload = pcrPayloadFromRecord({ ...rpcPayload, birthday: normalizedBirthday || rpcPayload.birthday, status: syncStatus });

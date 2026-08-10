@@ -74,6 +74,7 @@ function manualDispatchShellFromPcr(payload) {
 }
 
 async function ensureManualPcrParent(payload) {
+  if (payload.workflowOrigin === "reverse" && payload.responseId) return payload;
   if (payload.responseId && payload.dispatchId) return payload;
   const dispatch = await createDispatchRecord(manualDispatchShellFromPcr(payload));
   return {
