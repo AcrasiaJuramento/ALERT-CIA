@@ -53,7 +53,7 @@ const PCR_SELECT = `
     responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
     assigned_unit:ambulance_units(id, call_sign, plate_number)
   ),
-  dispatch:dispatch_forms(id, response_id),
+  dispatch:dispatch_forms!pcr_reports_dispatch_form_id_fkey(id, response_id),
   responding_team:responding_teams!pcr_reports_responding_team_id_fkey(id, name),
   field_officer:profiles!pcr_reports_field_officer_id_fkey(id, display_name, email),
   pcr_vital_signs(*),
@@ -138,7 +138,7 @@ const PCR_LIST_SELECT = `
     responding_team:responding_teams!responses_responding_team_id_fkey(id, name),
     assigned_unit:ambulance_units(id, call_sign)
   ),
-  dispatch:dispatch_forms(id, response_id)
+  dispatch:dispatch_forms!pcr_reports_dispatch_form_id_fkey(id, response_id)
 `;
 
 const ADMIN_PCR_MAP_STATUSES = ["in_progress", "submitted", "verified", "completed"];
