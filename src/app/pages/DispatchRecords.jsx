@@ -178,6 +178,13 @@ function dispatchPreviewRecord(record = {}, pcr = null) {
     callerName: record.callerName || pcr.callerName || pcr.contactPerson || "",
     callerAddress: record.callerAddress || pcr.callerAddress || pcr.contactAddress || "",
     callerContact: record.callerContact || pcr.callerContact || pcr.contactNumber || "",
+    placeOfIncident: record.placeOfIncident || pcr.placeOfIncident || pcr.locationText || "",
+    locationText: record.locationText || pcr.locationText || pcr.placeOfIncident || "",
+    barangay: record.barangay || pcr.barangay || "",
+    barangayId: record.barangayId || pcr.barangayId || null,
+    latitude: record.latitude || pcr.latitude || "",
+    longitude: record.longitude || pcr.longitude || "",
+    locationGeography: record.locationGeography || pcr.locationGeography || "",
     patients,
     linkedPcr: pcr,
     pcr,
@@ -604,7 +611,7 @@ export default function DispatchRecords() {
                     <tr key={record.id} onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} className="cursor-pointer border-t border-border hover:bg-secondary/40">
                       <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber || "Unnumbered"}</td>
                       <td className="px-4 py-3"><div className="font-semibold">{[...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified"}</div><div className="text-xs text-muted-foreground">{record.dateOfIncident || "-"} {record.timeOfIncident || ""}</div></td>
-                      <td className="max-w-56 px-4 py-3"><div className="truncate">{record.placeOfIncident || record.callerAddress || "-"}</div><div className="text-xs text-muted-foreground">{record.barangay || "No barangay"}</div></td>
+                      <td className="max-w-56 px-4 py-3"><div className="truncate">{record.placeOfIncident || pcr?.placeOfIncident || pcr?.locationText || record.callerAddress || "-"}</div><div className="text-xs text-muted-foreground">{record.barangay || pcr?.barangay || "No barangay"}</div></td>
                       <td className="px-4 py-3">{record.team || "-"}<div className="text-xs text-muted-foreground">{record.vehicle || "No unit"}</div></td>
                       <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusClass(displayStatus(record, pcr))}`}>{displayStatus(record, pcr)}</span>{record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}</td>
                       <td className="px-4 py-3 text-xs">{pcr ? <span className="font-semibold text-green-400">{pcr.responseNumber || pcr.id}</span> : <span className="text-muted-foreground">Not created</span>}</td>
