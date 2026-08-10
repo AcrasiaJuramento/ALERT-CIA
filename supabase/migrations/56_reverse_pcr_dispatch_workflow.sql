@@ -108,7 +108,7 @@ create or replace function public.reverse_workflow_notify_role(
   target_pcr_id uuid
 ) returns void language sql security definer set search_path = public as $$
   insert into public.notifications(recipient_profile_id, type, title, message, response_id, dispatch_form_id, pcr_report_id)
-  select distinct pr.profile_id, 'system', notification_title, notification_message,
+  select distinct pr.profile_id, 'system'::public.notification_type, notification_title, notification_message,
          target_response_id, target_dispatch_id, target_pcr_id
   from public.profile_roles pr
   join public.profiles p on p.id = pr.profile_id
@@ -206,7 +206,7 @@ begin
     values (target_pcr_id, report.response_id, case when decision = 'accept' then 'dispatcher_accepted' else 'returned_to_field_officer' end,
       report.status::text, next_status::text, remarks);
   insert into public.notifications(recipient_profile_id, type, title, message, response_id, pcr_report_id)
-    values (coalesce(report.field_officer_id, report.created_by), 'system',
+    values (coalesce(report.field_officer_id, report.created_by), 'system'::public.notification_type,
       case when decision = 'accept' then 'PCR accepted by dispatcher' else 'PCR returned for correction' end,
       case when decision = 'accept' then 'Your standalone PCR was accepted and is ready to be linked to a Dispatch Form.' else coalesce(remarks, 'Please correct and resubmit the PCR.') end,
       report.response_id, target_pcr_id);
@@ -308,7 +308,7 @@ begin
     values (target_pcr_id, report.dispatch_form_id, report.response_id,
       case when decision = 'approve' then 'admin_verified' else 'admin_returned' end, report.status::text, next_status::text, remarks);
   insert into public.notifications(recipient_profile_id, type, title, message, response_id, dispatch_form_id, pcr_report_id)
-    values (coalesce(report.field_officer_id, report.created_by), 'system',
+    values (coalesce(report.field_officer_id, report.created_by), 'system'::public.notification_type,
       case when decision = 'approve' then 'PCR and Dispatch verified' else 'Records returned for correction' end,
       case when decision = 'approve' then 'The connected PCR and Dispatch Form passed final verification.' else remarks end,
       report.response_id, report.dispatch_form_id, target_pcr_id);
