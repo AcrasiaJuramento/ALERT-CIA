@@ -1,6 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { X, FileText, Edit3, Send } from "lucide-react";
+import { formatLongDate } from "../utils/dateFormat";
 
 const isPcrCompleted = record =>
   String(record?.status || "").includes("PCR Completed")
@@ -100,7 +101,7 @@ export default function DispatchPreviewModal({
         </div>
 
         <div className="grid grid-cols-2 gap-1">
-          <InlineField label="Birthdate:" value={patient.birthdate} />
+          <InlineField label="Birthdate:" value={formatLongDate(patient.birthdate, "")} />
           <InlineField label="Gender:" value={patient.gender} />
         </div>
 
@@ -363,7 +364,7 @@ export default function DispatchPreviewModal({
               <div className="grid grid-cols-1 border-b border-black">
                 <PreviewField label="Place of Incident" value={selected.placeOfIncident} />
                 <PreviewField label="Time of Incident" value={selected.timeOfIncident} />
-                <PreviewField label="Date of Incident" value={selected.dateOfIncident} />
+                <PreviewField label="Date of Incident" value={formatLongDate(selected.dateOfIncident, "")} />
               </div>
 
               {/* Assistance needed */}
@@ -419,7 +420,7 @@ export default function DispatchPreviewModal({
                 </div>
                 <div className="p-2 text-[11px]">
                   <span className="font-bold">Date:</span>{" "}
-                  {selected.dispatchDate || selected.date || ""}
+                  {formatLongDate(selected.dispatchDate || selected.date, "")}
                 </div>
               </div>
             </div>

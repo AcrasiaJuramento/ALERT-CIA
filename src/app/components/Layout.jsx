@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cancelScraperJob, getScraperJobState, subscribeScraperJob } from '../services/scraperJobService';
+import { formatLongDate } from '../utils/dateFormat';
 import ConnectionIndicator from './ConnectionIndicator';
 import PwaStatusPrompts from './PwaStatusPrompts';
 
@@ -22,7 +23,7 @@ function HeaderClock() {
   return (
     <div className="hidden md:block text-right">
       <div className="text-sm font-mono text-foreground font-semibold">{currentTime.toLocaleTimeString('en-PH', { hour12: false })}</div>
-      <div className="text-[10px] text-muted-foreground">{currentTime.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+      <div className="text-[10px] text-muted-foreground">{formatLongDate(currentTime)}</div>
     </div>
   );
 }

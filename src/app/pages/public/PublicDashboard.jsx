@@ -8,6 +8,7 @@ import { formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisor
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
 import { listPublishedAdvisories, subscribeToPublicAdvisories } from '../../services/supabase';
+import { formatDateAndTime } from '../../utils/dateFormat';
 
 const typeIcons = {
   vehicular: Car,
@@ -337,7 +338,7 @@ export default function PublicDashboard() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Clock className="w-3 h-3 text-muted-foreground" />
-                    <span className="text-[10px] text-muted-foreground opacity-70">{incident.date} • {incident.time}</span>
+                    <span className="text-[10px] text-muted-foreground opacity-70">{formatDateAndTime(incident.date, incident.time)}</span>
                   </div>
                 </div>
               );

@@ -3,6 +3,7 @@ import { AlertTriangle, Bug, ChevronDown, ChevronUp, RefreshCw, Wrench } from "l
 import { getAllRecords, repairPoisonedSyncOperations, retryFailedSyncOperations } from "../db/indexed-db";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { runSyncNow } from "../sync/sync-engine";
+import { formatLongDateTime } from "../utils/dateFormat";
 
 const QUEUE_REFRESH_MS = 20000;
 
@@ -175,7 +176,7 @@ export default function SyncStatusPanel() {
                       {operation.entity_type || "operation"} / {operation.operation_type || "sync"} / {operation.sync_status}
                     </div>
                     <div className="text-[10px] text-muted-foreground">
-                      Attempts {operation.attempts || 0} · Next {operation.next_attempt_at ? new Date(operation.next_attempt_at).toLocaleString("en-PH", { hour12: false }) : "now"}
+                      Attempts {operation.attempts || 0} · Next {operation.next_attempt_at ? formatLongDateTime(operation.next_attempt_at) : "now"}
                     </div>
                   </div>
                   <div className="mt-1 break-words font-mono text-[10px] text-muted-foreground">

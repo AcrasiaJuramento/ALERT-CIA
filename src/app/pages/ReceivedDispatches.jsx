@@ -17,6 +17,7 @@ import { hybridRepository } from "../api/hybrid-client";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { subscribeLiveSyncEvents } from "../network/live-sync-events";
 import SyncStatusPanel from "../components/SyncStatusPanel";
+import { formatDateAndTime } from "../utils/dateFormat";
 
 const inputClass = "w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500";
 const LOCAL_REFRESH_MS = 15000;
@@ -393,7 +394,7 @@ export default function ReceivedDispatches() {
                   ["Dispatch Time", record.dispatchedTime || "-"],
                   ["Caller", record.callerName || "-"],
                   ["Caller Contact", record.callerContact || "-"],
-                  ["Date / Time", `${record.dateOfIncident || "-"} ${record.timeOfIncident || ""}`],
+                  ["Date / Time", formatDateAndTime(record.dateOfIncident, record.timeOfIncident)],
                   ["Patient", record.patients?.[0]?.name || "-"],
                   ["Unit", record.vehicle || "-"],
                   ["Back to Base", visibleBackToBase],

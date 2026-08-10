@@ -125,6 +125,16 @@ function locationGeographyFromCoordinates(latitude, longitude) {
     : `SRID=4326;POINT(${lng.toFixed(7)} ${lat.toFixed(7)})`;
 }
 
+function looksLikeCoordinates(value = "") {
+  return /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(String(value));
+}
+
+function displayLocationText(...values) {
+  const candidates = values.filter(value => value !== null && value !== undefined && String(value).trim());
+  const named = candidates.find(value => !looksLikeCoordinates(value));
+  return String(named || candidates[0] || "");
+}
+
 const NOTES_EXTENDED_KEY = "__alertCiaExtended";
 
 const DISPATCH_EXTENDED_FIELDS = [
@@ -223,7 +233,7 @@ export function responseToApp(response = {}) {
   const barangayName = response.barangay?.name || response.barangays?.name || response.barangay_name || "";
   const teamName = response.responding_team?.name || response.responding_teams?.name || response.responding_team_name || "";
   const unitName = response.assigned_unit?.call_sign || response.ambulance_units?.call_sign || response.assigned_unit_name || "";
-  const locationText = response.location_text || response.place_of_incident || "";
+  const locationText = displayLocationText(barangayName, response.location_text, response.place_of_incident);
 
   return {
     id: response.id,
@@ -267,9 +277,19 @@ export function dispatchToApp(row = {}) {
   const response = responseToApp(row.response || row.responses || row);
   const notesBlob = parseNotesBlob(row.notes);
   const extendedPatients = notesBlob.extended.patients || [];
+  const displayLocation = displayLocationText(
+    response.barangay,
+    notesBlob.extended.barangay,
+    notesBlob.extended.locationText,
+    notesBlob.extended.placeOfIncident,
+    response.locationText,
+    response.placeOfIncident,
+  );
   return {
     ...response,
     ...notesBlob.extended,
+    placeOfIncident: displayLocation,
+    locationText: displayLocation,
     dispatchId: row.id || response.dispatchId,
     dispatchClientId: row.client_generated_id || row.id || response.dispatchId,
     id: row.id || response.id,
@@ -305,6 +325,14 @@ export function pcrToApp(row = {}) {
   const response = responseToApp(row.response || row.responses || row);
   const notesBlob = parseNotesBlob(row.notes);
   const extended = notesBlob.extended;
+  const displayLocation = displayLocationText(
+    response.barangay,
+    extended.barangay,
+    extended.locationText,
+    extended.placeOfIncident,
+    response.locationText,
+    response.placeOfIncident,
+  );
   const vitalRows = (row.pcr_vital_signs || []).map(vital => ({
     id: vital.id,
     time: vital.measured_time || "",
@@ -334,6 +362,8 @@ export function pcrToApp(row = {}) {
   return {
     ...response,
     ...extended,
+    placeOfIncident: displayLocation,
+    locationText: displayLocation,
     id: row.id,
     pcrId: row.id,
     pcrClientId: row.client_generated_id || row.id,
@@ -363,6 +393,8 @@ export function pcrToApp(row = {}) {
     backToBase: row.back_to_base_time || extended.backToBase || "",
     completedAt: row.completed_at || "",
     submittedAt: row.submitted_at || "",
+    createdAt: row.created_at || response.createdAt || "",
+    updatedAt: row.updated_at || response.updatedAt || row.created_at || response.createdAt || "",
     vitals: vitalRows.length ? vitalRows : extended.vitals || [],
     medications: medicationRows.length ? medicationRows : extended.medications || [],
     interventions: Object.keys(extended.interventions || {}).length

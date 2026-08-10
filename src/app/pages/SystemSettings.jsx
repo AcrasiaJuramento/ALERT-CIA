@@ -6,6 +6,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { checkConnection } from '../network/connection-manager';
 import { checkLocalHealth } from '../network/health-checks';
 import { getLocalServerConfig, localServerUrl, resetLocalServerConfig, saveLocalServerConfig } from '../services/device-service';
+import { formatLongDateTime } from '../utils/dateFormat';
 
 const tabs = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
@@ -247,7 +248,7 @@ export default function SystemSettings() {
                   <div className="font-semibold text-foreground">Current local URL</div>
                   <div className="mt-1 break-all">{localServerOrigin}</div>
                   <div className="mt-2 font-semibold text-foreground">Last successful connection</div>
-                  <div className="mt-1">{localServer.lastSuccessfulConnection ? new Date(localServer.lastSuccessfulConnection).toLocaleString('en-PH', { hour12: false }) : 'Never'}</div>
+                  <div className="mt-1">{localServer.lastSuccessfulConnection ? formatLongDateTime(localServer.lastSuccessfulConnection) : 'Never'}</div>
                 </div>
               </div>
               {localTest && <div className={`rounded-lg border px-3 py-2 text-xs ${localTest.includes('connected') ? 'border-green-500/30 bg-green-500/10 text-green-500' : localTest.includes('Testing') ? 'border-blue-500/30 bg-blue-500/10 text-blue-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}>{localTest}</div>}

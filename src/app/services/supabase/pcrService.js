@@ -1,4 +1,4 @@
-import { runSupabaseRequest } from "./errors";
+import { runSupabaseRequest, runSupabaseRequestWithMeta } from "./errors";
 import { isValidIncidentCoordinate, patientBirthdayFromRecord, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
 import { randomUuid } from "../../utils/uuid";
 
@@ -70,6 +70,10 @@ const PCR_LIGHT_SELECT = `
   dispatch_patient_id,
   responding_team_id,
   field_officer_id,
+  workflow_origin,
+  dispatcher_reviewed_at,
+  admin_reviewed_at,
+  return_remarks,
   status,
   triage,
   chief_complaint,
@@ -149,10 +153,10 @@ function asRows(value) {
 }
 
 export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
-  const rows = await runSupabaseRequest(client => {
+  const { data, count } = await runSupabaseRequestWithMeta(client => {
     let query = client
       .from("pcr_reports")
-      .select(PCR_LIST_SELECT)
+      .select(PCR_LIST_SELECT, { count: "exact" })
       .is("deleted_at", null)
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
@@ -160,7 +164,9 @@ export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
     return query;
   }, "Unable to load PCR reports.");
 
-  return asRows(rows).map(pcrToApp);
+  const rows = asRows(data).map(pcrToApp);
+  rows.totalCount = count ?? rows.length;
+  return rows;
 }
 
 function priorityToSeverity(priority = "medium") {
@@ -192,6 +198,16 @@ function isVerifiedMapStatus(status = "") {
   return ["verified", "resolved", "approved"].includes(String(status || "").trim().toLowerCase());
 }
 
+function looksLikeCoordinates(value = "") {
+  return /^\s*-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?\s*$/.test(String(value));
+}
+
+function displayLocationText(...values) {
+  const candidates = values.filter(value => value !== null && value !== undefined && String(value).trim());
+  const named = candidates.find(value => !looksLikeCoordinates(value));
+  return String(named || candidates[0] || "");
+}
+
 function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {}) {
   const response = row.response || {};
   const barangayPoint = geographyPoint(response.barangay?.centroid);
@@ -202,6 +218,7 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
   const date = dateValue ? new Date(dateValue) : new Date();
   const relatedIncidentId = incident.id || null;
   const isCompleted = incident.status === "pcr_completed";
+  const location = displayLocationText(response.barangay?.name, incident.location_text, response.location_text, response.place_of_incident, "Mapped PCR response");
 
   return {
     id: publicSafe ? `PCR-${String(row.id).slice(0, 8)}` : `PCR-${String(row.id).slice(0, 8)}`,
@@ -216,8 +233,8 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
     incident_type: type,
     severity: priorityToSeverity(incident.priority || row.triage),
     severity_level: priorityToSeverity(incident.priority || row.triage),
-    location: incident.location_text || response.location_text || response.place_of_incident || response.barangay?.name || "Mapped PCR response",
-    location_name: incident.location_text || response.location_text || response.place_of_incident || response.barangay?.name || "Mapped PCR response",
+    location,
+    location_name: location,
     barangay: response.barangay?.name || "",
     lat,
     lng,
@@ -291,7 +308,7 @@ export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
       sourceLabel: "Verified emergency response",
       type: classificationToType(row.classification),
       severity: priorityToSeverity(row.priority),
-      location: row.location_text || row.barangay || "Verified response area",
+      location: displayLocationText(row.barangay, row.location_text, "Verified response area"),
       barangay: row.barangay || "",
       lat: Number(row.latitude),
       lng: Number(row.longitude),
@@ -319,7 +336,7 @@ export async function getPCRReport(pcrId) {
 export async function getPCRReportByResponse(responseId) {
   if (!responseId || responseId === "undefined") return null;
   const row = await runSupabaseRequest(client =>
-    client.from("pcr_reports").select(PCR_LIGHT_SELECT).eq("response_id", responseId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
+    client.from("pcr_reports").select(PCR_SELECT).eq("response_id", responseId).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
   "Unable to load linked PCR report.");
 
   return row ? pcrToApp(row) : null;

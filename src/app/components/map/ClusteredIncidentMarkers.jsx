@@ -6,6 +6,7 @@ import 'leaflet.markercluster';
 import { AlertTriangle, Flame, Droplets, Heart, MapPin, ShieldAlert } from 'lucide-react';
 import { getIncidentLatLng } from '../../utils/mapData';
 import { getIncidentStatusLabel } from '../../utils/incidentStatus';
+import { formatDateAndTime, formatLongDateTime } from '../../utils/dateFormat';
 
 const severityColors = {
   critical: '#dc2626',
@@ -56,7 +57,7 @@ function PopupContent({ incident }) {
         <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] text-blue-800">
           <div><strong>Incident type:</strong> {incident.incident_type || incident.type || 'Emergency response'}</div>
           <div><strong>PCR status:</strong> {incident.pcrStatusLabel || incident.pcrStatus || getIncidentStatusLabel(incident.status)}</div>
-          <div><strong>Date/time:</strong> {incident.incident_datetime || `${incident.date || ''} ${incident.time || ''}`.trim() || '-'}</div>
+          <div><strong>Date/time:</strong> {incident.incident_datetime ? formatLongDateTime(incident.incident_datetime) : formatDateAndTime(incident.date, incident.time)}</div>
         </div>
       )}
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>

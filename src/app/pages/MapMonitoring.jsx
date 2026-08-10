@@ -9,6 +9,7 @@ import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, sup
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
+import { formatDateAndTime } from '../utils/dateFormat';
 import {
   calculateAccidentProneAreas,
   formatRiskLevel,
@@ -497,7 +498,7 @@ export default function MapMonitoring() {
                 </div>
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <span className="block uppercase tracking-wide">Date / Time</span>
-                  <span className="text-foreground">{selectedInc.date || '-'} {selectedInc.time || ''}</span>
+                  <span className="text-foreground">{formatDateAndTime(selectedInc.date, selectedInc.time)}</span>
                 </div>
                 <div className="rounded-lg bg-secondary/60 p-2">
                   <span className="block uppercase tracking-wide">Coordinates</span>
@@ -663,7 +664,7 @@ export default function MapMonitoring() {
                         )}
                         <div className="flex items-center gap-1 mt-1">
                           <Clock className="w-2.5 h-2.5 text-muted-foreground" />
-                          <span className="text-[9px] text-muted-foreground">{inc.date || '-'} {inc.time || ''}</span>
+                          <span className="text-[9px] text-muted-foreground">{formatDateAndTime(inc.date, inc.time)}</span>
                         </div>
                         <div className="flex items-center gap-1 mt-1">
                           <Shield className="w-2.5 h-2.5 text-muted-foreground" />

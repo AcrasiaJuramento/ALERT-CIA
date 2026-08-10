@@ -5,12 +5,13 @@ import { checkConnection, forceConnectionMode, getConnectionState, subscribeConn
 import { readOfflineSettings, savePreferredConnectionMode } from "../pwa/offline-settings";
 import { getLocalServerConfig, localServerUrl } from "../services/device-service";
 import { runSyncNow } from "../sync/sync-engine";
+import { formatLongDateTime } from "../utils/dateFormat";
 
 const QUEUE_REFRESH_MS = 20000;
 const DEFAULT_CLOUD_ORIGIN = "https://alert-cia.vercel.app";
 
 function fmt(value) {
-  return value ? new Date(value).toLocaleString("en-PH", { hour12: false }) : "Never";
+  return value ? formatLongDateTime(value) : "Never";
 }
 
 export default function ConnectionIndicator() {

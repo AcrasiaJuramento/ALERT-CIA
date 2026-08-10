@@ -2,6 +2,7 @@ import { createElement, useEffect, useMemo, useState } from 'react';
 import { Search, MapPin, Clock, Filter, Flame, Droplets, Car, Heart, AlertTriangle } from 'lucide-react';
 import { getIncidentStatusLabel, INCIDENT_STATUS } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
+import { formatDateAndTime } from '../../utils/dateFormat';
 
 const typeIcons = {
   vehicular: Car,
@@ -187,7 +188,7 @@ export default function PublicIncidentList() {
                     <div className="flex flex-wrap items-center gap-3">
                       <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Clock className="w-3 h-3" />
-                        {incident.date} at {incident.time}
+                        {formatDateAndTime(incident.date, incident.time)}
                       </div>
                       {incident.casualties > 0 && (
                         <div className="flex items-center gap-1 text-xs text-red-500 font-medium">

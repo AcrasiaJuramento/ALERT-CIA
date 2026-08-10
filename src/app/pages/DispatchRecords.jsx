@@ -29,9 +29,9 @@ import { cloudClient } from "../api/cloud-client";
 import { localServerClient } from "../api/local-server-client";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { subscribeLiveSyncEvents } from "../network/live-sync-events";
-import { getPCRReportByResponse, listDispatchRecords } from "../services/supabase";
-import { runSyncNow } from "../sync/sync-engine";
+import { getPCRReportByResponse, listDispatchRecords, listPCRReportsByResponses } from "../services/supabase";
 import { getAllRecords, putRecord } from "../db/indexed-db";
+import { formatDateAndTime, formatLongDateTime } from "../utils/dateFormat";
 
 const statusClass = (status = "Draft") => {
   if (status.includes("PCR")) return "bg-green-500/15 text-green-500";
@@ -43,9 +43,7 @@ const statusClass = (status = "Draft") => {
 };
 
 const formatDate = value => {
-  if (!value) return "-";
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  return formatLongDateTime(value);
 };
 
 const SOURCE_RANK = {
@@ -234,7 +232,7 @@ export default function DispatchRecords() {
     setError("");
     try {
       const mode = getConnectionState().mode;
-      const cloudRows = await listDispatchRecords({ limit: 100 }).catch(error => {
+      const cloudRows = await listDispatchRecords({ limit: 50 }).catch(error => {
         if (mode === "cloud") throw error;
         return [];
       });
@@ -268,15 +266,14 @@ export default function DispatchRecords() {
         ...cloudRows.map(record => ({ ...record, recordSource: "cloud" })),
       ]);
       setRecords(rows);
+      const cloudPcrByResponse = new Map();
+      if (mode === "cloud") {
+        const responseIds = rows.map(record => record.responseId).filter(Boolean);
+        const cloudPcrRows = await listPCRReportsByResponses(responseIds).catch(() => []);
+        cloudPcrRows.forEach(pcr => cloudPcrByResponse.set(pcr.responseId, { ...pcr, recordSource: "cloud", syncLabel: "Cloud synced" }));
+      }
       const pairs = await Promise.all(rows.map(async record => {
-        try {
-          if (mode === "cloud") {
-            const pcr = await getPCRReportByResponse(record.responseId);
-            if (pcr) return [record.responseId, { ...pcr, recordSource: "cloud", syncLabel: "Cloud synced" }];
-          }
-        } catch {
-          // Fall back to local records below.
-        }
+        if (cloudPcrByResponse.has(record.responseId)) return [record.responseId, cloudPcrByResponse.get(record.responseId)];
         const localPcr = [...localServerPcrRows, ...localPcrRows]
           .find(pcr => pcr.responseId === record.responseId || pcr.response_id === record.responseId);
         if (localPcr) {
@@ -393,17 +390,6 @@ export default function DispatchRecords() {
       return derivedStatus.includes("Sent") || derivedStatus.includes("Accepted") || derivedStatus.includes("Progress");
     }).length,
     linked: records.filter(record => !record.archived && !record.deleted_at && !record.deletedAt && linkedPCRs[record.responseId]).length,
-  };
-
-  const syncToCloud = async () => {
-    try {
-      toast.info("Syncing queued records to cloud...");
-      await runSyncNow({ includeNotDue: true });
-      await refresh({ silent: true });
-      toast.success("Cloud sync attempted. Records refreshed.");
-    } catch (error) {
-      toast.error(error.message || "Unable to sync to cloud.");
-    }
   };
 
   const uploadRecordToCloud = async (record, linkedPcr = null) => {
@@ -562,7 +548,7 @@ export default function DispatchRecords() {
                   return (
                     <tr key={record.id} onClick={() => setSelected({ ...record, linkedPcr: linkedPCRs[record.responseId], pcr: linkedPCRs[record.responseId] })} className="cursor-pointer border-t border-border hover:bg-secondary/40">
                       <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber || "Unnumbered"}</td>
-                      <td className="px-4 py-3"><div className="font-semibold">{[...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified"}</div><div className="text-xs text-muted-foreground">{record.dateOfIncident || "-"} {record.timeOfIncident || ""}</div></td>
+                      <td className="px-4 py-3"><div className="font-semibold">{[...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified"}</div><div className="text-xs text-muted-foreground">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</div></td>
                       <td className="max-w-56 px-4 py-3"><div className="truncate">{record.placeOfIncident || record.callerAddress || "-"}</div><div className="text-xs text-muted-foreground">{record.barangay || "No barangay"}</div></td>
                       <td className="px-4 py-3">{record.team || "-"}<div className="text-xs text-muted-foreground">{record.vehicle || "No unit"}</div></td>
                       <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusClass(displayStatus(record, pcr))}`}>{displayStatus(record, pcr)}</span>{record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}</td>

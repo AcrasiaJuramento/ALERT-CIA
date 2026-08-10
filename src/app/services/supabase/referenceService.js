@@ -1,4 +1,4 @@
-import { runSupabaseRequest } from "./errors";
+import { clearSupabaseRequestCache, runCachedSupabaseRequest, runSupabaseRequest } from "./errors";
 import { normalizeName } from "./mappers";
 
 export const AMBULANCE_STATUSES = ["available", "busy", "unavailable", "maintenance"];
@@ -8,29 +8,35 @@ export function getAmbulanceStatus(unit) {
   return unit?.active ? "available" : "unavailable";
 }
 
+const REFERENCE_TTL_MS = 10 * 60 * 1000;
+const LIVE_REFERENCE_TTL_MS = 30 * 1000;
+const BARANGAY_SELECT = "id, psgc_code, name, normalized_name, municipality, province, active, centroid";
+const TEAM_SELECT = "id, name, status, active, station_id, created_at, updated_at, deleted_at";
+const AMBULANCE_SELECT = "id, call_sign, plate_number, description, status, active, responding_team_id, updated_at, responding_team:responding_teams(id, name)";
+const CREW_SELECT = "id, name, role, contact_number, responding_team_id, active, updated_at";
+
 export async function listBarangays({ activeOnly = true } = {}) {
-  return runSupabaseRequest(client => {
-    let query = client.from("barangays").select("*").order("name", { ascending: true });
+  return runCachedSupabaseRequest(`reference:barangays:${activeOnly}`, client => {
+    let query = client.from("barangays").select(BARANGAY_SELECT).order("name", { ascending: true });
     if (activeOnly) query = query.eq("active", true);
     return query;
-  }, "Unable to load barangays.");
+  }, "Unable to load barangays.", { ttlMs: REFERENCE_TTL_MS });
 }
 
 export async function findBarangayByName(name) {
   const normalizedName = normalizeName(name);
   if (!normalizedName) return null;
 
-  return runSupabaseRequest(client =>
-    client.from("barangays").select("*").eq("normalized_name", normalizedName).maybeSingle(),
-  "Unable to find barangay.");
+  const rows = await listBarangays({ activeOnly: false });
+  return rows.find(barangay => barangay.normalized_name === normalizedName) || null;
 }
 
 export async function listRespondingTeams({ activeOnly = true } = {}) {
-  return runSupabaseRequest(client => {
-    let query = client.from("responding_teams").select("*").order("name", { ascending: true });
+  return runCachedSupabaseRequest(`reference:responding_teams:${activeOnly}`, client => {
+    let query = client.from("responding_teams").select(TEAM_SELECT).order("name", { ascending: true });
     if (activeOnly) query = query.eq("active", true).is("deleted_at", null);
     return query;
-  }, "Unable to load responding teams.");
+  }, "Unable to load responding teams.", { ttlMs: REFERENCE_TTL_MS });
 }
 
 export async function findRespondingTeamByName(name) {
@@ -42,31 +48,31 @@ export async function findRespondingTeamByName(name) {
 }
 
 export async function listAmbulanceUnits({ activeOnly = true } = {}) {
-  return runSupabaseRequest(client => {
+  return runCachedSupabaseRequest(`reference:ambulance_units:${activeOnly}`, client => {
     let query = client
       .from("ambulance_units")
-      .select("*, responding_team:responding_teams(id, name)")
+      .select(AMBULANCE_SELECT)
       .order("call_sign", { ascending: true });
     if (activeOnly) query = query.eq("status", "available");
     return query;
-  }, "Unable to load ambulance units.");
+  }, "Unable to load ambulance units.", { ttlMs: LIVE_REFERENCE_TTL_MS });
 }
 
 export async function listCrewMembers({ activeOnly = true, role } = {}) {
-  return runSupabaseRequest(client => {
+  return runCachedSupabaseRequest(`reference:crew_members:${activeOnly}:${role || "all"}`, client => {
     let query = client
       .from("crew_members")
-      .select("*")
+      .select(CREW_SELECT)
       .order("role", { ascending: true })
       .order("name", { ascending: true });
     if (activeOnly) query = query.eq("active", true);
     if (role) query = query.eq("role", role);
     return query;
-  }, "Unable to load crew roster.");
+  }, "Unable to load crew roster.", { ttlMs: REFERENCE_TTL_MS });
 }
 
 export async function createCrewMember({ name, role, contactNumber = "", respondingTeamId = null, active = true }) {
-  return runSupabaseRequest(client =>
+  const saved = await runSupabaseRequest(client =>
     client
       .from("crew_members")
       .insert({
@@ -76,13 +82,15 @@ export async function createCrewMember({ name, role, contactNumber = "", respond
         responding_team_id: respondingTeamId || null,
         active,
       })
-      .select("*")
+      .select(CREW_SELECT)
       .single(),
   "Unable to add crew member.");
+  clearSupabaseRequestCache("reference:crew_members");
+  return saved;
 }
 
 export async function updateCrewMember(crewMemberId, updates) {
-  return runSupabaseRequest(client =>
+  const saved = await runSupabaseRequest(client =>
     client
       .from("crew_members")
       .update({
@@ -94,13 +102,15 @@ export async function updateCrewMember(crewMemberId, updates) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", crewMemberId)
-      .select("*")
+      .select(CREW_SELECT)
       .single(),
   "Unable to update crew member.");
+  clearSupabaseRequestCache("reference:crew_members");
+  return saved;
 }
 
 export async function createAmbulanceUnit({ callSign, plateNumber, description, status = "available", respondingTeamId = null }) {
-  return runSupabaseRequest(client =>
+  const saved = await runSupabaseRequest(client =>
     client
       .from("ambulance_units")
       .insert({
@@ -111,14 +121,16 @@ export async function createAmbulanceUnit({ callSign, plateNumber, description, 
         active: status === "available",
         responding_team_id: respondingTeamId || null,
       })
-      .select("*, responding_team:responding_teams(id, name)")
+      .select(AMBULANCE_SELECT)
       .single(),
   "Unable to register ambulance unit.");
+  clearSupabaseRequestCache("reference:ambulance_units");
+  return saved;
 }
 
 export async function updateAmbulanceUnitAvailability(unitId, status) {
   const normalizedStatus = AMBULANCE_STATUSES.includes(status) ? status : "unavailable";
-  return runSupabaseRequest(client =>
+  const saved = await runSupabaseRequest(client =>
     client
       .from("ambulance_units")
       .update({
@@ -127,9 +139,11 @@ export async function updateAmbulanceUnitAvailability(unitId, status) {
         updated_at: new Date().toISOString(),
       })
       .eq("id", unitId)
-      .select("*, responding_team:responding_teams(id, name)")
+      .select(AMBULANCE_SELECT)
       .single(),
   "Unable to update ambulance availability.");
+  clearSupabaseRequestCache("reference:ambulance_units");
+  return saved;
 }
 
 export async function findAmbulanceUnitByCallSign(callSign) {

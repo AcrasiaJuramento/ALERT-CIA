@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -10,10 +10,12 @@ import { PERMISSIONS } from '../access/rbac';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
+import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
 import { archivePCRReport, createStandalonePCRShell, listPCRReports, listPCRWorkflowHistory, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase } from '../services/supabase';
 
 const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher Review', 'Accepted by Dispatcher', 'Pending Admin Verification', 'Returned to Field Officer', 'Returned for Correction', 'Submitted', 'Verified', 'Rejected', 'Completed'];
 const displayStatus = record => record?.status || 'Draft';
+const formatDateTime = value => formatLongDateTime(value);
 const isReviewable = record => displayStatus(record) === 'Submitted';
 const logicalRecordKey = record => record?.pcrId || record?.id || record?.responseId || record?.responseNumber;
 
@@ -31,25 +33,35 @@ export default function PCRReports() {
   const [rejectionReason, setRejectionReason] = useState('');
   const [workflowHistory, setWorkflowHistory] = useState([]);
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [totalCount, setTotalCount] = useState(0);
+  const refreshTimer = useRef(null);
+  const pageSize = 20;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
   const canReview = can(PERMISSIONS.REVIEW_PCR);
 
-  const loadReports = async () => {
+  const loadReports = useCallback(async () => {
     setLoading(true);
     try {
-      const cloudRecords = await listPCRReports({ limit: 300 });
+      const cloudRecords = await listPCRReports({
+        limit: pageSize,
+        from: (page - 1) * pageSize,
+        status: status === 'All' ? undefined : status,
+      });
       setRecords(cloudRecords.map(record => ({ ...record, archived: false, recordSource: 'cloud', syncLabel: 'Cloud synced' })));
+      setTotalCount(cloudRecords.totalCount ?? cloudRecords.length);
     } catch (error) {
       toast.error(error.message || 'Unable to load Patient Care Records.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, status]);
 
   useEffect(() => {
     loadReports();
-    const refresh = () => loadReports();
+    const refresh = () => {
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = window.setTimeout(() => loadReports(), 300);
+    };
     const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh(); };
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refreshWhenVisible);
@@ -57,17 +69,17 @@ export default function PCRReports() {
     return () => {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
+      clearTimeout(refreshTimer.current);
       if (channel) supabase.removeChannel(channel);
     };
-  }, []);
+  }, [loadReports]);
 
   const filtered = useMemo(() => records.filter(record =>
     (archiveView === 'Archived' ? record.archived : !record.archived)
-    && (status === 'All' || record.status === status)
     && [record.responseNumber, record.patientName, record.placeOfIncident, record.hospitalName, record.respondingTeam].join(' ').toLowerCase().includes(query.toLowerCase())
-  ), [records, query, status, archiveView]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const visibleRecords = filtered.slice((page - 1) * pageSize, page * pageSize);
+  ), [records, query, archiveView]);
+  const pageCount = Math.max(1, Math.ceil((query ? filtered.length : totalCount) / pageSize));
+  const visibleRecords = filtered;
 
   useEffect(() => setPage(1), [query, status, archiveView]);
 
@@ -206,14 +218,14 @@ export default function PCRReports() {
             <tbody>{visibleRecords.map(record => <tr key={record.id} onClick={() => setSelected(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
               <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber}</td>
               <td className="px-4 py-3"><div className="font-semibold">{record.patientName || 'Unnamed patient'}</div><div className="text-xs text-muted-foreground">{record.age && `${record.age} yrs`} {record.gender}</div></td>
-              <td className="px-4 py-3">{record.dateOfIncident}<div className="text-xs text-muted-foreground">{record.timeOfIncident}</div></td>
+              <td className="px-4 py-3">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</td>
               <td className="px-4 py-3 max-w-52 truncate">{record.placeOfIncident || '-'}</td>
               <td className="px-4 py-3 text-xs"><div>{record.dispatchId ? <span className="rounded-full bg-blue-500/15 px-2 py-1 font-semibold text-blue-400">Linked</span> : <span className="text-muted-foreground">Unlinked</span>}</div><div className="mt-1 text-[10px] text-muted-foreground">{record.workflowLabel}</div></td>
               <td className="px-4 py-3">
                 <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${isReviewable(record) ? 'bg-amber-500/15 text-amber-500' : record.status === 'Verified' ? 'bg-green-500/15 text-green-500' : record.status === 'Rejected' ? 'bg-red-500/15 text-red-500' : 'bg-slate-500/15 text-slate-400'}`}>{displayStatus(record)}</span>
                 {record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}
               </td>
-              <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(record.updatedAt).toLocaleString()}</td>
+              <td className="px-4 py-3 text-xs text-muted-foreground">{formatDateTime(record.updatedAt)}</td>
               <td className="px-4 py-3"><div className="flex gap-1" onClick={event => event.stopPropagation()}>
                 <button onClick={() => setSelected(record)} title="View" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><Eye size={15} /></button>
                 {canCreate && <button onClick={() => edit(record)} title="Edit" className="p-2 hover:bg-amber-500/10 text-amber-400 rounded"><Edit3 size={15} /></button>}
@@ -230,7 +242,7 @@ export default function PCRReports() {
             </tr>)}</tbody>
           </table></div>
           {!filtered.length && <div className="text-center py-16"><FileText size={36} className="mx-auto text-muted-foreground/30 mb-3" /><p className="font-semibold">No Patient Care Records found</p><p className="text-xs text-muted-foreground mt-1">Adjust the current filters to broaden the results.</p></div>}
-          {filtered.length > 0 && <div className="border-t border-border px-4 py-3 flex justify-between items-center text-xs text-muted-foreground"><span>Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span><div className="flex gap-2"><button disabled={page === 1} onClick={() => setPage(value => value - 1)} className="p-2 bg-secondary rounded disabled:opacity-40"><ChevronLeft size={14} /></button><span className="px-2 py-2">Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage(value => value + 1)} className="p-2 bg-secondary rounded disabled:opacity-40"><ChevronRight size={14} /></button></div></div>}
+          {filtered.length > 0 && <div className="border-t border-border px-4 py-3 flex justify-between items-center text-xs text-muted-foreground"><span>Showing {(page - 1) * pageSize + 1}-{Math.min((page - 1) * pageSize + visibleRecords.length, query ? filtered.length : totalCount)} of {query ? filtered.length : totalCount}</span><div className="flex gap-2"><button disabled={page === 1} onClick={() => setPage(value => value - 1)} className="p-2 bg-secondary rounded disabled:opacity-40"><ChevronLeft size={14} /></button><span className="px-2 py-2">Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage(value => value + 1)} className="p-2 bg-secondary rounded disabled:opacity-40"><ChevronRight size={14} /></button></div></div>}
         </>}
       </div>
 
@@ -254,7 +266,7 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
               </div>
             </div>
-            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {new Date(entry.timestamp).toLocaleString()}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
+            {selected.workflowOrigin === 'reverse' && <div className="border-b border-border bg-card px-4 py-3"><div className="mb-2 text-xs font-bold uppercase text-muted-foreground">Workflow History</div><div className="flex gap-2 overflow-x-auto">{workflowHistory.map(entry => <div key={entry.id} className="min-w-56 rounded-lg border border-border bg-secondary/50 p-3 text-xs"><div className="font-semibold text-foreground">{entry.newStatus?.replaceAll('_', ' ')}</div><div className="mt-1 text-muted-foreground">{entry.actor} · {formatDateTime(entry.timestamp)}</div>{entry.remarks && <div className="mt-1 text-amber-400">{entry.remarks}</div>}</div>)}</div></div>}
             <div className="overflow-auto bg-slate-300 p-4">
               <div className="mx-auto max-w-[210mm] shadow-xl"><PrintablePCR record={selected} /></div>
             </div>

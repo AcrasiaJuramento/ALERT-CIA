@@ -14,6 +14,7 @@ import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { getIncidentStatusLabel, isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
 import { computeAverageResponseMinutes, formatResponseDuration } from '../utils/responseTime';
+import { formatLongDateTime } from '../utils/dateFormat';
 import {
   AMBULANCE_STATUSES,
   createAmbulanceUnit,
@@ -138,7 +139,7 @@ export default function Dashboard() {
   };
 
   const refreshDispatches = async () => {
-    const rows = await listDispatchRecords({ limit: 500 });
+    const rows = await listDispatchRecords({ limit: 50 });
     setDispatches(rows);
     return rows;
   };
@@ -148,8 +149,8 @@ export default function Dashboard() {
     setError('');
     try {
       const [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult] = await Promise.allSettled([
-        listIncidents({ limit: 500 }),
-        listDispatchRecords({ limit: 100 }),
+        listIncidents({ limit: 100 }),
+        listDispatchRecords({ limit: 50 }),
         listNotifications({ limit: 20 }),
         listAmbulanceUnits({ activeOnly: false }),
         listRespondingTeams({ activeOnly: true }),
@@ -167,7 +168,7 @@ export default function Dashboard() {
         id: item.id,
         type: item.type === 'pcr_created' ? 'report' : item.type === 'response_completed' ? 'resolved' : 'info',
         message: item.title || item.message,
-        time: item.timestamp ? new Date(item.timestamp).toLocaleString() : '',
+        time: item.timestamp ? formatLongDateTime(item.timestamp) : '',
       })));
       const failed = [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult].find(result => result.status === 'rejected');
       if (failed) setError(failed.reason?.message || 'Some dashboard data could not be loaded for your role.');

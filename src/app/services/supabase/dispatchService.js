@@ -143,6 +143,22 @@ export async function getDispatchRecord(dispatchId) {
   return row ? dispatchToApp(row) : null;
 }
 
+export async function getDispatchRecordByResponse(responseId) {
+  if (!responseId || responseId === "undefined") return null;
+  const row = await runSupabaseRequest(client =>
+    client
+      .from("dispatch_forms")
+      .select(DISPATCH_SELECT)
+      .eq("response_id", responseId)
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  "Unable to load linked dispatch record.");
+
+  return row ? dispatchToApp(row) : null;
+}
+
 export async function createDispatchRecord(form) {
   ensurePinnedLocation(form);
   const ids = await resolveDispatchIds(form);
