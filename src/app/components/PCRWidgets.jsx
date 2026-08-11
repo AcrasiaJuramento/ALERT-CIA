@@ -4,49 +4,12 @@ import { GCS_OPTIONS, INTERVENTIONS } from "../utils/pcrStorage";
 import { randomUuid } from "../utils/uuid";
 import { formatDateAndTime, formatLongDate } from "../utils/dateFormat";
 import { buildPCRHtml } from "../utils/officialPcrPdf";
-
-const svgDataUri = (svg) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-
-const pcrBodyMapAsset = svgDataUri(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 670 621">
-  <rect width="670" height="621" fill="white"/>
-  <g fill="none" stroke="#1f2937" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="205" cy="72" r="38"/>
-    <path d="M205 113v160M130 150h150M130 150l-42 132M280 150l42 132M170 273l-38 190M240 273l38 190"/>
-    <circle cx="465" cy="72" r="38"/>
-    <path d="M465 113v160M390 150h150M390 150l-42 132M540 150l42 132M430 273l-38 190M500 273l38 190"/>
-  </g>
-  <text x="205" y="535" text-anchor="middle" font-family="Arial" font-size="24" font-weight="700" fill="#334155">FRONT</text>
-  <text x="465" y="535" text-anchor="middle" font-family="Arial" font-size="24" font-weight="700" fill="#334155">BACK</text>
-</svg>`);
-
-const painScaleAsset = svgDataUri(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 120">
-  <rect width="720" height="120" rx="14" fill="#fff"/>
-  <text x="24" y="32" font-family="Arial" font-size="20" font-weight="700" fill="#111827">Pain Scale</text>
-  <g font-family="Arial" font-size="14" fill="#111827" text-anchor="middle">
-    ${Array.from({ length: 11 }, (_, i) => `<circle cx="${60 + i * 60}" cy="66" r="18" fill="${i < 4 ? '#22c55e' : i < 7 ? '#eab308' : '#ef4444'}"/><text x="${60 + i * 60}" y="72" font-weight="700" fill="white">${i}</text>`).join("")}
-  </g>
-</svg>`);
-
-const medicalStarAsset = svgDataUri(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-  <rect width="96" height="96" rx="18" fill="#2563eb"/>
-  <path d="M48 12v72M18 30l60 36M78 30L18 66" stroke="white" stroke-width="10" stroke-linecap="round"/>
-  <path d="M43 32h10v12h12v10H53v12H43V54H31V44h12z" fill="white"/>
-</svg>`);
-
-const sealAsset = (label, color) => svgDataUri(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
-  <circle cx="60" cy="60" r="54" fill="white" stroke="${color}" stroke-width="8"/>
-  <circle cx="60" cy="60" r="34" fill="${color}" opacity=".12"/>
-  <text x="60" y="56" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700" fill="${color}">ALERT</text>
-  <text x="60" y="75" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700" fill="${color}">${label}</text>
-</svg>`);
-
-const bagongPilipinasAsset = sealAsset("PH", "#dc2626");
-const municipalSealAsset = sealAsset("LGU", "#2563eb");
-const rescueLogoAsset = sealAsset("RESCUE", "#16a34a");
+import pcrBodyMapAsset from "../../assets/pcr-body-map.png?inline";
+import painScaleAsset from "../../assets/pain-scale.png?inline";
+import medicalStarAsset from "../../assets/medical-star.png?inline";
+import bagongPilipinasAsset from "../../assets/bagong-pilipinas.png?inline";
+import municipalSealAsset from "../../assets/municipal-seal.png?inline";
+import rescueLogoAsset from "../../assets/rescue-logo.png?inline";
 
 const OFFICIAL_PCR_ASSETS = {
   body: pcrBodyMapAsset,
