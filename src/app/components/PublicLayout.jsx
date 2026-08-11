@@ -4,6 +4,7 @@ import { Siren, Menu, X, MapPin, List, Home, AlertTriangle, PhoneCall, Moon, Sun
 import { useTheme } from '../contexts/ThemeContext';
 import { useAccessibility } from '../contexts/AccessibilityContext';
 import AccessibilityPanel, { AccessibilityButton } from './AccessibilityPanel';
+import HazardWarningMonitor from './HazardWarningMonitor';
 
 export default function PublicLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -34,6 +35,7 @@ export default function PublicLayout() {
         transformOrigin: 'top left',
       }}
     >
+      <HazardWarningMonitor />
       {/* Top Navigation */}
       <header className="sticky top-0 z-[1000] bg-card border-b border-border shadow-sm transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
