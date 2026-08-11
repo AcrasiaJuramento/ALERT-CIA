@@ -355,7 +355,7 @@ export default function MapMonitoring() {
                 title="Scraping actions"
               >
                 <Database className={`h-4 w-4 text-purple-300 ${scraperRefreshing ? 'animate-pulse' : ''}`} />
-                {scraperMode === 'update' ? 'Updating...' : scraperMode === 'full' ? 'Full scrape...' : 'Scraping'}
+                {scraperMode === 'update' ? 'Updating...' : scraperMode === 'full' ? 'Full scrape...' : 'Scraper'}
                 <ChevronDown className={`h-4 w-4 transition-transform ${scrapeMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {scrapeMenuOpen && (
@@ -371,7 +371,7 @@ export default function MapMonitoring() {
                     <RefreshCw className="h-4 w-4" />
                     <span>
                       Update scrape
-                      <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">Pages 1-3 per news site</span>
+                      <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">First page only per news site</span>
                     </span>
                   </button>
                   <button
@@ -381,7 +381,7 @@ export default function MapMonitoring() {
                     <Database className="h-4 w-4" />
                     <span>
                       Full scrape
-                      <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">All configured pages</span>
+                      <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">Deeper configured page batches</span>
                     </span>
                   </button>
                 </div>
