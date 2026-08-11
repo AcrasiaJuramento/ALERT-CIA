@@ -4,6 +4,7 @@ import { CACHE_TTL, getOrSetCache } from '../utils/cache';
 export const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 export const filterOptions = [
+  { value: 'all', label: 'All' },
   { value: 'today', label: 'Today' },
   { value: 'week', label: 'This Week' },
   { value: 'month', label: 'This Month' },
@@ -24,6 +25,10 @@ export function filterIncidentsByRange(items, range, customRange = {}) {
     const now = new Date();
     const start = new Date(now);
     const end = new Date(now);
+
+    if (range === 'all') {
+      return items;
+    }
 
     if (range === 'today') {
       start.setHours(0, 0, 0, 0);

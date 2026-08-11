@@ -1,5 +1,6 @@
 export { supabase, isSupabaseConfigured, getSupabaseClient } from "../../lib/supabaseClient";
 export * from "./advisoryService";
+export * from "./analyticsService";
 export * from "./auditService";
 export * from "./cacheService";
 export * from "./dispatchService";

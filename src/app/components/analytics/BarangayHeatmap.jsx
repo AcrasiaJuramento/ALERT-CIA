@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleMarker, GeoJSON, MapContainer, Tooltip as LeafletTooltip, useMap } from 'react-leaflet';
 import L from 'leaflet';
+import { booleanPointInPolygon, point, pointOnFeature } from '@turf/turf';
 import { Activity, AlertTriangle, ChevronDown, ChevronUp, Flame, Layers3, MapPin, RefreshCw } from 'lucide-react';
 import {
   ECHAGUE_BARANGAYS,
@@ -79,6 +80,34 @@ const escapeHtml = (value) => String(value)
   .replace(/>/g, '&gt;')
   .replace(/"/g, '&quot;')
   .replace(/'/g, '&#039;');
+
+function incidentLatLng(incident = {}) {
+  const lat = Number(incident.lat ?? incident.latitude);
+  const lng = Number(incident.lng ?? incident.longitude);
+  return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+}
+
+function pointInsideFeatures(latLng, features = []) {
+  if (!latLng || !features.length) return false;
+  const markerPoint = point([latLng[1], latLng[0]]);
+  return features.some((feature) => {
+    try {
+      return booleanPointInPolygon(markerPoint, feature);
+    } catch {
+      return false;
+    }
+  });
+}
+
+function featureCenterLatLng(feature) {
+  try {
+    const center = pointOnFeature(feature);
+    const [lng, lat] = center.geometry.coordinates;
+    return Number.isFinite(lat) && Number.isFinite(lng) ? [lat, lng] : null;
+  } catch {
+    return null;
+  }
+}
 
 function FitGeoJsonBounds({ data, zoomBoost = 0.75 }) {
   const map = useMap();
@@ -297,6 +326,28 @@ function BarangayGeoJsonMap({
   const statsByNormalizedName = useMemo(() => Object.fromEntries(
     stats.map((item) => [normalizeBarangayName(item.name), item])
   ), [stats]);
+  const geoFeatures = useMemo(() => geoJson?.features || [], [geoJson]);
+  const featureByBarangayName = useMemo(() => {
+    const entries = geoFeatures.map((feature) => {
+      const featureName = getGeoJsonBarangayName(feature);
+      const matchedName = matchBarangayName(featureName, ECHAGUE_BARANGAYS);
+      return [normalizeBarangayName(matchedName || featureName), feature];
+    });
+    return new Map(entries);
+  }, [geoFeatures]);
+  const markerIncidents = useMemo(() => incidents.map((incident) => {
+    const rawLatLng = incidentLatLng(incident);
+    const rawInside = pointInsideFeatures(rawLatLng, geoFeatures);
+    const matchedBarangay = matchBarangayName(incident.barangay, ECHAGUE_BARANGAYS);
+    const barangayFeature = featureByBarangayName.get(normalizeBarangayName(matchedBarangay || incident.barangay));
+    const fallbackLatLng = barangayFeature ? featureCenterLatLng(barangayFeature) : null;
+    const displayLatLng = rawInside ? rawLatLng : fallbackLatLng;
+    return displayLatLng ? {
+      incident,
+      latLng: displayLatLng,
+      corrected: Boolean(rawLatLng && !rawInside && fallbackLatLng),
+    } : null;
+  }).filter(Boolean), [featureByBarangayName, geoFeatures, incidents]);
 
   useEffect(() => {
     let active = true;
@@ -513,24 +564,29 @@ function BarangayGeoJsonMap({
                 />
               </>
             )}
-            {layerVisibility.incidentMarkers && incidents
-              .filter((incident) => Number.isFinite(Number(incident.lat ?? incident.latitude)) && Number.isFinite(Number(incident.lng ?? incident.longitude)))
-              .map((incident) => {
+            {layerVisibility.incidentMarkers && markerIncidents
+              .map(({ incident, latLng, corrected }) => {
                 const priority = incident.priority || 'Medium';
                 const rank = priorityRank[priority] || 2;
                 const color = priority === 'Critical' ? '#dc2626' : priority === 'High' ? '#f97316' : priority === 'Low' ? '#22c55e' : '#eab308';
                 return (
                   <CircleMarker
                     key={`incident-marker-${incident.id}`}
-                    center={[Number(incident.lat ?? incident.latitude), Number(incident.lng ?? incident.longitude)]}
+                    center={latLng}
                     radius={4 + rank}
-                    pathOptions={{ color, fillColor: color, fillOpacity: 0.72, weight: 1.5 }}
+                    pathOptions={{ color, fillColor: color, fillOpacity: corrected ? 0.48 : 0.72, weight: corrected ? 1 : 1.5, dashArray: corrected ? '3 3' : undefined }}
                   >
                     <LeafletTooltip direction="top" offset={[0, -4]} opacity={0.95}>
                       <div className="text-[11px]">
                         <strong>{incident.classification || incident.type || 'Incident'}</strong>
                         <br />
                         {incident.barangay || incident.location || 'Mapped incident'}
+                        {corrected && (
+                          <>
+                            <br />
+                            Marker placed at barangay center
+                          </>
+                        )}
                       </div>
                     </LeafletTooltip>
                   </CircleMarker>
