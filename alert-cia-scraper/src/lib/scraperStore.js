@@ -257,22 +257,10 @@ function legacyLocationFields(record, runId) {
   };
 }
 
-async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
-  const category = record.incident_type_key === "vehicular" ? "vehicular" : "incidents";
+function legacyQualityFields(record) {
   const autoReview = autoReviewDecision(record);
   const now = new Date().toISOString();
-  const payload = {
-    scraped_incident_id: incidentId,
-    source_id: sourceId,
-    run_id: runId,
-    source_site: record.source_site,
-    source_url: record.source_url,
-    source_hash: hash(record.source_url),
-    duplicate_key: record.incident_key,
-    title: record.title,
-    snippet: record.snippet,
-    incident_type: record.incident_type_key,
-    category,
+  return {
     classification_confidence: record.classification_confidence || null,
     classification_score: record.classification_score || 0,
     classification_reason: record.classification_reason || null,
@@ -287,8 +275,39 @@ async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
     verified_road_place: autoReview.accepted ? record.location?.road || null : null,
     processed_at: autoReview.accepted ? now : null,
     error_message: autoReview.accepted ? null : autoReview.reason,
-    ...legacyLocationFields(record, runId),
     raw_payload: { ...record, auto_review: autoReview },
+  };
+}
+
+async function updateLegacyIncidentRecord(client, incidentId, record, runId) {
+  const { error } = await client.from("scraper_records")
+    .update({
+      ...legacyLocationFields(record, runId),
+      ...legacyQualityFields(record),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("scraped_incident_id", incidentId)
+    .is("deleted_at", null);
+  if (error) throw error;
+}
+
+async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
+  const category = record.incident_type_key === "vehicular" ? "vehicular" : "incidents";
+  const now = new Date().toISOString();
+  const payload = {
+    scraped_incident_id: incidentId,
+    source_id: sourceId,
+    run_id: runId,
+    source_site: record.source_site,
+    source_url: record.source_url,
+    source_hash: hash(record.source_url),
+    duplicate_key: record.incident_key,
+    title: record.title,
+    snippet: record.snippet,
+    incident_type: record.incident_type_key,
+    category,
+    ...legacyLocationFields(record, runId),
+    ...legacyQualityFields(record),
     scraped_at: now,
   };
   const { error } = await client.from("scraper_records").upsert(payload, { onConflict: "source_url" });
@@ -387,11 +406,7 @@ async function refreshExactSourceRecord(client, record, runId) {
   const canonicalResult = await client.from("scraped_incidents").update(canonicalUpdate).eq("id", incidentId);
   if (canonicalResult.error) throw canonicalResult.error;
 
-  const legacyResult = await client.from("scraper_records")
-    .update(legacyLocationFields(record, runId))
-    .eq("scraped_incident_id", incidentId)
-    .is("deleted_at", null);
-  if (legacyResult.error) throw legacyResult.error;
+  await updateLegacyIncidentRecord(client, incidentId, record, runId);
   return true;
 }
 
@@ -440,6 +455,7 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
         const hashIncident = record.article_content_hash ? contentHashIncidents.get(record.article_content_hash) : null;
         if (hashIncident) {
           await addIncidentSource(client, hashIncident.id, record);
+          await updateLegacyIncidentRecord(client, hashIncident.id, record, runId);
           await saveArticleCandidates(client, [{
             ...record,
             detected_incident_type: record.incident_type_key,
@@ -476,6 +492,7 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
           }
           const update = await client.from("scraped_incidents").update(updates).eq("id", incident.id);
           if (update.error) throw update.error;
+          await updateLegacyIncidentRecord(client, incident.id, record, runId);
           merged += 1;
         } else {
           const created = await client.from("scraped_incidents").upsert(incidentRow(record), { onConflict: "incident_key" }).select("id, incident_key").single();

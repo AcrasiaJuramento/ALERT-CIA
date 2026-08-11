@@ -79,7 +79,59 @@ function isAccidentMapRow(row = {}) {
   ));
 }
 
+function estimateLegacyScraperConfidence(row = {}) {
+  const text = [
+    row.incident_type,
+    row.category,
+    row.title,
+    row.snippet,
+    row.location_text,
+  ].map(value => String(value || "").toLowerCase()).join(" ");
+  const accidentTerms = ["accident", "aksidente", "bangga", "collision", "crash", "salpok", "nasagasaan", "vehicular"];
+  const vehicleTerms = ["motorcycle", "motorsiklo", "tricycle", "truck", "bus", "car", "vehicle", "sasakyan", "pedestrian"];
+  const nonAccidentTerms = ["carnapping", "stolen", "robbery", "theft", "holdap", "traffic law", "batas trapiko", "reminder", "paalala"];
+  const hasAccident = accidentTerms.some(term => text.includes(term));
+  const hasVehicle = vehicleTerms.some(term => text.includes(term));
+  const hasNonAccident = nonAccidentTerms.some(term => text.includes(term));
+
+  if (hasAccident && hasVehicle) {
+    return {
+      confidence: "medium",
+      score: 0.55,
+      reason: "Estimated from legacy scraped text: accident and vehicle terms found.",
+    };
+  }
+  if (row.category === "vehicular" || row.incident_type === "vehicular") {
+    return {
+      confidence: "medium",
+      score: 0.45,
+      reason: "Estimated from legacy scraper category because no saved classifier metadata exists.",
+    };
+  }
+  return {
+    confidence: "low",
+    score: hasNonAccident ? 0.15 : 0.2,
+    reason: hasNonAccident
+      ? "Estimated from legacy scraped text: non-accident traffic/crime context found."
+      : "Legacy scraped record was created before confidence scoring and needs review.",
+  };
+}
+
 function scraperRecordToApp(row = {}) {
+  const fallbackConfidence = estimateLegacyScraperConfidence(row);
+  const classificationConfidence = row.classification_confidence ||
+    row.raw_payload?.classification_confidence ||
+    row.raw_payload?.classification?.confidence ||
+    fallbackConfidence.confidence;
+  const classificationScore = Number(row.classification_score ||
+    row.raw_payload?.classification_score ||
+    row.raw_payload?.classification?.score ||
+    fallbackConfidence.score);
+  const classificationReason = row.classification_reason ||
+    row.raw_payload?.classification_reason ||
+    row.raw_payload?.classification?.reason ||
+    fallbackConfidence.reason;
+
   return {
     id: row.id,
     sourceId: row.source_id,
@@ -120,9 +172,9 @@ function scraperRecordToApp(row = {}) {
     geocodePrecision: row.geocode_precision || row.raw_payload?.geocode_precision || "",
     matchConfidence: Number(row.match_confidence || 0),
     mappingStatus: row.mapping_status || "needs_review",
-    classificationConfidence: row.classification_confidence || row.raw_payload?.classification_confidence || row.raw_payload?.classification?.confidence || "",
-    classificationScore: Number(row.classification_score || row.raw_payload?.classification_score || row.raw_payload?.classification?.score || 0),
-    classificationReason: row.classification_reason || row.raw_payload?.classification_reason || row.raw_payload?.classification?.reason || "",
+    classificationConfidence,
+    classificationScore,
+    classificationReason,
     articleContentHash: row.article_content_hash || row.raw_payload?.article_content_hash || "",
     locationConfidence: row.location_confidence || row.raw_payload?.location_confidence || row.raw_payload?.location?.confidence || {},
   };

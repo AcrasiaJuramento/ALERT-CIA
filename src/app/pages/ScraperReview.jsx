@@ -161,7 +161,7 @@ function RecordCard({ record, records, onRefresh }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-md border border-border bg-secondary px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground">{statusLabel(record.status)}</span>
             <span className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${confidenceClass(record.classificationConfidence)}`}>
-              {record.classificationConfidence || "No confidence"}
+              {record.classificationConfidence || "Unscored"}
             </span>
             <span className="text-[10px] text-muted-foreground">{record.sourceSite}</span>
             <SourceLink href={record.sourceUrl} />
@@ -178,7 +178,7 @@ function RecordCard({ record, records, onRefresh }) {
       <div className="mt-3 grid gap-2 text-xs md:grid-cols-4">
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Extracted Location</span>{record.extractedBarangay || "-"}, {record.extractedMunicipality || "Isabela"}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Raw Location</span>{record.rawLocationText || record.location || "-"}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Classification</span>{record.classificationReason || "-"}</div>
+        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Classification</span>{record.classificationReason || "Legacy record needs review."}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Scraped</span>{fmt(record.scrapedAt)}</div>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/40 p-2">
