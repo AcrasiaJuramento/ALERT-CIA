@@ -13,7 +13,15 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     : scraped.records;
   const incidents = records.filter((item) => item.incident_type_key !== "vehicular");
   const vehicular = records.filter((item) => item.incident_type_key === "vehicular");
-  const database = await saveScrapedRecords(records, { mode: safeMode, scrapeStats: scraped.stats });
+  const rejected = endpointType === "vehicular"
+    ? scraped.rejected
+    : scraped.rejected;
+  const database = await saveScrapedRecords(records, {
+    mode: safeMode,
+    scrapeStats: scraped.stats,
+    rejected,
+    sourceHealth: scraped.sourceHealth || [],
+  });
   const snapshot = database.saved ? await getScrapedIncidentSnapshot() : null;
   if (snapshot) {
     saveCache({
@@ -62,6 +70,8 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     new_incidents: database.newIncidents || 0,
     merged_incidents: database.mergedIncidents || 0,
     duplicates_skipped: scraped.stats.duplicates_skipped + (database.duplicates || 0),
+    rejected_articles: rejected.length,
+    source_health: scraped.sourceHealth || [],
     failed_requests: failedRequests,
     data,
     database,

@@ -25,6 +25,41 @@ export function extractVictimCount(text = "") {
   return word ? FILIPINO_NUMBERS.get(word[1].toLowerCase()) ?? null : null;
 }
 
+export function contentHash(text = "") {
+  return crypto.createHash("sha256").update(String(text || "").replace(/\s+/g, " ").trim().toLowerCase()).digest("hex");
+}
+
+export function extractStructuredAccidentDetails(text = "") {
+  const value = String(text || "").toLowerCase();
+  const vehiclePatterns = [
+    ["motorcycle", /\b(?:motorcycle|motorsiklo|single motorcycle)\b/i],
+    ["tricycle", /\btricycle\b/i],
+    ["car", /\b(?:car|kotse|sedan)\b/i],
+    ["truck", /\btruck\b/i],
+    ["bus", /\bbus\b/i],
+    ["jeepney", /\b(?:jeepney|jeep)\b/i],
+    ["van", /\bvan\b/i],
+    ["pickup", /\bpickup\b/i],
+  ];
+  const involvedPatterns = [
+    ["driver", /\b(?:driver|drayber|tsuper)\b/i],
+    ["passenger", /\b(?:passenger|pasahero|sakay)\b/i],
+    ["pedestrian", /\b(?:pedestrian|tumatawid|nasagasaan)\b/i],
+  ];
+  const extractCount = (terms) => {
+    const pattern = new RegExp(`\\b(\\d{1,3})\\s+(?:na\\s+)?(?:${terms})\\b`, "i");
+    const match = value.match(pattern);
+    return match ? Number(match[1]) : null;
+  };
+
+  return {
+    vehicleTypes: vehiclePatterns.filter(([, pattern]) => pattern.test(text)).map(([label]) => label),
+    involvedParties: involvedPatterns.filter(([, pattern]) => pattern.test(text)).map(([label]) => label),
+    injuredCount: extractCount("injured|sugatan|nasugatan"),
+    fatalityCount: extractCount("dead|killed|patay|nasawi|namatay|fatalities?|deceased"),
+  };
+}
+
 export function incidentKey(item) {
   const day = item.published_at ? new Date(item.published_at).toISOString().slice(0, 10) : "unknown-date";
   const keywords = [...new Set(normalizedWords(item.title))].sort().slice(0, 12).join("-");
@@ -56,5 +91,10 @@ export function similarityScore(left, right) {
   const hours = leftDate && rightDate ? Math.abs(leftDate - rightDate) / 36e5 : 999;
   const date = hours <= 24 ? 1 : hours <= 48 ? 0.7 : 0;
   const victim = left.victim_count == null || right.victim_count == null ? 0.5 : left.victim_count === right.victim_count ? 1 : 0;
-  return Number((title * 0.42 + location * 0.23 + type * 0.2 + date * 0.1 + victim * 0.05).toFixed(4));
+  const leftVehicles = new Set(left.vehicle_types || left.vehicleTypes || []);
+  const rightVehicles = new Set(right.vehicle_types || right.vehicleTypes || []);
+  const vehicleOverlap = leftVehicles.size && rightVehicles.size
+    ? [...leftVehicles].filter((item) => rightVehicles.has(item)).length / Math.max(leftVehicles.size, rightVehicles.size)
+    : 0.5;
+  return Number((title * 0.36 + location * 0.2 + type * 0.18 + date * 0.1 + victim * 0.05 + vehicleOverlap * 0.11).toFixed(4));
 }

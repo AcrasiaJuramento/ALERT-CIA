@@ -8,7 +8,7 @@ import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase } from '../services/supabase';
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
-import { hasValidLatLng, isWithinEchagueMapArea } from '../utils/mapData';
+import { hasValidLatLng, isWithinEchagueMapArea, isWithinIsabelaMapArea } from '../utils/mapData';
 import { formatDateAndTime } from '../utils/dateFormat';
 import {
   calculateAccidentProneAreas,
@@ -75,6 +75,7 @@ export default function MapMonitoring() {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [activeLayer, setActiveLayer] = useState(null);
   const [activeSource, setActiveSource] = useState('all');
+  const [mapScope, setMapScope] = useState('echague');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
@@ -84,6 +85,7 @@ export default function MapMonitoring() {
     verifiedMdrrmo: true,
     pcrReports: true,
     verifiedScraped: true,
+    unverifiedScraped: false,
     advisories: false,
     accidentProneAreas: true,
     criticalZones: true,
@@ -114,7 +116,7 @@ export default function MapMonitoring() {
       try {
         const [officialResult, scrapedResult, pcrResult] = await Promise.allSettled([
           listIncidents({ limit: 500 }),
-          listOfficerScrapedMapIncidents(),
+          listOfficerScrapedMapIncidents({ includeUnverified: true }),
           listPCRMapIncidents({ limit: 200 }),
         ]);
         if (mounted) {
@@ -184,22 +186,31 @@ export default function MapMonitoring() {
   const mapIncidents = useMemo(
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
       .filter(hasValidLatLng)
-      .filter(isWithinEchagueMapArea)
+      .filter(item => {
+        if (mapScope === 'echague') return isWithinEchagueMapArea(item);
+        if (getSourceGroup(item) === 'scraper') return isWithinIsabelaMapArea(item);
+        return isWithinEchagueMapArea(item);
+      })
       .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource)
       .filter(item => {
         const group = getSourceGroup(item);
-        if (group === 'scraper') return mapLayers.verifiedScraped;
+        if (group === 'scraper') return item.sourceKind === 'scraped' ? mapLayers.unverifiedScraped : mapLayers.verifiedScraped;
         if (group === 'pcr_report') return mapLayers.pcrReports;
         if (group === 'official') return mapLayers.verifiedMdrrmo;
         return true;
       }),
-    [activeSource, incidents, mapLayers.pcrReports, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, pcrIncidents, scrapedIncidents]
+    [activeSource, incidents, mapLayers.pcrReports, mapLayers.unverifiedScraped, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, mapScope, pcrIncidents, scrapedIncidents]
   );
   const riskSourceRecords = useMemo(
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
       .filter(hasValidLatLng)
-      .filter(isWithinEchagueMapArea),
-    [incidents, pcrIncidents, scrapedIncidents]
+      .filter(item => {
+        if (mapScope === 'echague') return isWithinEchagueMapArea(item);
+        if (getSourceGroup(item) === 'scraper') return isWithinIsabelaMapArea(item);
+        return isWithinEchagueMapArea(item);
+      })
+      .filter(item => getSourceGroup(item) !== 'scraper' || item.sourceKind !== 'scraped'),
+    [incidents, mapScope, pcrIncidents, scrapedIncidents]
   );
   const accidentProneAreas = useMemo(
     () => calculateAccidentProneAreas(riskSourceRecords, { publicOnly: false, filters: riskFilters }),
@@ -218,6 +229,7 @@ export default function MapMonitoring() {
     { key: 'verifiedMdrrmo', label: 'Verified MDRRMO Incidents' },
     { key: 'pcrReports', label: 'PCR Reports' },
     { key: 'verifiedScraped', label: 'Verified Web-Scraped Accidents' },
+    { key: 'unverifiedScraped', label: 'Unverified Scraper Candidates' },
     { key: 'accidentProneAreas', label: 'Accident-Prone Areas' },
     { key: 'criticalZones', label: 'Critical Zones' },
     { key: 'advisories', label: 'Advisories' },
@@ -251,6 +263,7 @@ export default function MapMonitoring() {
           selectedIncidentId={selectedIncident || undefined}
           clusterMarkers={false}
           spreadOverlappingMarkers
+          scope={mapScope}
         />
 
         {/* Top overlay bar */}
@@ -259,11 +272,26 @@ export default function MapMonitoring() {
             <div className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_0_5px_rgba(239,68,68,0.12)]" />
             <div>
               <div className="text-xs font-bold uppercase leading-tight">Operations Map</div>
-              <div className="text-xs text-slate-500 dark:text-slate-300">Echague, Isabela</div>
+              <div className="text-xs text-slate-500 dark:text-slate-300">{mapScope === 'isabela' ? 'Province-wide intelligence' : 'Echague, Isabela'}</div>
             </div>
           </div>
 
           <div className="pointer-events-auto flex items-start gap-4">
+            <div className="flex h-12 overflow-hidden rounded-xl bg-white/95 text-xs font-bold text-slate-800 shadow-xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
+              {[
+                ['echague', 'Echague Ops'],
+                ['isabela', 'Isabela Intel'],
+              ].map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setMapScope(value)}
+                  className={`px-3 transition-colors ${mapScope === value ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             <div className="relative">
               <button
                 onClick={() => {
@@ -479,7 +507,7 @@ export default function MapMonitoring() {
                   <p className="text-xs text-foreground/80">{selectedInc.location}</p>
                   {selectedInc.sourceKind && (
                     <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-blue-400">
-                      {selectedInc.sourceKind.replaceAll('_', ' ')} / {selectedInc.sourceLabel}
+                      {getSourceGroup(selectedInc) === 'scraper' ? 'External Isabela intelligence' : selectedInc.sourceKind.replaceAll('_', ' ')} / {selectedInc.sourceLabel}
                     </p>
                   )}
                 </div>
@@ -555,7 +583,7 @@ export default function MapMonitoring() {
             <div className="px-4 py-3 border-b border-border shrink-0">
               <div className="flex items-center gap-2 mb-1">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-sm font-semibold text-foreground">Operational Records</span>
+                <span className="text-sm font-semibold text-foreground">{mapScope === 'isabela' ? 'Isabela Accident Intelligence' : 'Operational Records'}</span>
               </div>
               <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
               <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
@@ -659,8 +687,9 @@ export default function MapMonitoring() {
                         <p className="text-[10px] text-muted-foreground truncate">{inc.location}</p>
                         {inc.sourceKind && (
                           <p className="text-[9px] font-semibold uppercase tracking-wide text-blue-400 truncate">
-                            {inc.sourceKind.replaceAll('_', ' ')}
-                          </p>
+                          {inc.sourceKind.replaceAll('_', ' ')}
+                          {getSourceGroup(inc) === 'scraper' && mapScope === 'isabela' ? ' / Isabela intelligence' : ''}
+                        </p>
                         )}
                         <div className="flex items-center gap-1 mt-1">
                           <Clock className="w-2.5 h-2.5 text-muted-foreground" />
@@ -677,7 +706,7 @@ export default function MapMonitoring() {
               })}
               {!loading && !activeIncidents.length && (
                 <div className="px-4 py-8 text-center text-xs text-muted-foreground">
-                  No active incidents are available for your role.
+                  No mapped records are available for the selected scope.
                 </div>
               )}
             </div>

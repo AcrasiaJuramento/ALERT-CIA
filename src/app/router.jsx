@@ -16,6 +16,7 @@ import MapMonitoring from './pages/MapMonitoring'
 import AdvisoryModule from './pages/AdvisoryModule'
 import Analytics from './pages/Analytics'
 import ReportsAnalytics from './pages/ReportsAnalytics'
+import ScraperReview from './pages/ScraperReview'
 import UserManagement from './pages/UserManagement'
 import SystemSettings from './pages/SystemSettings'
 import PublicDashboard from './pages/public/PublicDashboard'
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
       { path: 'pcr-verification', element: <Navigate to="/admin/pcr" replace /> },
       { path: 'analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <Analytics />) },
       { path: 'reports-analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <ReportsAnalytics />) },
+      { path: 'scraper-review', element: protect(PERMISSIONS.MANAGE_SCRAPER, <ScraperReview />) },
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
       { path: 'access-denied', element: <AccessDenied /> },

@@ -10,7 +10,7 @@ import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import {
   filterIncidentsByRange, filterOptions, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
-import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRReports } from '../services/supabase';
+import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRReports, listVerifiedScrapedAnalyticsIncidents } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
@@ -28,6 +28,11 @@ const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 const submittedStatuses = new Set(['Submitted', 'Verified', 'Completed']);
+const analyticsSourceModes = [
+  { value: 'official', label: 'Official MDRRMO', icon: ShieldCheck },
+  { value: 'external', label: 'Verified External', icon: Radio },
+  { value: 'combined', label: 'Combined Intelligence', icon: Layers3 },
+];
 const analyticsPageSize = 1000;
 const analyticsRpcMissingCodes = new Set(['PGRST202', '42883']);
 
@@ -726,8 +731,10 @@ export default function Analytics() {
   const [range, setRange] = useState('all');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
   const [incidents, setIncidents] = useState([]);
+  const [verifiedScrapedIncidents, setVerifiedScrapedIncidents] = useState([]);
   const [dispatches, setDispatches] = useState([]);
   const [pcrReports, setPcrReports] = useState([]);
+  const [sourceMode, setSourceMode] = useState('official');
   const [spatioFilters, setSpatioFilters] = useState({
     type: 'all',
     barangay: 'all',
@@ -760,10 +767,11 @@ export default function Analytics() {
             setDispatches(allRecords.dispatches);
             setPcrReports(allRecords.pcrReports);
           } else {
-            const [incidentResult, dispatchResult, pcrResult] = await Promise.allSettled([
+            const [incidentResult, dispatchResult, pcrResult, scrapedResult] = await Promise.allSettled([
               loadAllRows(listIncidents),
               loadAllRows(listDispatchRecords),
               loadAllRows(listPCRReports),
+              listVerifiedScrapedAnalyticsIncidents({ limit: 1000 }),
             ]);
             const incidentRows = settledValue(incidentResult, []);
             const dispatchRows = settledValue(dispatchResult, []);
@@ -771,6 +779,7 @@ export default function Analytics() {
             setIncidents(incidentRows);
             setDispatches(dispatchRows);
             setPcrReports(pcrRows);
+            setVerifiedScrapedIncidents(settledValue(scrapedResult, []));
             const failed = [incidentResult, dispatchResult, pcrResult].find(result => result.status === 'rejected');
             if (isAnalyticsRpcMissing(sourceError)) {
               setError('All-record analytics is not deployed in Supabase yet. Run migration 63_staff_all_records_analytics_rpc.sql, then refresh this page.');
@@ -791,7 +800,23 @@ export default function Analytics() {
     };
   }, []);
 
-  const analyticsIncidents = useMemo(() => incidents.map(incident => ({
+  useEffect(() => {
+    let mounted = true;
+    listVerifiedScrapedAnalyticsIncidents({ limit: 1000 })
+      .then(rows => { if (mounted) setVerifiedScrapedIncidents(rows); })
+      .catch(() => { if (mounted) setVerifiedScrapedIncidents([]); });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const sourceIncidents = useMemo(() => {
+    if (sourceMode === 'external') return verifiedScrapedIncidents;
+    if (sourceMode === 'combined') return [...incidents, ...verifiedScrapedIncidents];
+    return incidents;
+  }, [incidents, sourceMode, verifiedScrapedIncidents]);
+
+  const analyticsIncidents = useMemo(() => sourceIncidents.map(incident => ({
     ...incident,
     classification: String(incident.classification || incident.type || 'Other').toUpperCase(),
     priority: incident.priority ? `${incident.priority[0].toUpperCase()}${incident.priority.slice(1)}` : 'Medium',
@@ -800,7 +825,7 @@ export default function Analytics() {
     time: incident.time,
     timeOfDay: getTimeOfDay(incident.time),
     month: incident.date ? new Date(incident.date).getMonth() : 0,
-  })), [incidents]);
+  })), [sourceIncidents]);
   const analyticsPcrReports = useMemo(() => pcrReports.map(report => ({
     ...report,
     date: pcrAnalyticsDate(report),
@@ -994,15 +1019,38 @@ export default function Analytics() {
               Analytics Command Center
             </h1>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-              Incident trends, barangay hotspots, medical classifications, and MVC risk indicators for Echague operations.
+              Incident trends, barangay hotspots, medical classifications, and MVC risk indicators for official operations and verified Isabela external intelligence.
             </p>
           </div>
-          <DateFilters range={range} setRange={setRange} customRange={customRange} setCustomRange={setCustomRange} />
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {analyticsSourceModes.map(({ value, label, icon }) => (
+                <button
+                  key={value}
+                  onClick={() => setSourceMode(value)}
+                  className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors ${
+                    sourceMode === value
+                      ? 'border-blue-500/50 bg-blue-600 text-white'
+                      : 'border-border bg-secondary text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {createElement(icon, { className: 'h-4 w-4' })}
+                  {label}
+                </button>
+              ))}
+            </div>
+            <DateFilters range={range} setRange={setRange} customRange={customRange} setCustomRange={setCustomRange} />
+          </div>
         </div>
       </div>
       {loading && <div className="mb-5 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Loading analytics data...</div>}
       {error && <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
       <SectionNav />
+      <div className="mb-5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-xs text-blue-200">
+        Analytics source: <strong>{analyticsSourceModes.find(item => item.value === sourceMode)?.label}</strong>.
+        {sourceMode === 'external' && ' Dispatch and PCR workflow metrics remain official MDRRMO data; verified external records cover Isabela accident intelligence only.'}
+        {sourceMode === 'combined' && ' Verified scraped accidents across Isabela are combined with official records for accident intelligence. Unverified scraper records are excluded.'}
+      </div>
       <DataCoverageBar incidents={filtered} dispatches={filteredDispatches} pcrReports={filteredPcrReports} mvcRecords={mvcAccidentRecords} mvcWithCrashDetails={mvcWithCrashDetails} />
 
       {user?.role === ROLES.DISPATCHER && (
@@ -1014,7 +1062,7 @@ export default function Analytics() {
       )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Total Incidents" value={filtered.length} helper="Filtered emergency records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
+        <MetricCard label="Total Incidents" value={filtered.length} helper={`${sourceMode === 'official' ? 'Official' : sourceMode === 'external' ? 'Verified external' : 'Combined'} filtered records`} icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
         <MetricCard label="Avg Response Time" value={formatMinutes(avgResponseMinutes)} helper={`${filteredDispatches.length} dispatch records`} icon={Clock} tone="border-blue-500/20 bg-blue-500/10 text-blue-400" />
         <MetricCard label="Submitted PCRs" value={submittedPcrCount} helper={`${filteredPcrReports.length} PCR records in range`} icon={CheckCircle2} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
         <MetricCard label="Medical / Trauma" value={`${medicalCount}/${traumaCount}`} helper={`Avg scene ${formatMinutes(avgSceneMinutes)}`} icon={HeartPulse} tone="border-orange-500/20 bg-orange-500/10 text-orange-400" />

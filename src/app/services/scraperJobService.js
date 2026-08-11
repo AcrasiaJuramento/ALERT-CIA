@@ -48,8 +48,10 @@ function resultMessage(mode, result = {}) {
   const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
   const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
   const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
+  const rejected = result.rejected_articles ?? 0;
+  const failedRequests = result.failed_requests ?? 0;
   const failedSources = result.failed_sources?.length || 0;
-  return `${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped${failedSources ? `, ${failedSources} source${failedSources === 1 ? '' : 's'} failed` : ''}.`;
+  return `${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped, ${rejected} rejected${failedRequests ? `, ${failedRequests} failed request${failedRequests === 1 ? '' : 's'}` : ''}${failedSources ? `, ${failedSources} source${failedSources === 1 ? '' : 's'} failed` : ''}.`;
 }
 
 export function subscribeScraperJob(listener) {

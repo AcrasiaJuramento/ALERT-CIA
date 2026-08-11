@@ -16,13 +16,31 @@ const queryPage = (url, parameter = "page") => (page) => {
 };
 
 function source(key, name, baseUrl, firstPageUrl, options = {}) {
+  const loadingStrategy = options.loadingStrategy || (
+    options.paginationType === "static" ? "static" : "pagination"
+  );
   return {
     key,
     name,
     baseUrl,
     firstPageUrl,
+    loadingStrategy,
     paginationType: options.paginationType || "next_link",
     pageUrl: options.pageUrl || queryPage(firstPageUrl),
+    apiUrl: options.apiUrl || null,
+    apiItemsPath: options.apiItemsPath || null,
+    apiUrlPath: options.apiUrlPath || null,
+    apiDatePath: options.apiDatePath || null,
+    loadMoreUrl: options.loadMoreUrl || null,
+    scrollUrl: options.scrollUrl || firstPageUrl,
+    discoveryLimits: {
+      maxScrolls: options.maxScrolls || 8,
+      maxArticles: options.maxArticles || 80,
+      maxRuntimeMs: options.maxRuntimeMs || 25_000,
+      noNewArticleLimit: options.noNewArticleLimit || 2,
+      articleDateRangeDays: options.articleDateRangeDays || (options.loadingStrategy === "infinite_scroll" ? 120 : 365),
+      delayMs: options.delayMs || 350,
+    },
     maxPagesFull: options.maxPagesFull || 100,
     maxPagesUpdate: options.maxPagesUpdate || 3,
     allowedDomains: options.allowedDomains || [new URL(baseUrl).hostname.replace(/^www\./, "")],
@@ -33,9 +51,15 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
 
 export const SOURCES = [
   source("gma", "GMA Network", "https://www.gmanetwork.com", "https://www.gmanetwork.com/news/tracking/isabela/1/", {
+    loadingStrategy: "infinite_scroll",
     paginationType: "numbered_path",
     pageUrl: numberedPath("https://www.gmanetwork.com/news/tracking/isabela"),
     maxPagesFull: 50,
+    maxScrolls: 10,
+    maxArticles: 100,
+    maxRuntimeMs: 30_000,
+    noNewArticleLimit: 2,
+    articleDateRangeDays: 365,
     articlePattern: /\/news\/(?:topstories|regions|balitambayan)\/[^/]+\/\d+\//i,
   }),
   source("bombo", "Bombo Radyo", "https://news.bomboradyo.com", "https://news.bomboradyo.com/?s=isabela", {

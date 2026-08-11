@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CircleMarker, GeoJSON, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { ChevronDown, LocateFixed, Layers, RefreshCw } from 'lucide-react';
-import { ECHAGUE_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
+import { ECHAGUE_CENTER, ISABELA_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadIsabelaBoundaryCollection } from '../../data/isabelaBarangayGeometry';
 import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
@@ -12,20 +12,20 @@ import { HazardZonesLayer } from './HazardZonesLayer';
 import { HeatmapLayer } from './HeatmapLayer';
 import { RouteLayer } from './RouteLayer';
 
-function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvisoryId }) {
+function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvisoryId, scope }) {
   const map = useMap();
 
   useEffect(() => {
     if (selectedIncidentId || selectedAdvisoryId) return;
     const advisoryPoints = advisories.map(getAdvisoryLatLng).filter(Boolean);
-    const bounds = [...(getBoundsForIncidents(incidents) || []), ...advisoryPoints];
+    const bounds = [...(getBoundsForIncidents(incidents, { scope }) || []), ...advisoryPoints];
     if (!bounds?.length) return;
 
     map.fitBounds(bounds, {
       padding: [36, 36],
       maxZoom: 14,
     });
-  }, [advisories, incidents, map, selectedAdvisoryId, selectedIncidentId]);
+  }, [advisories, incidents, map, scope, selectedAdvisoryId, selectedIncidentId]);
 
   return null;
 }
@@ -277,6 +277,7 @@ export function LeafletIncidentMap({
   onExternalLayersChange,
   hideLayerControl = false,
   spreadOverlappingMarkers = false,
+  scope = 'echague',
 }) {
   const [layers, setLayers] = useState({
     heatmap: showHeatmap,
@@ -314,9 +315,9 @@ export function LeafletIncidentMap({
   return (
     <div className="relative w-full overflow-hidden border border-border bg-slate-950" style={{ height }}>
       <MapContainer
-        center={ECHAGUE_CENTER}
-        zoom={13}
-        minZoom={11}
+        center={scope === 'isabela' ? ISABELA_CENTER : ECHAGUE_CENTER}
+        zoom={scope === 'isabela' ? 9 : 13}
+        minZoom={scope === 'isabela' ? 8 : 11}
         maxZoom={19}
         className="h-full w-full"
         zoomControl={false}
@@ -337,6 +338,7 @@ export function LeafletIncidentMap({
             advisories={advisoryMarkers}
             selectedIncidentId={selectedIncidentId}
             selectedAdvisoryId={selectedAdvisoryId}
+            scope={scope}
           />
         )}
         <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} enabled={effectiveLayers.barangayBoundaries !== false} />

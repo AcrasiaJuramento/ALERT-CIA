@@ -99,6 +99,14 @@ function scraperRecordToApp(row = {}) {
     barangay: row.barangay?.name || "",
     relatedIncidentId: row.related_incident_id,
     status: row.status,
+    needsManualReview: row.needs_manual_review ?? true,
+    verifiedBy: row.verified_by || null,
+    verifiedAt: row.verified_at || null,
+    rejectedReason: row.rejected_reason || "",
+    verifiedMunicipality: row.verified_municipality || "",
+    verifiedBarangay: row.verified_barangay || "",
+    verifiedPurokSitio: row.verified_purok_sitio || "",
+    verifiedRoadPlace: row.verified_road_place || "",
     scrapedAt: row.scraped_at,
     processedAt: row.processed_at,
     errorMessage: row.error_message || "",
@@ -108,9 +116,99 @@ function scraperRecordToApp(row = {}) {
     extractedBarangay: row.extracted_barangay || row.raw_payload?.location?.barangay || "",
     extractedMunicipality: row.extracted_municipality || row.raw_payload?.location?.municipality || "",
     extractedProvince: row.extracted_province || row.raw_payload?.location?.province || "",
+    extractedPurokSitio: row.purok_sitio || row.raw_payload?.location?.purokSitio || "",
     geocodePrecision: row.geocode_precision || row.raw_payload?.geocode_precision || "",
     matchConfidence: Number(row.match_confidence || 0),
     mappingStatus: row.mapping_status || "needs_review",
+    classificationConfidence: row.classification_confidence || row.raw_payload?.classification_confidence || row.raw_payload?.classification?.confidence || "",
+    classificationScore: Number(row.classification_score || row.raw_payload?.classification_score || row.raw_payload?.classification?.score || 0),
+    classificationReason: row.classification_reason || row.raw_payload?.classification_reason || row.raw_payload?.classification?.reason || "",
+    articleContentHash: row.article_content_hash || row.raw_payload?.article_content_hash || "",
+    locationConfidence: row.location_confidence || row.raw_payload?.location_confidence || row.raw_payload?.location?.confidence || {},
+  };
+}
+
+function scraperCandidateToApp(row = {}) {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    sourceId: row.source_id,
+    sourceSite: row.source_site,
+    sourceUrl: row.source_url,
+    title: row.title || "Untitled article",
+    snippet: row.snippet || "",
+    publishedAt: row.published_at,
+    detectedIncidentType: row.detected_incident_type || "",
+    classificationConfidence: row.classification_confidence || "",
+    classificationScore: Number(row.classification_score || 0),
+    classificationReason: row.classification_reason || "",
+    matchedTerms: row.matched_terms || [],
+    rejectionReason: row.rejection_reason,
+    rejectionDetails: row.rejection_details || "",
+    rawLocationText: row.raw_location_text || "",
+    extractedProvince: row.extracted_province || "",
+    extractedMunicipality: row.extracted_municipality || "",
+    extractedBarangay: row.extracted_barangay || "",
+    extractedPurokSitio: row.extracted_purok_sitio || "",
+    extractedRoad: row.extracted_road || "",
+    locationConfidence: row.location_confidence || {},
+    rawPayload: row.raw_payload || {},
+    createdAt: row.created_at,
+  };
+}
+
+function scraperSourceHealthToApp(row = {}) {
+  return {
+    sourceId: row.source_id,
+    sourceKey: row.source_key,
+    sourceName: row.source_name,
+    status: row.status || "unknown",
+    lastScrapedAt: row.last_scraped_at,
+    lastSuccessAt: row.last_success_at,
+    lastFailureAt: row.last_failure_at,
+    pagesChecked: Number(row.pages_checked || 0),
+    linksFound: Number(row.links_found || 0),
+    articlesProcessed: Number(row.articles_processed || 0),
+    incidentsDetected: Number(row.incidents_detected || 0),
+    rejectedCount: Number(row.rejected_count || 0),
+    duplicateCount: Number(row.duplicate_count || 0),
+    failedCount: Number(row.failed_count || 0),
+    cacheHits: Number(row.cache_hits || 0),
+    retries: Number(row.retries || 0),
+    lastError: row.last_error || "",
+    metadata: row.metadata || {},
+    updatedAt: row.updated_at,
+  };
+}
+
+function scraperRecordToAnalyticsIncident(row = {}) {
+  const date = row.scraped_at ? new Date(row.scraped_at).toISOString().slice(0, 10) : "";
+  const time = row.scraped_at ? new Date(row.scraped_at).toTimeString().slice(0, 5) : "";
+  return {
+    id: `SCR-${String(row.id).slice(0, 8)}`,
+    sourceKind: "verified_scraped",
+    sourceLabel: row.source?.name || row.source_site || "External source",
+    externalSourceUrl: row.source_url,
+    classification: row.category === "vehicular" || row.incident_type === "vehicular" ? "mvc" : row.incident_type || "other",
+    type: row.category === "vehicular" || row.incident_type === "vehicular" ? "vehicular" : row.incident_type || "other",
+    priority: "medium",
+    title: row.title || "",
+    description: row.snippet || "",
+    barangay: row.verified_barangay || row.extracted_barangay || row.barangay?.name || row.raw_payload?.location?.barangay || "Unspecified",
+    municipality: row.verified_municipality || row.extracted_municipality || row.raw_payload?.location?.municipality || "Isabela",
+    location: row.location_text || row.display_name || "",
+    lat: row.latitude,
+    lng: row.longitude,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    date,
+    time,
+    status: row.status,
+    publicVisible: row.public_visible,
+    scraperStatus: row.status,
+    classificationConfidence: row.classification_confidence || "",
+    classificationScore: Number(row.classification_score || 0),
+    matchConfidence: Number(row.match_confidence || 0),
   };
 }
 
@@ -351,21 +449,98 @@ export async function listScraperRuns({ limit = 50 } = {}) {
   "Unable to load scraper runs.");
 }
 
-export async function listScraperRecords({ status, category, sourceId, limit = 100, from = 0 } = {}) {
+export async function analyzeScraperArticle({ url = "", title = "", snippet = "", body = "" } = {}, { signal } = {}) {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error("Supabase authentication is required to analyze scraper articles.");
+  }
+
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Sign in again before analyzing scraper articles.");
+
+  const apiBaseUrl = getConfiguredScraperApiUrl();
+  let response;
+  try {
+    response = await fetch(`${apiBaseUrl}/api/analyze`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ url, title, snippet, body }),
+      signal,
+    });
+  } catch (requestError) {
+    if (requestError?.name === "AbortError") throw requestError;
+    throw new Error(`Scraper analyzer at ${apiBaseUrl} could not be reached.`);
+  }
+  const payload = await readJsonResponse(response);
+  if (!response.ok || payload.success === false) {
+    throw new Error(payload.error || `Scraper analyzer returned ${response.status}.`);
+  }
+  return payload;
+}
+
+export async function listScraperSourceHealth() {
+  const rows = await runSupabaseRequest(client =>
+    client
+      .from("scraper_source_health")
+      .select("*")
+      .order("status", { ascending: true })
+      .order("updated_at", { ascending: false }),
+  "Unable to load scraper source health.");
+  return asRows(rows).map(scraperSourceHealthToApp);
+}
+
+export async function listScraperRecords({ status, category, sourceId, municipality, barangay, confidence, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("scraper_records")
-      .select("*, barangay:barangays(id, name), source:scraper_sources(id, name, source_key)")
+      .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
       .range(from, from + limit - 1);
     if (status) query = query.eq("status", status);
     if (category) query = query.eq("category", category);
     if (sourceId) query = query.eq("source_id", sourceId);
+    if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
+    if (barangay) query = query.ilike("extracted_barangay", `%${barangay}%`);
+    if (confidence) query = query.eq("classification_confidence", confidence);
     return query;
   }, "Unable to load scraper records.");
 
   return asRows(rows).map(scraperRecordToApp);
+}
+
+export async function listRejectedScraperCandidates({ reason, sourceId, municipality, confidence, limit = 100, from = 0 } = {}) {
+  const rows = await runSupabaseRequest(client => {
+    let query = client
+      .from("scraper_article_candidates")
+      .select("*, source:scraper_sources(id, name, source_key)")
+      .order("created_at", { ascending: false })
+      .range(from, from + limit - 1);
+    if (reason) query = query.eq("rejection_reason", reason);
+    if (sourceId) query = query.eq("source_id", sourceId);
+    if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
+    if (confidence) query = query.eq("classification_confidence", confidence);
+    return query;
+  }, "Unable to load rejected scraper candidates.");
+  return asRows(rows).map(scraperCandidateToApp);
+}
+
+export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {}) {
+  const rows = await runSupabaseRequest(client =>
+    client
+      .from("scraper_records")
+      .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
+      .in("status", ["approved", "promoted", "matched", "imported"])
+      .is("deleted_at", null)
+      .order("scraped_at", { ascending: false })
+      .limit(limit),
+  "Unable to load verified scraped analytics records.");
+  return asRows(rows).filter(isAccidentMapRow).map(scraperRecordToAnalyticsIncident);
 }
 
 export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
@@ -377,7 +552,7 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
       client
         .from("scraper_records")
         .select("*, barangay:barangays(id, name, municipality, province, centroid)")
-        .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
+        .in("status", ["approved", "promoted", "matched", "imported"])
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
         .limit(limit),
@@ -391,7 +566,7 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   }
 }
 
-export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
+export async function listOfficerScrapedMapIncidents({ limit = 200, includeUnverified = true } = {}) {
   if (!isSupabaseConfigured) return [];
   const cacheKey = `alert-cia:officer-scraped-map:${limit}`;
 
@@ -400,7 +575,7 @@ export async function listOfficerScrapedMapIncidents({ limit = 200 } = {}) {
       client
         .from("scraper_records")
         .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
-        .in("status", ["pending_review", "approved", "promoted", "new", "matched", "imported"])
+        .in("status", includeUnverified ? ["pending_review", "approved", "promoted", "new", "matched", "imported"] : ["approved", "promoted", "matched", "imported"])
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
         .limit(limit),
@@ -430,18 +605,68 @@ export async function updateScraperRecordStatus(recordId, status, errorMessage =
 }
 
 export async function approveScraperRecordForPublicMap(recordId) {
+  const userResult = supabase ? await supabase.auth.getUser().catch(() => null) : null;
+  const verifiedBy = userResult?.data?.user?.id || null;
   return runSupabaseRequest(client =>
     client
       .from("scraper_records")
       .update({
         status: "approved",
         public_visible: true,
+        needs_manual_review: false,
+        verified_by: verifiedBy,
+        verified_at: new Date().toISOString(),
         processed_at: new Date().toISOString(),
       })
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name)")
       .single(),
   "Unable to approve scraper record for public map.").then(scraperRecordToApp);
+}
+
+export async function rejectScraperRecord(recordId, reason = "Rejected during review.") {
+  return runSupabaseRequest(client =>
+    client
+      .from("scraper_records")
+      .update({
+        status: "ignored",
+        public_visible: false,
+        needs_manual_review: false,
+        rejected_reason: reason,
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", recordId)
+      .select("*, barangay:barangays(id, name, municipality, province)")
+      .single(),
+  "Unable to reject scraper record.").then(scraperRecordToApp);
+}
+
+export async function correctScraperRecordLocation(recordId, location = {}) {
+  return runSupabaseRequest(client =>
+    client
+      .from("scraper_records")
+      .update({
+        verified_municipality: location.municipality || null,
+        verified_barangay: location.barangay || null,
+        verified_purok_sitio: location.purokSitio || null,
+        verified_road_place: location.road || null,
+        location_text: [location.barangay, location.municipality, "Isabela, Philippines"].filter(Boolean).join(", "),
+        needs_manual_review: true,
+        processed_at: new Date().toISOString(),
+      })
+      .eq("id", recordId)
+      .select("*, barangay:barangays(id, name, municipality, province)")
+      .single(),
+  "Unable to correct scraper record location.").then(scraperRecordToApp);
+}
+
+export async function mergeScraperRecords(sourceRecordId, targetRecordId) {
+  return runSupabaseRequest(client =>
+    client.rpc("merge_scraper_records", {
+      source_record_id: sourceRecordId,
+      target_record_id: targetRecordId,
+    }),
+  "Unable to merge duplicate scraper records.");
 }
 
 export async function hideScraperRecordFromPublicMap(recordId) {

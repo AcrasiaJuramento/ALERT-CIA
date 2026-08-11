@@ -8,6 +8,7 @@ export const ISABELA_PLACES = [
 
 const ISABELA_CITIES = new Set(["Cauayan", "Ilagan", "Santiago"]);
 const placePattern = ISABELA_PLACES.map((name) => name.replace(/ /g, "\\s+")).join("|");
+const INCIDENT_CONTEXT_PATTERN = /\b(accident|aksidente|banggaan|nagbanggaan|salpukan|sumalpok|sinalpok|nasalpok|nabangga|bumangga|tumaob|tumagilid|nasagasaan|collision|crash|vehicular|motorcycle|motorsiklo|truck|bus|sasakyan)\b/i;
 const DISTINCTIVE_WITHOUT_PROVINCE = new Set([
   "Angadanan", "Benito Soliven", "Cabagan", "Delfin Albano", "Dinapigue", "Divilacan", "Echague",
   "Gamu", "Ilagan", "Jones", "Maconacon", "Mallig", "Palanan", "Reina Mercedes", "Tumauini",
@@ -35,6 +36,19 @@ function cleanBarangay(value) {
   if (!cleaned || cleaned.length > 60) return null;
   if (/\b(?:incident|accident|aksidente|killed|injured|isabela|province)\b/i.test(cleaned)) return null;
   return cleaned;
+}
+
+function cleanPurokSitio(value) {
+  const cleaned = String(value || "").replace(/\s+/g, " ").replace(/^[,.;:\s-]+|[,.;:\s-]+$/g, "").trim();
+  if (!cleaned || cleaned.length > 50) return null;
+  return cleaned;
+}
+
+function candidateTexts(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ");
+  const sentences = normalized.split(/(?<=[.!?])\s+|\n+/).map((item) => item.trim()).filter(Boolean);
+  const incidentSentences = sentences.filter((sentence) => INCIDENT_CONTEXT_PATTERN.test(sentence));
+  return [...incidentSentences, normalized].filter(Boolean);
 }
 
 function findAdministrativeLocation(text) {
@@ -66,12 +80,17 @@ function findAdministrativeLocation(text) {
 
 export function extractLocation(...texts) {
   const text = texts.filter(Boolean).join(" ").replace(/\s+/g, " ");
-  const { barangay, municipality } = findAdministrativeLocation(text);
+  const selectedText = candidateTexts(text).find((candidate) => {
+    const found = findAdministrativeLocation(candidate);
+    return found.barangay || found.municipality || /\bisabela\b/i.test(candidate);
+  }) || text;
+  const { barangay, municipality } = findAdministrativeLocation(selectedText);
   const explicitlyIsabela = /\bisabela\b/i.test(text);
   if (!municipality && !barangay && !explicitlyIsabela) return null;
   if (!explicitlyIsabela && (!municipality || !DISTINCTIVE_WITHOUT_PROVINCE.has(municipality))) return null;
 
   const roadMatch = text.match(/\b([A-Z][A-Za-z0-9 .'-]{2,50}(?:Road|Highway|Street|Bridge|Junction|Avenue))\b/);
+  const purokSitio = cleanPurokSitio(text.match(/\b(?:Purok|Sitio|Zone)\s+([A-Za-z0-9 .'-]{1,45})/i)?.[0]);
   const municipalityType = municipality ? (ISABELA_CITIES.has(municipality) ? "city" : "municipality") : null;
   const barangayLabel = barangay ? `Barangay ${barangay}` : null;
   const municipalityLabel = municipality
@@ -89,8 +108,16 @@ export function extractLocation(...texts) {
     province,
     provinceLabel: `Province of ${province}`,
     country: "Philippines",
+    purokSitio,
     road: roadMatch?.[1] || null,
     locationText,
+    rawLocationText: selectedText.slice(0, 500),
+    confidence: {
+      province: explicitlyIsabela ? 1 : 0.65,
+      municipality: municipality ? (INCIDENT_CONTEXT_PATTERN.test(selectedText) ? 0.85 : 0.65) : 0,
+      barangay: barangay ? (INCIDENT_CONTEXT_PATTERN.test(selectedText) ? 0.85 : 0.65) : 0,
+      road: roadMatch ? 0.7 : 0,
+    },
   };
 }
 

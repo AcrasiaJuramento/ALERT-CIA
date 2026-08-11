@@ -1,6 +1,6 @@
 import { runScraper } from "./runScraper.js";
 
-const TEN_MINUTES = 10 * 60 * 1000;
+const THIRTY_MINUTES = 30 * 60 * 1000;
 const globalKey = "__alertCiaScraperScheduler";
 
 export function startScraperScheduler() {
@@ -11,9 +11,9 @@ export function startScraperScheduler() {
 
   globalThis[globalKey] = setInterval(async () => {
     try {
-      await runScraper({ endpointType: "all", mode: "update" });
+      await runScraper({ endpointType: "all", mode: "update", pageFrom: 1, pageTo: 1 });
     } catch (error) {
       console.error("[alert-cia-scraper] scheduled run failed:", error);
     }
-  }, TEN_MINUTES);
+  }, THIRTY_MINUTES);
 }

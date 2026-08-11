@@ -29,6 +29,33 @@ export async function findExistingSourceUrls(urls = []) {
   return found;
 }
 
+export async function getScraperSourceHealthSnapshot(sourceKeys = []) {
+  const keys = [...new Set(sourceKeys)].filter(Boolean);
+  if (!isSupabaseEnabled() || !keys.length) return new Map();
+  const client = getSupabaseAdminClient();
+  const { data, error } = await client.from("scraper_source_health")
+    .select("source_key,last_scraped_at,last_success_at,status")
+    .in("source_key", keys);
+  if (error) return new Map();
+  return new Map((data || []).map((row) => [row.source_key, row]));
+}
+
+async function findExistingContentHashIncidents(client, hashes = []) {
+  const found = new Map();
+  const uniqueHashes = [...new Set(hashes)].filter(Boolean);
+  if (!uniqueHashes.length) return found;
+  for (const group of chunks(uniqueHashes)) {
+    const { data, error } = await client.from("scraped_incidents")
+      .select("id,article_content_hash")
+      .in("article_content_hash", group);
+    if (error) return found;
+    (data || []).forEach((row) => {
+      if (row.article_content_hash) found.set(row.article_content_hash, row);
+    });
+  }
+  return found;
+}
+
 export async function getScrapedIncidentSnapshot({ limit = 1000 } = {}) {
   if (!isSupabaseEnabled()) return null;
   const client = getSupabaseAdminClient();
@@ -82,9 +109,14 @@ async function syncSources(client) {
     search_url: source.firstPageUrl,
     active: source.enabled,
     metadata: {
+      loading_strategy: source.loadingStrategy,
       pagination_type: source.paginationType,
       max_pages_full: source.maxPagesFull,
       max_pages_update: source.maxPagesUpdate,
+      discovery_limits: source.discoveryLimits,
+      api_items_path: source.apiItemsPath,
+      api_url_path: source.apiUrlPath,
+      scroll_url: source.scrollUrl,
       allowed_domains: source.allowedDomains,
     },
   }));
@@ -94,6 +126,7 @@ async function syncSources(client) {
 }
 
 function incidentRow(record) {
+  const autoReview = autoReviewDecision(record);
   return {
     incident_key: record.incident_key,
     title: record.title,
@@ -105,6 +138,18 @@ function incidentRow(record) {
     barangay: record.location?.barangay || null,
     road_place: record.location?.road || null,
     victim_count: record.victim_count,
+    classification_confidence: record.classification_confidence || null,
+    classification_score: record.classification_score || 0,
+    classification_reason: record.classification_reason || null,
+    matched_terms: record.matched_terms || [],
+    article_content_hash: record.article_content_hash || null,
+    raw_location_text: record.location?.rawLocationText || record.location_text || null,
+    purok_sitio: record.location?.purokSitio || null,
+    location_confidence: record.location_confidence || record.location?.confidence || {},
+    vehicle_types: record.vehicle_types || [],
+    injured_count: record.injured_count ?? null,
+    fatality_count: record.fatality_count ?? null,
+    involved_parties: record.involved_parties || [],
     geocoded_from: record.geocoded_from,
     geocode_status: record.geocode_status,
     geocode_confidence: record.geocode_confidence,
@@ -114,6 +159,34 @@ function incidentRow(record) {
     published_at: record.published_at,
     last_seen_at: new Date().toISOString(),
     confidence_score: record.geocode_confidence || 0.5,
+    needs_manual_review: !autoReview.accepted,
+    verified_at: autoReview.accepted ? new Date().toISOString() : null,
+    verified_municipality: autoReview.accepted ? record.location?.municipality || null : null,
+    verified_barangay: autoReview.accepted ? record.location?.barangay || null : null,
+    verified_purok_sitio: autoReview.accepted ? record.location?.purokSitio || null : null,
+    verified_road_place: autoReview.accepted ? record.location?.road || null : null,
+  };
+}
+
+function autoReviewDecision(record = {}) {
+  const hasCoordinates = Number.isFinite(record.lat) && Number.isFinite(record.lon);
+  const required = {
+    title: Boolean(record.title),
+    source_url: Boolean(record.source_url),
+    published_at: Boolean(record.published_at),
+    vehicular: record.incident_type_key === "vehicular",
+    high_confidence: record.classification_confidence === "high",
+    municipality: Boolean(record.location?.municipality),
+    barangay: Boolean(record.location?.barangay),
+    coordinates: hasCoordinates && record.geocode_status === "success",
+  };
+  const missing = Object.entries(required).filter(([, passed]) => !passed).map(([key]) => key);
+  return {
+    accepted: missing.length === 0,
+    missing,
+    reason: missing.length
+      ? `Needs manual review: missing ${missing.join(", ")}.`
+      : "Auto-approved: high-confidence non-duplicate vehicular accident with barangay and coordinates.",
   };
 }
 
@@ -164,9 +237,11 @@ function mappingFields(record) {
     extracted_barangay: barangay,
     extracted_municipality: municipality,
     extracted_province: record.location?.province || "Isabela",
+    purok_sitio: record.location?.purokSitio || null,
     geocode_precision: precision,
     match_confidence: Number(record.geocode_confidence || 0),
     mapping_status: mappingStatus,
+    location_confidence: record.location_confidence || record.location?.confidence || {},
   };
 }
 
@@ -184,6 +259,8 @@ function legacyLocationFields(record, runId) {
 
 async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
   const category = record.incident_type_key === "vehicular" ? "vehicular" : "incidents";
+  const autoReview = autoReviewDecision(record);
+  const now = new Date().toISOString();
   const payload = {
     scraped_incident_id: incidentId,
     source_id: sourceId,
@@ -196,11 +273,105 @@ async function addLegacyRecord(client, incidentId, record, sourceId, runId) {
     snippet: record.snippet,
     incident_type: record.incident_type_key,
     category,
+    classification_confidence: record.classification_confidence || null,
+    classification_score: record.classification_score || 0,
+    classification_reason: record.classification_reason || null,
+    article_content_hash: record.article_content_hash || null,
+    status: autoReview.accepted ? "approved" : "pending_review",
+    public_visible: autoReview.accepted,
+    needs_manual_review: !autoReview.accepted,
+    verified_at: autoReview.accepted ? now : null,
+    verified_municipality: autoReview.accepted ? record.location?.municipality || null : null,
+    verified_barangay: autoReview.accepted ? record.location?.barangay || null : null,
+    verified_purok_sitio: autoReview.accepted ? record.location?.purokSitio || null : null,
+    verified_road_place: autoReview.accepted ? record.location?.road || null : null,
+    processed_at: autoReview.accepted ? now : null,
+    error_message: autoReview.accepted ? null : autoReview.reason,
     ...legacyLocationFields(record, runId),
-    scraped_at: new Date().toISOString(),
+    raw_payload: { ...record, auto_review: autoReview },
+    scraped_at: now,
   };
   const { error } = await client.from("scraper_records").upsert(payload, { onConflict: "source_url" });
   if (error) throw error;
+}
+
+async function saveArticleCandidates(client, candidates = [], sourceIds = new Map(), runId = null) {
+  if (!candidates.length) return { saved: 0, errors: [] };
+  const errors = [];
+  let saved = 0;
+  for (const candidate of candidates) {
+    try {
+      const payload = {
+        run_id: runId,
+        source_id: sourceIds.get(candidate.source_site) || null,
+        source_site: candidate.source_site,
+        source_url: candidate.source_url,
+        source_hash: hash(candidate.source_url),
+        article_content_hash: candidate.article_content_hash || null,
+        title: candidate.title || null,
+        snippet: candidate.snippet || null,
+        published_at: candidate.published_at || null,
+        detected_incident_type: candidate.detected_incident_type || null,
+        classification_confidence: candidate.classification_confidence || null,
+        classification_score: candidate.classification_score || 0,
+        classification_reason: candidate.classification_reason || null,
+        matched_terms: candidate.matched_terms || [],
+        rejection_reason: candidate.rejection_reason,
+        rejection_details: candidate.rejection_details || null,
+        raw_location_text: candidate.raw_location_text || null,
+        extracted_province: candidate.location?.province || null,
+        extracted_municipality: candidate.location?.municipality || null,
+        extracted_barangay: candidate.location?.barangay || null,
+        extracted_purok_sitio: candidate.location?.purokSitio || null,
+        extracted_road: candidate.location?.road || null,
+        location_confidence: candidate.location_confidence || candidate.location?.confidence || {},
+        raw_payload: candidate.raw_payload || candidate,
+      };
+      const { error } = await client.from("scraper_article_candidates")
+        .upsert(payload, { onConflict: "source_url,run_id" });
+      if (error) throw error;
+      saved += 1;
+    } catch (error) {
+      errors.push(`${candidate.source_url}: ${error.message}`);
+    }
+  }
+  return { saved, errors };
+}
+
+async function saveSourceHealth(client, rows = [], sourceIds = new Map()) {
+  const errors = [];
+  for (const row of rows) {
+    try {
+      const sourceId = sourceIds.get(row.source_key);
+      if (!sourceId) continue;
+      const now = new Date().toISOString();
+      const payload = {
+        source_id: sourceId,
+        source_key: row.source_key,
+        source_name: row.source_name,
+        status: row.status || "unknown",
+        last_scraped_at: now,
+        last_success_at: row.status === "healthy" || row.status === "warning" ? now : null,
+        last_failure_at: row.status === "failed" ? now : null,
+        pages_checked: row.pages_checked || 0,
+        links_found: row.links_found || 0,
+        articles_processed: row.articles_processed || 0,
+        incidents_detected: row.incidents_detected || 0,
+        rejected_count: row.rejected_count || 0,
+        duplicate_count: row.duplicate_count || 0,
+        failed_count: row.failed_count || 0,
+        cache_hits: row.cache_hits || 0,
+        retries: row.retries || 0,
+        last_error: row.last_error || null,
+        metadata: row,
+      };
+      const { error } = await client.from("scraper_source_health").upsert(payload, { onConflict: "source_id" });
+      if (error) throw error;
+    } catch (error) {
+      errors.push(`${row.source_key || "unknown"}: ${error.message}`);
+    }
+  }
+  return errors;
 }
 
 async function refreshExactSourceRecord(client, record, runId) {
@@ -224,7 +395,7 @@ async function refreshExactSourceRecord(client, record, runId) {
   return true;
 }
 
-export async function saveScrapedRecords(records = [], { mode = "update", scrapeStats = {} } = {}) {
+export async function saveScrapedRecords(records = [], { mode = "update", scrapeStats = {}, rejected = [], sourceHealth = [] } = {}) {
   if (!isSupabaseEnabled()) return { enabled: false, saved: false, newIncidents: 0, mergedIncidents: 0, duplicates: 0, message: "Supabase is not configured." };
   const client = getSupabaseAdminClient();
   let runId = null;
@@ -235,16 +406,53 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
   try {
     const sourceIds = await syncSources(client);
     const runResult = await client.from("scraper_runs").insert({
-      endpoint_type: "all", status: "running", fetched_count: records.length, metadata: { mode, ...scrapeStats },
+      endpoint_type: "all", status: "running", fetched_count: records.length + rejected.length, metadata: { mode, rejected_count: rejected.length, source_health: sourceHealth, ...scrapeStats },
     }).select("id").single();
     if (runResult.error) throw runResult.error;
     runId = runResult.data.id;
 
+    const candidateResult = await saveArticleCandidates(client, rejected, sourceIds, runId);
+    errors.push(...candidateResult.errors);
+    errors.push(...await saveSourceHealth(client, sourceHealth, sourceIds));
+    const exactUrls = await findExistingSourceUrls(records.map((record) => record.source_url).filter(Boolean));
+    const contentHashIncidents = await findExistingContentHashIncidents(client, records.map((record) => record.article_content_hash));
+
     for (const record of records) {
       try {
-        const exact = await findExistingSourceUrls([record.source_url]);
-        if (exact.has(record.source_url)) {
+        if (exactUrls.has(record.source_url)) {
           if (mode === "full") await refreshExactSourceRecord(client, record, runId);
+          await saveArticleCandidates(client, [{
+            ...record,
+            detected_incident_type: record.incident_type_key,
+            classification_confidence: record.classification_confidence,
+            classification_score: record.classification_score,
+            classification_reason: record.classification_reason,
+            matched_terms: record.matched_terms,
+            article_content_hash: record.article_content_hash,
+            rejection_reason: "duplicate",
+            rejection_details: "Exact source URL already exists.",
+            raw_location_text: record.location?.rawLocationText || record.location_text,
+            raw_payload: record,
+          }], sourceIds, runId);
+          duplicates += 1;
+          continue;
+        }
+        const hashIncident = record.article_content_hash ? contentHashIncidents.get(record.article_content_hash) : null;
+        if (hashIncident) {
+          await addIncidentSource(client, hashIncident.id, record);
+          await saveArticleCandidates(client, [{
+            ...record,
+            detected_incident_type: record.incident_type_key,
+            classification_confidence: record.classification_confidence,
+            classification_score: record.classification_score,
+            classification_reason: record.classification_reason,
+            matched_terms: record.matched_terms,
+            article_content_hash: record.article_content_hash,
+            rejection_reason: "duplicate",
+            rejection_details: "Matching article content hash already exists.",
+            raw_location_text: record.location?.rawLocationText || record.location_text,
+            raw_payload: record,
+          }], sourceIds, runId);
           duplicates += 1;
           continue;
         }
@@ -291,8 +499,15 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
       ignored_count: duplicates,
       failed_count: errors.length,
       error_message: errors.slice(0, 10).join("\n") || null,
+      metadata: {
+        mode,
+        ...scrapeStats,
+        rejected_count: rejected.length,
+        rejected_saved_count: candidateResult.saved,
+        source_health: sourceHealth,
+      },
     }).eq("id", runId);
-    return { enabled: true, saved: status === "completed", runId, newIncidents: inserted, mergedIncidents: merged, duplicates, errors };
+    return { enabled: true, saved: status === "completed", runId, newIncidents: inserted, mergedIncidents: merged, duplicates, rejected: rejected.length + candidateResult.saved, errors };
   } catch (error) {
     if (runId) await client.from("scraper_runs").update({ status: "failed", finished_at: new Date().toISOString(), error_message: error.message }).eq("id", runId);
     return { enabled: true, saved: false, newIncidents: inserted, mergedIncidents: merged, duplicates, errors: [...errors, error.message] };

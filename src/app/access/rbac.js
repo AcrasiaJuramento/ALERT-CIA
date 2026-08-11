@@ -2,6 +2,7 @@ import {
   AlertTriangle,
   BarChart2,
   BellRing,
+  Database,
   FileSpreadsheet,
   FilePlus2,
   FileText,
@@ -39,6 +40,7 @@ export const PERMISSIONS = {
   VIEW_SETTINGS: 'settings:view',
   VIEW_DISPATCH: 'dispatch:view',
   CREATE_DISPATCH: 'dispatch:create',
+  MANAGE_SCRAPER: 'scraper:manage',
 };
 
 export const ROLE_PERMISSIONS = {
@@ -74,6 +76,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.MANAGE_USERS,
     PERMISSIONS.VIEW_SETTINGS,
     PERMISSIONS.VIEW_DISPATCH,
+    PERMISSIONS.MANAGE_SCRAPER,
   ],
 };
 
@@ -88,6 +91,7 @@ export const NAVIGATION_ITEMS = [
   { label: 'Patient Care Records', icon: FileText, path: '/admin/pcr', permission: PERMISSIONS.VIEW_PCR_RECORDS, group: 'PCR' },
   { label: 'Analytics', icon: BarChart2, path: '/admin/analytics', permission: PERMISSIONS.VIEW_ANALYTICS, group: 'REPORTS' },
   { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS, group: 'REPORTS' },
+  { label: 'Scraper Review', icon: Database, path: '/admin/scraper-review', permission: PERMISSIONS.MANAGE_SCRAPER, group: 'REPORTS' },
   { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS },
   { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS },
 ];

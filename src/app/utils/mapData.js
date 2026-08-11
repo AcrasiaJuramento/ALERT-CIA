@@ -6,6 +6,14 @@ const ECHAGUE_BOUNDS = {
 };
 
 export const ECHAGUE_CENTER = [16.705, 121.676];
+export const ISABELA_CENTER = [17.125, 121.885];
+
+const ISABELA_BOUNDS = {
+  north: 18.75,
+  south: 16.25,
+  west: 121.05,
+  east: 122.55,
+};
 
 const ECHAGUE_FIT_BOUNDS = {
   north: ECHAGUE_BOUNDS.north + 0.12,
@@ -76,6 +84,15 @@ export function isWithinEchagueMapArea(record = {}) {
     lng <= ECHAGUE_FIT_BOUNDS.east;
 }
 
+export function isWithinIsabelaMapArea(record = {}) {
+  if (!hasValidLatLng(record)) return false;
+  const [lat, lng] = getIncidentLatLng(record);
+  return lat >= ISABELA_BOUNDS.south &&
+    lat <= ISABELA_BOUNDS.north &&
+    lng >= ISABELA_BOUNDS.west &&
+    lng <= ISABELA_BOUNDS.east;
+}
+
 export function getAdvisoryLatLng(advisory) {
   if (Number.isFinite(advisory?.lat) && Number.isFinite(advisory?.lng)) {
     return [advisory.lat, advisory.lng];
@@ -109,8 +126,9 @@ export function getHeatPoint(zone) {
   return [lat, lng, Number(zone.intensity ?? 0.5)];
 }
 
-export function getBoundsForIncidents(incidents = []) {
-  const points = incidents.filter(isWithinEchagueMapArea).map(getIncidentLatLng);
+export function getBoundsForIncidents(incidents = [], { scope = 'echague' } = {}) {
+  const withinScope = scope === 'isabela' ? isWithinIsabelaMapArea : isWithinEchagueMapArea;
+  const points = incidents.filter(withinScope).map(getIncidentLatLng);
   if (!points.length) return null;
 
   return points;

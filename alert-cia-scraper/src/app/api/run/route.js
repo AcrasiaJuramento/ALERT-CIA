@@ -27,7 +27,12 @@ function isCronAuthorized(request) {
 async function handleRun(request, { allowCron = false } = {}) {
   const corsHeaders = getCorsHeaders(request, "GET, POST, OPTIONS");
   if (allowCron && isCronAuthorized(request)) {
-    const result = await runScraper({ endpointType: getEndpointType(request), mode: getMode(request, { cron: true }) });
+    const result = await runScraper({
+      endpointType: getEndpointType(request),
+      mode: getMode(request, { cron: true }),
+      pageFrom: 1,
+      pageTo: 1,
+    });
     return Response.json(
       { ...result, triggeredBy: "cron" },
       {

@@ -75,6 +75,13 @@ export function getFetchMetrics() {
   return { ...metrics };
 }
 
+export function diffFetchMetrics(before = {}, after = metrics) {
+  return Object.fromEntries(Object.keys(metrics).map((key) => [
+    key,
+    Math.max(0, Number(after[key] || 0) - Number(before[key] || 0)),
+  ]));
+}
+
 export function resetFetchMetrics() {
   Object.keys(metrics).forEach((key) => { metrics[key] = 0; });
 }
