@@ -73,6 +73,7 @@ export default function DispatchPreviewModal({
   findLinkedPCR,
 }) {
   const paperRef = React.useRef(null);
+  const autoDownloadKeyRef = React.useRef("");
   const [exporting, setExporting] = React.useState(false);
 
   React.useEffect(() => {
@@ -87,14 +88,7 @@ export default function DispatchPreviewModal({
     };
   }, [selected, setSelected]);
 
-  if (!selected) return null;
-
-  const patient1 = getPatient(selected, 0);
-  const patient2 = getPatient(selected, 1);
-  const patient3 = getPatient(selected, 2);
-  const linkedPcr = selected.linkedPcr || selected.pcr || findLinkedPCR?.(selected);
-
-  const downloadPdf = async () => {
+  const downloadPdf = React.useCallback(async () => {
     if (!paperRef.current || exporting) return;
     setExporting(true);
     try {
@@ -135,7 +129,23 @@ export default function DispatchPreviewModal({
     } finally {
       setExporting(false);
     }
-  };
+  }, [exporting, selected]);
+
+  React.useEffect(() => {
+    if (!selected?.__autoDownload) return undefined;
+    const key = selected.dispatchId || selected.id || selected.responseNumber || "dispatch";
+    if (autoDownloadKeyRef.current === key) return undefined;
+    autoDownloadKeyRef.current = key;
+    const timer = window.setTimeout(() => downloadPdf(), 100);
+    return () => window.clearTimeout(timer);
+  }, [downloadPdf, selected]);
+
+  if (!selected) return null;
+
+  const patient1 = getPatient(selected, 0);
+  const patient2 = getPatient(selected, 1);
+  const patient3 = getPatient(selected, 2);
+  const linkedPcr = selected.linkedPcr || selected.pcr || findLinkedPCR?.(selected);
 
   const patientCount =
     selected.numberOfPatients ||

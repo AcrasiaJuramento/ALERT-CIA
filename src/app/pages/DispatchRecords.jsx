@@ -5,10 +5,10 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Download,
   Edit3,
   Eye,
   FilePlus2,
-  FileText,
   Filter,
   Radio,
   RefreshCw,
@@ -606,10 +606,10 @@ export default function DispatchRecords() {
                       <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusClass(displayStatus(record, pcr))}`}>{displayStatus(record, pcr)}</span>{record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}</td>
                       <td className="px-4 py-3 text-xs">{pcr ? <span className="font-semibold text-green-400">{pcr.responseNumber || pcr.id}</span> : <span className="text-muted-foreground">Not created</span>}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
-                      <td className="px-4 py-3"><div className="flex gap-1" onClick={event => event.stopPropagation()}>
-                        <button onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} title="View dispatch" className="rounded p-2 text-blue-400 hover:bg-blue-500/10"><Eye size={15} /></button>
-                        {canCreate && <button onClick={() => edit(record)} title="Edit dispatch" className="rounded p-2 text-amber-400 hover:bg-amber-500/10"><Edit3 size={15} /></button>}
-                        <button onClick={() => openPCR(record)} title="Open linked PCR" className="rounded p-2 text-green-400 hover:bg-green-500/10"><FileText size={15} /></button>
+                      <td className="px-4 py-3"><div className="flex min-w-max items-center gap-2" onClick={event => event.stopPropagation()}>
+                        <button onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} title="View dispatch" aria-label="View dispatch" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><Eye size={15} /><span className="hidden xl:inline">View</span></button>
+                        {canCreate && <button onClick={() => edit(record)} title="Edit dispatch" aria-label="Edit dispatch" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"><Edit3 size={15} /><span className="hidden xl:inline">Edit</span></button>}
+                        <button onClick={() => setSelected({ ...dispatchPreviewRecord(record, pcr), __autoDownload: true })} title="Download dispatch PDF" aria-label="Download dispatch PDF" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"><Download size={15} /><span className="hidden xl:inline">PDF</span></button>
                         {needsCloudUpload(record, pcr) && <button onClick={() => uploadRecordToCloud(record, pcr)} title="Sync this dispatch and linked PCR to cloud" aria-label="Sync this dispatch and linked PCR to cloud" className="grid h-8 w-8 place-items-center rounded text-cyan-400 hover:bg-cyan-500/10"><RefreshCw size={15} /></button>}
                       </div></td>
                     </tr>
