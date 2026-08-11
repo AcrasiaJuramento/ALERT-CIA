@@ -2,19 +2,9 @@ import React from "react";
 import { createPortal } from "react-dom";
 import { X, FileText, Edit3, Send, Download } from "lucide-react";
 import { formatLongDate } from "../utils/dateFormat";
-
-const svgDataUri = (svg) => `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-const sealAsset = (label, color) => svgDataUri(`
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
-  <circle cx="60" cy="60" r="54" fill="white" stroke="${color}" stroke-width="8"/>
-  <circle cx="60" cy="60" r="34" fill="${color}" opacity=".12"/>
-  <text x="60" y="56" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700" fill="${color}">ALERT</text>
-  <text x="60" y="75" text-anchor="middle" font-family="Arial" font-size="16" font-weight="700" fill="${color}">${label}</text>
-</svg>`);
-
-const bagongPilipinasAsset = sealAsset("PH", "#dc2626");
-const municipalSealAsset = sealAsset("LGU", "#2563eb");
-const rescueLogoAsset = sealAsset("RESCUE", "#16a34a");
+import bagongPilipinasAsset from "../../assets/bagong-pilipinas.png?inline";
+import municipalSealAsset from "../../assets/municipal-seal.png?inline";
+import rescueLogoAsset from "../../assets/rescue-logo.png?inline";
 
 const isPcrCompleted = record =>
   String(record?.status || "").includes("PCR Completed")
