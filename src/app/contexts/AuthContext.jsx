@@ -108,6 +108,14 @@ async function loginWithLocalServer(email, password) {
   };
 }
 
+async function tryLocalServerLogin(email, password) {
+  try {
+    return await loginWithLocalServer(email, password);
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(readStoredUser);
   const [authLoading, setAuthLoading] = useState(Boolean(isSupabaseConfigured));
@@ -168,7 +176,7 @@ export function AuthProvider({ children }) {
         data = result.data;
       } catch (error) {
         if (!isNetworkAuthError(error)) throw error;
-        const localUser = await loginWithLocalServer(email, password);
+        const localUser = await tryLocalServerLogin(email, password);
         const offlineUser = localUser || await loginWithOfflineVerifier(email, password);
         if (!offlineUser) throw error;
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(offlineUser));
@@ -196,7 +204,7 @@ export function AuthProvider({ children }) {
       return nextUser;
     }
 
-    const localUser = await loginWithLocalServer(email, password);
+    const localUser = await tryLocalServerLogin(email, password);
     if (localUser) {
       await saveOfflineLogin(localUser, password);
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(localUser));
