@@ -3,25 +3,38 @@ import { ArrowUpRight, Circle, Eraser, Hand, Maximize2, Minimize2, Pen, Redo2, R
 import { GCS_OPTIONS, INTERVENTIONS } from "../utils/pcrStorage";
 import { randomUuid } from "../utils/uuid";
 import { formatDateAndTime, formatLongDate } from "../utils/dateFormat";
+import { buildPCRHtml } from "../utils/officialPcrPdf";
+import pcrBodyMapAsset from "C:/Users/User/Documents/Codex/2026-07-09/use/work/Alert-cia-expo-go-Application/assets/pcr-body-map.png?inline";
+import painScaleAsset from "C:/Users/User/Documents/Codex/2026-07-09/use/work/Alert-cia-expo-go-Application/assets/pain-scale.png?inline";
+import medicalStarAsset from "C:/Users/User/Documents/Codex/2026-07-09/use/work/Alert-cia-expo-go-Application/assets/medical-star.png?inline";
+import bagongPilipinasAsset from "C:/Users/User/Documents/Codex/2026-07-09/use/work/Alert-cia-expo-go-Application/assets/bagong-pilipinas.png?inline";
+import municipalSealAsset from "C:/Users/User/Documents/Codex/2026-07-09/use/work/Alert-cia-expo-go-Application/assets/municipal-seal.png?inline";
+import rescueLogoAsset from "C:/Users/User/Documents/Codex/2026-07-09/use/work/Alert-cia-expo-go-Application/assets/rescue-logo.png?inline";
 
-const anatomyPath = "M150 28c-18 0-29 13-29 31 0 15 9 27 21 31l-5 25-30 18-19 71 13 4 22-59 2 62-13 97 15 3 23-83 23 83 15-3-13-97 2-62 22 59 13-4-19-71-30-18-5-25c12-4 21-16 21-31 0-18-11-31-29-31Z";
-const backPath = "M450 28c-18 0-29 13-29 31 0 15 9 27 21 31l-5 25-30 18-19 71 13 4 22-59 2 62-13 97 15 3 23-83 23 83 15-3-13-97 2-62 22 59 13-4-19-71-30-18-5-25c12-4 21-16 21-31 0-18-11-31-29-31Z";
+const OFFICIAL_PCR_ASSETS = {
+  body: pcrBodyMapAsset,
+  painScale: painScaleAsset,
+  medicalStar: medicalStarAsset,
+  bagongPilipinas: bagongPilipinasAsset,
+  municipalSeal: municipalSealAsset,
+  rescueLogo: rescueLogoAsset,
+};
 
 function Mark({ mark }) {
   const common = { stroke: mark.color, strokeWidth: mark.width || 3, fill: "none", strokeLinecap: "round", strokeLinejoin: "round" };
-  if (mark.type === "pen" || mark.type === "eraser") return <polyline points={mark.points.map(p => `${p.x},${p.y}`).join(" ")} {...common} stroke={mark.type === "eraser" ? "white" : mark.color} strokeWidth={mark.type === "eraser" ? 14 : mark.width || 3} />;
-  if (mark.type === "circle") return <ellipse cx={(mark.x1 + mark.x2) / 2} cy={(mark.y1 + mark.y2) / 2} rx={Math.abs(mark.x2 - mark.x1) / 2} ry={Math.abs(mark.y2 - mark.y1) / 2} {...common} />;
-  if (mark.type === "arrow") return <g {...common}><line x1={mark.x1} y1={mark.y1} x2={mark.x2} y2={mark.y2} /><path d={`M ${mark.x2} ${mark.y2} l -12 -7 m 12 7 l -7 12`} /></g>;
-  if (mark.type === "text") return <text x={mark.x} y={mark.y} fill={mark.color} fontSize="15" fontWeight="700">{mark.text}</text>;
+  const x = value => Number(value) <= 1 ? Number(value) * 670 : Number(value) * (670 / 600);
+  const y = value => Number(value) <= 1 ? Number(value) * 621 : Number(value) * (621 / 330);
+  if (mark.type === "pen" || mark.type === "eraser") return <polyline points={(mark.points || []).map(p => `${x(p.x)},${y(p.y)}`).join(" ")} {...common} stroke={mark.type === "eraser" ? "white" : mark.color} strokeWidth={mark.type === "eraser" ? 14 : mark.width || 3} />;
+  if (mark.type === "circle") return <ellipse cx={(x(mark.x1) + x(mark.x2)) / 2} cy={(y(mark.y1) + y(mark.y2)) / 2} rx={Math.abs(x(mark.x2) - x(mark.x1)) / 2} ry={Math.abs(y(mark.y2) - y(mark.y1)) / 2} {...common} />;
+  if (mark.type === "arrow") return <g {...common}><line x1={x(mark.x1)} y1={y(mark.y1)} x2={x(mark.x2)} y2={y(mark.y2)} /><path d={`M ${x(mark.x2)} ${y(mark.y2)} l -12 -7 m 12 7 l -7 12`} /></g>;
+  if (mark.type === "text") return <text x={x(mark.x)} y={y(mark.y)} fill={mark.color} fontSize="15" fontWeight="700">{mark.text}</text>;
   return null;
 }
 
 export function AnatomyFigure({ marks = [], className = "" }) {
-  return <svg viewBox="0 0 600 330" className={className} aria-label="Front and back human anatomy body map">
-    <rect width="600" height="330" fill="white" />
-    <text x="150" y="18" textAnchor="middle" fontSize="12" fill="#475569">FRONT</text><text x="450" y="18" textAnchor="middle" fontSize="12" fill="#475569">BACK</text>
-    <path d={anatomyPath} fill="#f8fafc" stroke="#334155" strokeWidth="2" /><path d={backPath} fill="#f8fafc" stroke="#334155" strokeWidth="2" />
-    <path d="M150 92v132M126 145h48M138 225l12-18 12 18M450 92v132M426 145h48M438 225l12-18 12 18" stroke="#94a3b8" fill="none" />
+  return <svg viewBox="0 0 670 621" className={className} aria-label="Official PCR front and back body map">
+    <rect width="670" height="621" fill="white" />
+    <image href={pcrBodyMapAsset} x="0" y="0" width="670" height="621" preserveAspectRatio="xMidYMid meet" />
     {marks.map((mark, index) => <Mark key={mark.id || index} mark={mark} />)}
   </svg>;
 }
@@ -30,7 +43,7 @@ export function AnatomyEditor({ value, onSave, onClose }) {
   const [marks, setMarks] = useState(value?.marks || []); const [redo, setRedo] = useState([]); const [tool, setTool] = useState("pen");
   const [color, setColor] = useState("#dc2626"); const [draft, setDraft] = useState(null); const [zoom, setZoom] = useState(1); const [pan, setPan] = useState({ x: 0, y: 0 });
   const [label, setLabel] = useState("Cut"); const [customLabel, setCustomLabel] = useState(""); const svgRef = useRef(null); const pointerRef = useRef(null);
-  const point = e => { const rect = svgRef.current.getBoundingClientRect(); return { x: (e.clientX - rect.left - pan.x) / zoom * (600 / (rect.width / zoom)), y: (e.clientY - rect.top - pan.y) / zoom * (330 / (rect.height / zoom)) }; };
+  const point = e => { const rect = svgRef.current.getBoundingClientRect(); return { x: Math.max(0, Math.min(1, (e.clientX - rect.left - pan.x) / (rect.width * zoom))), y: Math.max(0, Math.min(1, (e.clientY - rect.top - pan.y) / (rect.height * zoom))) }; };
   const down = e => { e.currentTarget.setPointerCapture(e.pointerId); pointerRef.current = { screen: { x: e.clientX, y: e.clientY }, pan }; if (tool === "pan") return; const p = point(e); if (tool === "text") { const text = label === "Others" ? customLabel : label; if (text) setMarks(m => [...m, { id: randomUuid(), type: "text", x: p.x, y: p.y, text, color }]); return; } setDraft(tool === "pen" || tool === "eraser" ? { id: randomUuid(), type: tool, points: [p], color } : { id: randomUuid(), type: tool, x1: p.x, y1: p.y, x2: p.x, y2: p.y, color }); };
   const move = e => { if (!pointerRef.current) return; if (tool === "pan") { setPan({ x: pointerRef.current.pan.x + e.clientX - pointerRef.current.screen.x, y: pointerRef.current.pan.y + e.clientY - pointerRef.current.screen.y }); return; } if (!draft) return; const p = point(e); setDraft(d => d.type === "pen" || d.type === "eraser" ? { ...d, points: [...d.points, p] } : { ...d, x2: p.x, y2: p.y }); };
   const up = () => { pointerRef.current = null; if (draft) { setMarks(m => [...m, draft]); setDraft(null); setRedo([]); } };
@@ -52,8 +65,8 @@ export function AnatomyEditor({ value, onSave, onClose }) {
         <button onClick={() => setZoom(z => Math.min(3, z + .25))} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"><ZoomIn size={16} />Zoom In</button><button onClick={() => setZoom(z => Math.max(.75, z - .25))} className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg text-xs font-semibold flex items-center gap-1"><ZoomOut size={16} />Zoom Out</button><span className="text-xs font-semibold text-slate-600">{Math.round(zoom * 100)}%</span>
       </div>
       <div className="flex-1 overflow-hidden bg-slate-200 min-h-[360px] touch-none cursor-crosshair">
-        <svg ref={svgRef} viewBox="0 0 600 330" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} className="w-full h-full select-none" style={{ transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})`, transformOrigin: "center" }}>
-          <rect width="600" height="330" fill="white" /><text x="150" y="18" textAnchor="middle" fontSize="12">FRONT</text><text x="450" y="18" textAnchor="middle" fontSize="12">BACK</text><path d={anatomyPath} fill="#f8fafc" stroke="#334155" strokeWidth="2" /><path d={backPath} fill="#f8fafc" stroke="#334155" strokeWidth="2" />{marks.map((m, i) => <Mark key={m.id || i} mark={m} />)}{draft && <Mark mark={draft} />}
+        <svg ref={svgRef} viewBox="0 0 670 621" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} className="w-full h-full select-none" style={{ transform: `translate(${pan.x}px,${pan.y}px) scale(${zoom})`, transformOrigin: "center" }}>
+          <rect width="670" height="621" fill="white" /><image href={pcrBodyMapAsset} x="0" y="0" width="670" height="621" preserveAspectRatio="xMidYMid meet" />{marks.map((m, i) => <Mark key={m.id || i} mark={m} />)}{draft && <Mark mark={draft} />}
         </svg>
       </div>
       <div className="p-3 border-t flex justify-end gap-2"><button onClick={onClose} className="px-4 py-2 border rounded-lg text-sm">Cancel</button><button onClick={save} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm flex items-center gap-2"><Save size={15} />Save Body Map</button></div>
@@ -147,10 +160,41 @@ function normalizePrintableRecord(record = {}) {
 export function PrintablePCR({ record: sourceRecord, printOnly = false }) {
   if (!sourceRecord) return null;
   const record = normalizePrintableRecord(sourceRecord);
+  const hasExtraObservations = record.vitals.length > 3 || record.gcsRows.length > 1 || record.medications.length > 4 || Boolean(record.notes);
+  const pageCount = hasExtraObservations ? 3 : 2;
+  const documentHeight = `${pageCount * 335.2}mm`;
+  return <div
+    className={`pcr-official-document ${printOnly ? "pcr-print-source" : "pcr-preview"}`}
+    data-pcr-export-id={record.id}
+    aria-hidden={printOnly || undefined}
+    style={printOnly
+      ? { position: "fixed", left: 0, top: 0, width: "215.9mm", height: documentHeight, background: "white", pointerEvents: "none", visibility: "hidden", zIndex: -9999 }
+      : { width: "215.9mm", height: documentHeight, background: "white" }}
+  >
+    <iframe
+      title={`Patient Care Report ${record.responseNumber || "preview"}`}
+      srcDoc={buildPCRHtml(record, pcrBodyMapAsset, OFFICIAL_PCR_ASSETS)}
+      className="h-full w-full border-0 bg-white"
+      scrolling="no"
+    />
+  </div>;
+}
+
+export function LegacyPrintablePCR({ record: sourceRecord, printOnly = false }) {
+  if (!sourceRecord) return null;
+  const record = normalizePrintableRecord(sourceRecord);
+  const originalVitals = record.vitals;
+  const primaryVitals = [
+    ...originalVitals.slice(0, 3),
+    ...Array.from({ length: Math.max(0, 3 - originalVitals.length) }, (_, index) => ({ id: `blank-vital-${index}` })),
+  ];
+  const additionalVitals = originalVitals.slice(3);
   const currentGcs = [...record.gcsRows].reverse().find(row => row?.eye || row?.verbal || row?.motor) || record.gcsRows[record.gcsRows.length - 1] || record.gcs;
   const gcsTotal = [currentGcs?.eye, currentGcs?.verbal, currentGcs?.motor].reduce((a,b)=>a+Number(b||0),0);
+  const additionalGcs = record.gcsRows.length > 1 ? record.gcsRows : [];
+  const hasObservationContinuation = additionalVitals.length > 0 || additionalGcs.length > 0;
   return <div className={`pcr-paper ${printOnly ? "pcr-print-source" : "pcr-preview"} text-black bg-white`} data-pcr-export-id={record.id}>
-    <style>{`@media screen{.pcr-print-source{position:absolute;left:-10000px;width:210mm}}@media print{body *{visibility:hidden!important}.pcr-preview{display:none!important}.pcr-print-source,.pcr-print-source *{visibility:visible!important}.pcr-print-source{position:absolute!important;left:0!important;top:0!important;width:100%!important}.pcr-page{page-break-after:always}.pcr-page:last-child{page-break-after:auto}}.pcr-paper{font-family:Arial,sans-serif;font-size:9px}.pcr-page{padding:7mm}.pcr-title{text-align:center;font-weight:700;font-size:16px;margin:4px}.pcr-grid{display:grid;border-left:1px solid #111;border-top:1px solid #111}.pcr-cell{min-height:25px;padding:4px;border-right:1px solid #111;border-bottom:1px solid #111}.pcr-cell b{font-size:8px;text-transform:uppercase}.pcr-section{text-align:center;font-weight:700;background:#eee;padding:3px;border:1px solid #111;border-bottom:0}.pcr-table{width:100%;border-collapse:collapse}.pcr-table td,.pcr-table th{border:1px solid #111;padding:3px}.pcr-sign{height:55px;object-fit:contain;max-width:100%}.pcr-anatomy{height:235px;width:100%}.pcr-triage{display:inline-block;width:24%;padding:4px 6px;margin-right:1%;border:1px solid #111;text-align:center;font-weight:700}.pcr-triage-red{background:#dc2626;color:#fff}.pcr-triage-yellow{background:#fde047;color:#111}.pcr-triage-green{background:#16a34a;color:#fff}.pcr-triage-black{background:#111827;color:#fff}.pcr-triage-selected{outline:2px solid #111;outline-offset:-3px}`}</style>
+    <style>{`@media screen{.pcr-print-source{position:absolute;left:-10000px;width:210mm}.pcr-preview .pcr-page{margin:0 auto 8px;box-shadow:0 2px 10px rgba(15,23,42,.16)}}@media print{body *{visibility:hidden!important}.pcr-preview{display:none!important}.pcr-print-source,.pcr-print-source *{visibility:visible!important}.pcr-print-source{position:absolute!important;left:0!important;top:0!important;width:100%!important}.pcr-page{page-break-after:always}.pcr-page:last-child{page-break-after:auto}}.pcr-paper{font-family:Arial,sans-serif;font-size:9px}.pcr-page{width:210mm;min-height:297mm;box-sizing:border-box;padding:7mm;background:#fff}.pcr-title{text-align:center;font-weight:700;font-size:16px;margin:4px}.pcr-grid{display:grid;border-left:1px solid #111;border-top:1px solid #111}.pcr-cell{min-height:25px;padding:4px;border-right:1px solid #111;border-bottom:1px solid #111}.pcr-cell b{font-size:8px;text-transform:uppercase}.pcr-section{text-align:center;font-weight:700;background:#eee;padding:3px;border:1px solid #111;border-bottom:0}.pcr-table{width:100%;border-collapse:collapse}.pcr-table td,.pcr-table th{border:1px solid #111;padding:3px}.pcr-observation-page .pcr-table td,.pcr-observation-page .pcr-table th{padding:6px 4px}.pcr-continuation-meta{margin-bottom:8px;padding:6px;border:1px solid #111;background:#f8fafc}.pcr-sign{height:55px;object-fit:contain;max-width:100%}.pcr-anatomy{height:235px;width:100%}.pcr-triage{display:inline-block;width:24%;padding:4px 6px;margin-right:1%;border:1px solid #111;text-align:center;font-weight:700}.pcr-triage-red{background:#dc2626;color:#fff}.pcr-triage-yellow{background:#fde047;color:#111}.pcr-triage-green{background:#16a34a;color:#fff}.pcr-triage-black{background:#111827;color:#fff}.pcr-triage-selected{outline:2px solid #111;outline-offset:-3px}`}</style>
     <section className="pcr-page">
       <div className="text-center text-[9px]">Republic of the Philippines<br/>Province of Isabela<br/><b>MUNICIPALITY OF ECHAGUE</b></div><div className="pcr-title">PATIENT CARE REPORT</div><div className="text-center mb-2">Echague Rescue Emergency Medical Service</div>
       <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr 1fr"}}><Cell label="Response No." value={record.responseNumber}/><Cell label="Responding Team" value={record.respondingTeam}/><Cell label="Vehicle" value={record.vehicle}/><Cell label="Driver" value={record.driver}/><Cell label="Main Aider" value={record.mainAider}/><Cell label="Group Leader" value={record.groupLeader}/><Cell label="Assistant Aider" value={record.assistantAider}/></div>
@@ -191,11 +235,17 @@ export function PrintablePCR({ record: sourceRecord, printOnly = false }) {
         </div>
         <Cell label="Chief Complaint / Initial Assessment" value={record.chiefComplaint}/>
         <div className="pcr-cell row-span-2"><AnatomyFigure marks={record.bodyMap?.marks} className="pcr-anatomy"/></div>
-        <div className="pcr-cell"><b>VITAL SIGNS</b><table className="pcr-table"><thead><tr><th>Time</th><th>BP</th><th>Pulse</th><th>Resp.</th><th>Temp.</th><th>SpO2</th></tr></thead><tbody>{record.vitals.map(v=><tr key={v.id}><td>{v.time}</td><td>{v.bp}</td><td>{v.pulse}</td><td>{v.respiratory}</td><td>{v.temperature}</td><td>{v.oxygen}</td></tr>)}</tbody></table></div>
+        <div className="pcr-cell"><b>VITAL SIGNS</b><table className="pcr-table"><thead><tr><th>Time</th><th>BP</th><th>Pulse</th><th>Resp.</th><th>Temp.</th><th>SpO2</th></tr></thead><tbody>{primaryVitals.map((v,index)=><tr key={v.id || index}><td>{v.time}</td><td>{v.bp}</td><td>{v.pulse}</td><td>{v.respiratory}</td><td>{v.temperature}</td><td>{v.oxygen}</td></tr>)}</tbody></table></div>
       </div>
-      <div className="pcr-section">GLASGOW COMA SCALE (GCS)</div><table className="pcr-table"><thead><tr><th>Time</th><th>Eye</th><th>Verbal</th><th>Motor</th><th>Total</th></tr></thead><tbody>{record.gcsRows.map((row,index)=>{ const rowTotal = Number(row.eye || 0) + Number(row.verbal || 0) + Number(row.motor || 0); return <tr key={row.id || index}><td>{row.time}</td><td>{row.eye}</td><td>{row.verbal}</td><td>{row.motor}</td><td>{rowTotal || ""}</td></tr>; })}<tr><td colSpan="5"><b>Latest Total Score:</b> <span className="text-xl">{gcsTotal || ""}</span> &nbsp; Best Response = 15; Comatose = 8 or less; Unresponsive = 3</td></tr></tbody></table>
+      <div className="pcr-section">GLASGOW COMA SCALE (GCS)</div><table className="pcr-table"><thead><tr><th>Time</th><th>Eye</th><th>Verbal</th><th>Motor</th><th>Total</th></tr></thead><tbody><tr><td>{currentGcs?.time}</td><td>{currentGcs?.eye}</td><td>{currentGcs?.verbal}</td><td>{currentGcs?.motor}</td><td>{gcsTotal || ""}</td></tr><tr><td colSpan="5"><b>Latest Total Score:</b> <span className="text-xl">{gcsTotal || ""}</span> &nbsp; Best Response = 15; Comatose = 8 or less; Unresponsive = 3</td></tr></tbody></table>
       <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Consent for Care" value={record.consentForCare}/><Cell label="Endorsed To / Received By / Hospital" value={joinPreviewValues([record.endorsedTo, record.receivedBy, record.endorsementHospital])}/><Cell label="Endorsement of Valuables" value={record.valuables}/><Cell label="Received By / Contact" value={joinPreviewValues([record.valuablesReceivedBy, record.valuablesContact])}/></div>
     </section>
+    {hasObservationContinuation && <section className="pcr-page pcr-observation-page">
+      <div className="pcr-title">PATIENT CARE REPORT - CONTINUATION</div>
+      <div className="pcr-continuation-meta"><b>Patient:</b> {record.patientName || ""} &nbsp; | &nbsp; <b>Response No.:</b> {record.responseNumber || ""}</div>
+      {additionalVitals.length > 0 && <><div className="pcr-section">ADDITIONAL VITAL SIGNS</div><table className="pcr-table"><thead><tr><th>Time</th><th>Blood Pressure</th><th>Pulse Rate</th><th>Respiratory Rate</th><th>Temperature</th><th>Oxygen Saturation</th></tr></thead><tbody>{additionalVitals.map((v,index)=><tr key={v.id || index}><td>{v.time}</td><td>{v.bp}</td><td>{v.pulse}</td><td>{v.respiratory}</td><td>{v.temperature}</td><td>{v.oxygen}</td></tr>)}</tbody></table></>}
+      {additionalGcs.length > 0 && <><div className="pcr-section mt-3">GCS ASSESSMENT HISTORY</div><table className="pcr-table"><thead><tr><th>Time</th><th>Eye</th><th>Verbal</th><th>Motor</th><th>Total</th></tr></thead><tbody>{additionalGcs.map((row,index)=>{ const total = Number(row.eye || 0) + Number(row.verbal || 0) + Number(row.motor || 0); return <tr key={row.id || index}><td>{row.time}</td><td>{row.eye}</td><td>{row.verbal}</td><td>{row.motor}</td><td>{total || ""}</td></tr>; })}</tbody></table></>}
+    </section>}
     <section className="pcr-page">
       <div className="pcr-title">PATIENT CARE REPORT - CONTINUATION</div><div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Suspected Spinal Injury" value={record.suspectedSpinal}/><Cell label="Airway" value={record.airway.join(", ")}/><Cell label="Breathing" value={joinPreviewValues([record.breathing.join(", "), record.oxygenLpm && `O2 ${record.oxygenLpm} LPM`, record.oxygenVia && `via ${record.oxygenVia}`], " ")}/><Cell label="Circulation" value={joinPreviewValues([previewLabelValue("Pulse", record.pulseFindings.join(", ")), previewLabelValue("Bleeding", joinPreviewValues([record.bleeding, record.bleedingLocation], " ")), previewLabelValue("Controlled", record.bleedingControlled)], "; ")}/><Cell label="Capillary Refill / Pupils" value={joinPreviewValues([record.capillary, record.pupils.join(", ")], "; ")}/><Cell label="Skin" value={record.skin.join(", ")}/><Cell label="Pain Assessment" value={joinPreviewValues([record.painPositive, previewLabelValue("Score", record.painScore), record.painOnset, record.painQuality.join(", "), record.painOther], "; ")}/><Cell label="Events Prior to Injury" value={record.eventsPrior}/></div>
       <div className="pcr-grid" style={{gridTemplateColumns:"1fr 1fr"}}><Cell label="Allergies" value={joinPreviewValues([record.allergies?.status, previewLabelValue("Food", record.allergies?.food), previewLabelValue("Drug", record.allergies?.drug), previewLabelValue("Other", record.allergies?.other)], "; ")}/><Cell label="Medications" value={record.medications.map(m=>joinPreviewValues([m.drug, m.dose, m.dateTime], " ")).filter(Boolean).join("; ")}/><Cell label="Medical History" value={joinPreviewValues([record.medicalHistory.join(", "), record.medicalHistoryOther], " ")}/><Cell label="Hospitalization History" value={joinPreviewValues([record.hospitalization?.status, formatLongDate(record.hospitalization?.date, ""), record.hospitalization?.where, record.hospitalization?.reason], "; ")}/><Cell label="Last Oral Intake" value={joinPreviewValues([record.oralIntake, record.oralIntakeDateTime], " ")}/><Cell label="Smoking / Alcohol" value={joinPreviewValues([previewLabelValue("Smoke", joinPreviewValues([record.smoking?.status, record.smoking?.sticks], " ")), previewLabelValue("Alcohol", joinPreviewValues([record.alcohol?.status, record.alcohol?.frequency], " "))], "; ")}/></div>

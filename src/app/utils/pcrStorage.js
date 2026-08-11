@@ -119,33 +119,60 @@ function latestGcsTotal(record = {}) {
 
 export async function exportPCRToPdf(record) {
   await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  await document.fonts?.ready;
   const source = [...document.querySelectorAll(".pcr-print-source")]
-    .find(element => element.dataset.pcrExportId === record.id);
+    .find(element => element.dataset.pcrExportId === String(record.id || ""));
   if (!source) throw new Error("PCR export layout is not available.");
 
   const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
     import("html2canvas"),
     import("jspdf"),
   ]);
-  const pages = [...source.querySelectorAll(".pcr-page")];
+  const frame = source.querySelector("iframe");
+  if (frame && frame.contentDocument?.readyState !== "complete") {
+    await new Promise((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("PCR preview did not finish loading.")), 10000);
+      frame.addEventListener("load", () => {
+        window.clearTimeout(timeout);
+        resolve();
+      }, { once: true });
+    });
+  }
+  const pageRoot = frame?.contentDocument || source;
+  await pageRoot.fonts?.ready;
+  const pages = [...pageRoot.querySelectorAll(".page, .pcr-page")];
   if (!pages.length) throw new Error("PCR export pages are not available.");
+  await Promise.all([...pageRoot.images].map(image => {
+    if (image.complete && image.naturalWidth > 0) return image.decode?.().catch(() => undefined);
+    return new Promise(resolve => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", resolve, { once: true });
+    });
+  }));
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4", compress: true });
+  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [215.9, 330.2], compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
 
   for (let index = 0; index < pages.length; index += 1) {
-    const canvas = await html2canvas(pages[index], {
-      backgroundColor: "#ffffff",
-      scale: 2,
-      useCORS: true,
-      logging: false,
-    });
+    let canvas;
+    source.style.visibility = "visible";
+    try {
+      canvas = await html2canvas(pages[index], {
+        backgroundColor: "#ffffff",
+        scale: 3,
+        useCORS: true,
+        logging: false,
+        imageTimeout: 0,
+      });
+    } finally {
+      source.style.visibility = "hidden";
+    }
     const ratio = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
     const width = canvas.width * ratio;
     const height = canvas.height * ratio;
     if (index > 0) pdf.addPage();
-    pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", (pageWidth - width) / 2, 0, width, height, undefined, "FAST");
+    pdf.addImage(canvas.toDataURL("image/png"), "PNG", (pageWidth - width) / 2, 0, width, height, undefined, "FAST");
   }
 
   pdf.save(`${record.responseNumber || "PCR-report"}.pdf`);
