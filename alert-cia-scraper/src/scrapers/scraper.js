@@ -6,7 +6,7 @@ import { extractArticle } from "../lib/extractArticle.js";
 import { diffFetchMetrics, fetchHTMLBatch, getFetchMetrics } from "../lib/fetchHTML.js";
 import { isAccidentRelevant } from "../lib/filters.js";
 import { geocode } from "../lib/geocode.js";
-import { extractLocation, isValidLocation } from "../lib/locations.js";
+import { extractLocation, ISABELA_PLACES, isValidLocation } from "../lib/locations.js";
 import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
 import { findExistingSourceUrls } from "../lib/scraperStore.js";
 import { normalizeUrl } from "../lib/urls.js";
@@ -44,8 +44,12 @@ function isOutsideDateRange(articleDate, days) {
 
 function locationTextForSource(source, combined) {
   const host = new URL(source.baseUrl).hostname;
-  if (host === "cauayan.bomboradyo.com") return `${combined}\nIsabela`;
+  if (host === "cauayan.bomboradyo.com" && hasIsabelaPlace(combined)) return `${combined}\nIsabela`;
   return combined;
+}
+
+function hasIsabelaPlace(text = "") {
+  return ISABELA_PLACES.some((place) => new RegExp(`\\b${place.replace(/ /g, "\\s+")}\\b`, "i").test(text));
 }
 
 async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
@@ -192,6 +196,10 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
     }
     if (!isValidLocation(location)) {
       reject("outside_isabela", `Extracted location was outside Isabela or unsupported: ${location.locationText || "unknown"}.`);
+      continue;
+    }
+    if (!location.municipality) {
+      reject("location_unknown", "No supported Isabela city or municipality could be extracted from the accident context.");
       continue;
     }
     const geo = await geocode(location);

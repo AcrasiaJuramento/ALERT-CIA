@@ -437,6 +437,22 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
 
     for (const record of records) {
       try {
+        if (!record.location?.municipality) {
+          await saveArticleCandidates(client, [{
+            ...record,
+            detected_incident_type: record.incident_type_key,
+            classification_confidence: record.classification_confidence,
+            classification_score: record.classification_score,
+            classification_reason: record.classification_reason,
+            matched_terms: record.matched_terms,
+            article_content_hash: record.article_content_hash,
+            rejection_reason: "location_unknown",
+            rejection_details: "No supported Isabela city or municipality could be saved for this article.",
+            raw_location_text: record.location?.rawLocationText || record.location_text,
+            raw_payload: record,
+          }], sourceIds, runId);
+          continue;
+        }
         if (exactUrls.has(record.source_url)) {
           if (mode === "full") await refreshExactSourceRecord(client, record, runId);
           await saveArticleCandidates(client, [{

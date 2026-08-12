@@ -4,7 +4,7 @@ import { extractArticle } from "./extractArticle.js";
 import { fetchHTML } from "./fetchHTML.js";
 import { isAccidentRelevant } from "./filters.js";
 import { geocode } from "./geocode.js";
-import { extractLocation, isValidLocation } from "./locations.js";
+import { extractLocation, ISABELA_PLACES, isValidLocation } from "./locations.js";
 import { normalizeUrl } from "./urls.js";
 
 function textArticle({ title, snippet, body, url }) {
@@ -33,13 +33,20 @@ function decide({ article, sourceUrl, classification, location }) {
   if (!isValidLocation(location)) {
     return { accepted: false, reason: "outside_isabela", details: `Extracted location was outside Isabela or unsupported: ${location.locationText || "unknown"}.` };
   }
+  if (!location.municipality) {
+    return { accepted: false, reason: "location_unknown", details: "No supported Isabela city or municipality could be extracted from the accident context." };
+  }
   return { accepted: true, reason: "accepted", details: sourceUrl ? "Article would be accepted as a scraped vehicular accident candidate." : "Pasted text would be accepted as a scraped vehicular accident candidate." };
+}
+
+function hasIsabelaPlace(text = "") {
+  return ISABELA_PLACES.some((place) => new RegExp(`\\b${place.replace(/ /g, "\\s+")}\\b`, "i").test(text));
 }
 
 function locationTextForSource(sourceUrl, combined) {
   try {
     const host = new URL(sourceUrl).hostname;
-    if (host === "cauayan.bomboradyo.com") return `${combined}\nIsabela`;
+    if (host === "cauayan.bomboradyo.com" && hasIsabelaPlace(combined)) return `${combined}\nIsabela`;
   } catch {
     // Pasted text without a URL has no trusted source hint.
   }
