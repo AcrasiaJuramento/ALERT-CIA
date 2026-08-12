@@ -14,7 +14,15 @@ export async function requireAuthorizedScraperUser(request) {
   const url = getSupabaseUrl();
   const publishableKey = getSupabasePublishableKey();
   if (!url || !publishableKey) {
-    return { authorized: false, status: 500, message: "Supabase auth is not configured for scraper triggers." };
+    const missing = [
+      !url ? "SUPABASE_URL" : null,
+      !publishableKey ? "SUPABASE_PUBLISHABLE_KEY" : null,
+    ].filter(Boolean);
+    return {
+      authorized: false,
+      status: 500,
+      message: `Supabase auth is not configured for scraper triggers. Missing: ${missing.join(", ")}.`,
+    };
   }
 
   const authClient = createClient(url, publishableKey, {
