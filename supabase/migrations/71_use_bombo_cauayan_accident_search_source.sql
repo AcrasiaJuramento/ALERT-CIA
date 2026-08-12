@@ -20,11 +20,14 @@ values (
     "max_pages_full": 100,
     "max_pages_update": 3,
     "allowed_domains": ["cauayan.bomboradyo.com"],
-    "search_terms": ["accidents", "aksidente"],
+    "search_terms": ["aksidente", "accidents", "banggaan", "disgrasya"],
     "search_urls": [
+      "https://cauayan.bomboradyo.com/?s=aksidente",
       "https://cauayan.bomboradyo.com/?s=accidents",
-      "https://cauayan.bomboradyo.com/?s=aksidente"
-    ]
+      "https://cauayan.bomboradyo.com/?s=banggaan",
+      "https://cauayan.bomboradyo.com/?s=disgrasya"
+    ],
+    "article_link_selector": ".td-ss-main-content .td_module_wrap h3.entry-title a[rel=''bookmark''], .td-ss-main-content h3.td-module-title a[rel=''bookmark'']"
   }'::jsonb
 )
 on conflict (source_key) do update

@@ -27,6 +27,7 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
     scrollUrl: options.scrollUrl || firstPageUrl,
     searchTerms: options.searchTerms || null,
     searchUrl: options.searchUrl || null,
+    articleLinkSelector: options.articleLinkSelector || null,
     discoveryLimits: {
       maxScrolls: options.maxScrolls || 8,
       maxArticles: options.maxArticles || 80,
@@ -47,8 +48,9 @@ export const SOURCES = [
   source("bombo", "Bombo Radyo Cauayan", "https://cauayan.bomboradyo.com", "https://cauayan.bomboradyo.com/?s=accidents", {
     paginationType: "wordpress_search",
     pageUrl: wpSearch("https://cauayan.bomboradyo.com", "accidents"),
-    searchTerms: ["accidents", "aksidente"],
+    searchTerms: ["aksidente", "accidents", "banggaan", "disgrasya"],
     searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com", term)(page),
+    articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
   }),
 ];
 

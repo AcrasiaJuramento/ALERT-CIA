@@ -8,7 +8,7 @@ import { isAccidentRelevant } from "../lib/filters.js";
 import { geocode } from "../lib/geocode.js";
 import { extractLocation, isValidLocation } from "../lib/locations.js";
 import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
-import { findExistingSourceUrls, getScraperSourceHealthSnapshot } from "../lib/scraperStore.js";
+import { findExistingSourceUrls } from "../lib/scraperStore.js";
 import { normalizeUrl } from "../lib/urls.js";
 
 const DEFAULT_ARTICLE_CONCURRENCY = 8;
@@ -35,16 +35,6 @@ function dateValue(value) {
   return Number.isFinite(time) ? time : null;
 }
 
-function incrementalCutoff(sourceSnapshot) {
-  return sourceSnapshot?.last_success_at || sourceSnapshot?.last_scraped_at || null;
-}
-
-function isOlderThanCutoff(articleDate, cutoff) {
-  const articleTime = dateValue(articleDate);
-  const cutoffTime = dateValue(cutoff);
-  return articleTime && cutoffTime && articleTime <= cutoffTime;
-}
-
 function isOutsideDateRange(articleDate, days) {
   if (!days) return false;
   const articleTime = dateValue(articleDate);
@@ -52,7 +42,13 @@ function isOutsideDateRange(articleDate, days) {
   return Date.now() - articleTime > days * 24 * 60 * 60 * 1000;
 }
 
-async function processSource(source, mode, stats, seenUrls, pageRange = {}, sourceSnapshot = null) {
+function locationTextForSource(source, combined) {
+  const host = new URL(source.baseUrl).hostname;
+  if (host === "cauayan.bomboradyo.com") return `${combined}\nIsabela`;
+  return combined;
+}
+
+async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
   const beforeFetch = getFetchMetrics();
   const sourceHealth = {
     source_key: source.key,
@@ -147,7 +143,8 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, sour
     const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || ""}`;
     const articleHash = contentHash(combined);
     const classification = classifyIncident(combined);
-    const location = extractLocation(article.title, article.snippet, article.body);
+    const locationContext = locationTextForSource(source, combined);
+    const location = extractLocation(article.title, article.snippet, article.body, locationContext);
     const reject = (reason, details) => rejected.push({
       title: article.title,
       snippet: article.snippet,
@@ -171,10 +168,6 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, sour
 
     if (!article.title) {
       reject("insufficient_information", "Article title could not be extracted.");
-      continue;
-    }
-    if (mode !== "full" && isOlderThanCutoff(article.published_at, incrementalCutoff(sourceSnapshot))) {
-      reject("outside_date_range", "Article is older than this source's last successful scraper run.");
       continue;
     }
     if (mode !== "full" && isOutsideDateRange(article.published_at, source.discoveryLimits?.articleDateRangeDays)) {
@@ -271,7 +264,6 @@ export async function scrapeSources({ mode = "update", sourceKey = null, pageFro
   const rejected = [];
   const sourceHealth = [];
   const seenUrls = new Set();
-  const sourceSnapshots = await getScraperSourceHealthSnapshot(targetSources.map((source) => source.key)).catch(() => new Map());
   startScraperProgress({ mode: safeMode, sourcesTotal: targetSources.length });
 
   for (const [sourceIndex, source] of targetSources.entries()) {
@@ -289,7 +281,7 @@ export async function scrapeSources({ mode = "update", sourceKey = null, pageFro
       articles_total: 0,
     });
     try {
-      const result = await processSource(source, safeMode, stats, seenUrls, { pageFrom, pageTo }, sourceSnapshots.get(source.key));
+      const result = await processSource(source, safeMode, stats, seenUrls, { pageFrom, pageTo });
       records.push(...result.records);
       rejected.push(...result.rejected);
       sourceHealth.push(result.health);

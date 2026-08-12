@@ -36,7 +36,7 @@ export function extractArticle(html, sourceUrl) {
     $('meta[property="og:description"]').attr("content") ||
     $('meta[name="description"]').attr("content") || ""
   ).trim();
-  const articleRoot = $("article, [itemprop='articleBody'], .article-content, .entry-content, .post-content").first();
+  const articleRoot = $("article, [itemprop='articleBody'], .td-post-content, .article-content, .entry-content, .post-content").first();
   const root = articleRoot.length ? articleRoot : $("main").first();
   const paragraphs = root.find("p").map((_, element) => $(element).text().replace(/\s+/g, " ").trim()).get()
     .filter((text) => text.length > 30 && !/cookie|subscribe|newsletter/i.test(text));

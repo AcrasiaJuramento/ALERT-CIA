@@ -4,8 +4,9 @@ import { isArticleUrl, normalizeUrl } from "./urls.js";
 export function extractLinks(html, base, source) {
   const $ = cheerio.load(html);
   const links = new Set();
+  const selector = source?.articleLinkSelector || "a[href]";
 
-  $("a[href]").each((_, el) => {
+  $(selector).each((_, el) => {
     let href = $(el).attr("href");
 
     if (!href) return;

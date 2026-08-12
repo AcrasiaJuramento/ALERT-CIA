@@ -119,6 +119,7 @@ async function syncSources(client) {
       scroll_url: source.scrollUrl,
       search_terms: source.searchTerms,
       search_urls: source.searchTerms?.map((term) => source.searchUrl?.(term, 1)).filter(Boolean) || null,
+      article_link_selector: source.articleLinkSelector,
       allowed_domains: source.allowedDomains,
     },
   }));

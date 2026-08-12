@@ -36,6 +36,16 @@ function decide({ article, sourceUrl, classification, location }) {
   return { accepted: true, reason: "accepted", details: sourceUrl ? "Article would be accepted as a scraped vehicular accident candidate." : "Pasted text would be accepted as a scraped vehicular accident candidate." };
 }
 
+function locationTextForSource(sourceUrl, combined) {
+  try {
+    const host = new URL(sourceUrl).hostname;
+    if (host === "cauayan.bomboradyo.com") return `${combined}\nIsabela`;
+  } catch {
+    // Pasted text without a URL has no trusted source hint.
+  }
+  return combined;
+}
+
 export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
   let article = null;
   let sourceUrl = normalizeUrl(url || "");
@@ -54,7 +64,8 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
   if (!article) article = textArticle({ title, snippet, body, url: sourceUrl });
   const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || body || ""}`;
   const classification = classifyIncident(combined);
-  const location = extractLocation(article.title, article.snippet, article.body || body);
+  const locationContext = locationTextForSource(sourceUrl, combined);
+  const location = extractLocation(article.title, article.snippet, article.body || body, locationContext);
   const decision = fetchError
     ? { accepted: false, reason: "fetch_failed", details: fetchError }
     : decide({ article, sourceUrl, classification, location });
