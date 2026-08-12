@@ -1,5 +1,5 @@
 const wpSearch = (base, query = "isabela") => (page) =>
-  page === 1 ? `${base}/?s=${query}` : `${base}/page/${page}/?s=${query}`;
+  page === 1 ? `${base}/?s=${encodeURIComponent(query)}` : `${base}/page/${page}/?s=${encodeURIComponent(query)}`;
 
 const queryPage = (url, parameter = "page") => (page) => {
   const target = new URL(url);
@@ -25,6 +25,8 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
     apiDatePath: options.apiDatePath || null,
     loadMoreUrl: options.loadMoreUrl || null,
     scrollUrl: options.scrollUrl || firstPageUrl,
+    searchTerms: options.searchTerms || null,
+    searchUrl: options.searchUrl || null,
     discoveryLimits: {
       maxScrolls: options.maxScrolls || 8,
       maxArticles: options.maxArticles || 80,
@@ -42,9 +44,11 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
 }
 
 export const SOURCES = [
-  source("bombo", "Bombo Radyo", "https://news.bomboradyo.com", "https://news.bomboradyo.com/?s=isabela", {
+  source("bombo", "Bombo Radyo Cauayan", "https://cauayan.bomboradyo.com", "https://cauayan.bomboradyo.com/?s=accidents", {
     paginationType: "wordpress_search",
-    pageUrl: wpSearch("https://news.bomboradyo.com"),
+    pageUrl: wpSearch("https://cauayan.bomboradyo.com", "accidents"),
+    searchTerms: ["accidents", "aksidente"],
+    searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com", term)(page),
   }),
 ];
 

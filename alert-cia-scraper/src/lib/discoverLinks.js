@@ -28,39 +28,49 @@ async function discoverPagination(source, mode, stats, sourceHealth, pageRange =
   const maxPages = Math.min(configuredMaxPages, pageRange.pageTo || configuredMaxPages);
   const startPage = Math.max(1, Math.min(Number(pageRange.pageFrom) || 1, maxPages));
   const links = new Set();
-  let nextUrl = source.firstPageUrl;
-  let detectedNextUrl = null;
   const visitedPages = new Set();
   const pages = [];
+  const searchTerms = Array.isArray(source.searchTerms) && source.searchTerms.length
+    ? source.searchTerms
+    : [null];
 
-  for (let page = startPage; page <= maxPages; page += 1) {
+  for (const searchTerm of searchTerms) {
+    let nextUrl = searchTerm && source.searchUrl ? source.searchUrl(searchTerm, 1) : source.firstPageUrl;
+    let detectedNextUrl = null;
+
+    for (let page = startPage; page <= maxPages; page += 1) {
+      if (limitReached(startedAt, limits, links)) break;
+      const configuredPageUrl = searchTerm && source.searchUrl
+        ? source.searchUrl(searchTerm, page)
+        : source.pageUrl(page);
+      const pageUrl = source.paginationType === "next_link" && page === 1
+        ? nextUrl
+        : detectedNextUrl || configuredPageUrl;
+      if (!pageUrl || visitedPages.has(pageUrl)) break;
+      visitedPages.add(pageUrl);
+      const html = await fetchHTML(pageUrl, { cacheTtlMs: mode === "full" ? 60 * 60 * 1000 : 15 * 60 * 1000 });
+      stats.pages_checked += 1;
+      sourceHealth.pages_checked += 1;
+      pages.push(pageUrl);
+      if (!html) {
+        stats.failed_urls.push(pageUrl);
+        sourceHealth.failed_count += 1;
+        sourceHealth.last_error = `Unable to download page ${pageUrl}`;
+        if (page === 1) break;
+        continue;
+      }
+
+      const newCount = addLinks(links, extractLinks(html, pageUrl, source), source);
+      sourceHealth.links_found += newCount;
+      if (!newCount) break;
+      detectedNextUrl = extractNextPage(html, pageUrl);
+      if (source.paginationType === "next_link") {
+        nextUrl = detectedNextUrl;
+        if (!nextUrl) break;
+      }
+      if (limits.delayMs) await sleep(limits.delayMs);
+    }
     if (limitReached(startedAt, limits, links)) break;
-    const pageUrl = source.paginationType === "next_link" && page === 1
-      ? nextUrl
-      : detectedNextUrl || source.pageUrl(page);
-    if (!pageUrl || visitedPages.has(pageUrl)) break;
-    visitedPages.add(pageUrl);
-    const html = await fetchHTML(pageUrl, { cacheTtlMs: mode === "full" ? 60 * 60 * 1000 : 15 * 60 * 1000 });
-    stats.pages_checked += 1;
-    sourceHealth.pages_checked += 1;
-    pages.push(pageUrl);
-    if (!html) {
-      stats.failed_urls.push(pageUrl);
-      sourceHealth.failed_count += 1;
-      sourceHealth.last_error = `Unable to download page ${pageUrl}`;
-      if (page === 1) break;
-      continue;
-    }
-
-    const newCount = addLinks(links, extractLinks(html, pageUrl, source), source);
-    sourceHealth.links_found += newCount;
-    if (!newCount) break;
-    detectedNextUrl = extractNextPage(html, pageUrl);
-    if (source.paginationType === "next_link") {
-      nextUrl = detectedNextUrl;
-      if (!nextUrl) break;
-    }
-    if (limits.delayMs) await sleep(limits.delayMs);
   }
   return { links: [...links], pages };
 }

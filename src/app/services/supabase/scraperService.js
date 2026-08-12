@@ -29,6 +29,8 @@ const ECHAGUE_BOUNDS = {
   east: 121.74,
 };
 
+const ACTIVE_SCRAPER_SOURCE_SITE = "bombo";
+const ACTIVE_SCRAPER_SOURCE_URL_PATTERN = "%cauayan.bomboradyo.com%";
 const SCRAPER_MAP_CACHE_TTL_MS = 30 * 60 * 1000;
 const FULL_SCRAPE_PAGE_CHUNK_SIZE = 5;
 
@@ -555,7 +557,8 @@ export async function listScraperRecords({ status, category, sourceId, municipal
     let query = client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
-      .eq("source_site", "bombo")
+      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
+      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
       .range(from, from + limit - 1);
@@ -578,7 +581,8 @@ export async function listRejectedScraperCandidates({ reason, sourceId, municipa
     let query = client
       .from("scraper_article_candidates")
       .select("*, source:scraper_sources(id, name, source_key)")
-      .eq("source_site", "bombo")
+      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
+      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
     if (reason) query = query.eq("rejection_reason", reason);
@@ -597,7 +601,8 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
     client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
-      .eq("source_site", "bombo")
+      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
+      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .in("status", ["approved", "promoted", "matched", "imported"])
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
@@ -615,7 +620,8 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
       client
         .from("scraper_records")
         .select("*, barangay:barangays(id, name, municipality, province, centroid)")
-        .eq("source_site", "bombo")
+        .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
+        .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
         .in("status", ["approved", "promoted", "matched", "imported"])
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
@@ -637,7 +643,8 @@ export async function listOfficerScrapedMapIncidents({ limit = 200, includeUnver
     client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
-      .eq("source_site", "bombo")
+      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
+      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .in("status", includeUnverified ? ["pending_review", "approved", "promoted", "new", "matched", "imported"] : ["approved", "promoted", "matched", "imported"])
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })

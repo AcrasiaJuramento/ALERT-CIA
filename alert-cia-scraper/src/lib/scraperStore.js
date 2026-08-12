@@ -117,6 +117,8 @@ async function syncSources(client) {
       api_items_path: source.apiItemsPath,
       api_url_path: source.apiUrlPath,
       scroll_url: source.scrollUrl,
+      search_terms: source.searchTerms,
+      search_urls: source.searchTerms?.map((term) => source.searchUrl?.(term, 1)).filter(Boolean) || null,
       allowed_domains: source.allowedDomains,
     },
   }));

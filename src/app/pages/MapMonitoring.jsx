@@ -228,8 +228,8 @@ export default function MapMonitoring() {
   const layerOptions = [
     { key: 'verifiedMdrrmo', label: 'Verified MDRRMO Incidents' },
     { key: 'pcrReports', label: 'PCR Reports' },
-    { key: 'verifiedScraped', label: 'Verified Bombo Radyo Accidents' },
-    { key: 'unverifiedScraped', label: 'Unverified Bombo Radyo Candidates' },
+    { key: 'verifiedScraped', label: 'Verified Bombo Cauayan Accidents' },
+    { key: 'unverifiedScraped', label: 'Unverified Bombo Cauayan Candidates' },
     { key: 'accidentProneAreas', label: 'Accident-Prone Areas' },
     { key: 'criticalZones', label: 'Critical Zones' },
     { key: 'advisories', label: 'Advisories' },
