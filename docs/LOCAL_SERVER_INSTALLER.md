@@ -27,6 +27,10 @@ This installer packages the office LAN sync server used by ALERT-CIA tablets and
    build-alert-cia-local-server-installer.cmd
    ```
 
+   This script runs `npm run build` first. The installer must include the generated
+   `dist` folder; otherwise `/health` will work but `/admin` will show
+   "Local ALERT-CIA endpoint not found."
+
 4. The installer output is created at:
 
    ```txt
