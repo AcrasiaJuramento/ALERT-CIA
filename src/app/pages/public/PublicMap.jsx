@@ -193,6 +193,39 @@ function normalizeOsrmRoute(route, provider = 'OSRM road route') {
   };
 }
 
+function remainingRoutePlan(routePlan, currentLocation, active = true) {
+  const positions = routePlan?.positions || [];
+  if (!active || !currentLocation || positions.length < 2) return routePlan;
+
+  const latitudeScale = Math.cos((Number(currentLocation[0]) * Math.PI) / 180);
+  const nearest = positions.slice(0, -1).reduce((best, point, index) => {
+    const next = positions[index + 1];
+    const ax = Number(point[1]) * latitudeScale;
+    const ay = Number(point[0]);
+    const bx = Number(next[1]) * latitudeScale;
+    const by = Number(next[0]);
+    const px = Number(currentLocation[1]) * latitudeScale;
+    const py = Number(currentLocation[0]);
+    const dx = bx - ax;
+    const dy = by - ay;
+    const lengthSquared = dx * dx + dy * dy;
+    const ratio = lengthSquared
+      ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared))
+      : 0;
+    const projected = [
+      Number(point[0]) + (Number(next[0]) - Number(point[0])) * ratio,
+      Number(point[1]) + (Number(next[1]) - Number(point[1])) * ratio,
+    ];
+    const distance = distanceKm(currentLocation, projected);
+    return distance < best.distance ? { index, projected, distance } : best;
+  }, { index: 0, projected: positions[0], distance: Infinity });
+
+  return {
+    ...routePlan,
+    positions: [currentLocation, nearest.projected, ...positions.slice(nearest.index + 1)],
+  };
+}
+
 async function fetchRouteOptions(start, destination, provider = 'OSRM road route') {
   const waypoints = (start.waypoints || destination.waypoints || []);
   const coords = [
@@ -354,6 +387,7 @@ export default function PublicMap() {
   const [continuedAlertIds, setContinuedAlertIds] = useState([]);
   const [safetyRouteWaypoint, setSafetyRouteWaypoint] = useState(null);
   const [safetyRouteSourceId, setSafetyRouteSourceId] = useState('');
+  const lastRouteOriginRef = useRef(null);
 
   const loadMap = async () => {
     setLoading(true);
@@ -407,9 +441,12 @@ export default function PublicMap() {
   }, []);
 
   useEffect(() => {
-    if (!currentLocation || start?.label !== 'Current GPS location') return;
+    if (!navigationActive || !currentLocation || start?.label !== 'Current GPS location') return;
+    const previous = lastRouteOriginRef.current || start.latLng;
+    if (distanceKm(previous, currentLocation) < 0.03) return;
+    lastRouteOriginRef.current = currentLocation;
     setStart(current => current ? { ...current, latLng: currentLocation } : current);
-  }, [currentLocation, start?.label]);
+  }, [currentLocation, navigationActive, start?.label, start?.latLng]);
 
   useEffect(() => {
     let cancelled = false;
@@ -418,7 +455,7 @@ export default function PublicMap() {
         setRoutePlan(null);
         return;
       }
-      if (safetyRouteSourceId && ['Safer road route', 'Best available alternate route'].includes(routePlan?.provider)) {
+      if (!navigationActive && safetyRouteSourceId && ['Safer road route', 'Best available alternate route'].includes(routePlan?.provider)) {
         return;
       }
       setRouteLoading(true);
@@ -445,7 +482,7 @@ export default function PublicMap() {
     return () => {
       cancelled = true;
     };
-  }, [destination, routePlan?.provider, safetyRouteSourceId, safetyRouteWaypoint, start]);
+  }, [destination, navigationActive, routePlan?.provider, safetyRouteSourceId, safetyRouteWaypoint, start]);
 
 
 
@@ -589,11 +626,12 @@ export default function PublicMap() {
       .slice(0, 6),
     [activeIncidents, currentLocation]
   );
-  const route = routePlan
+  const visibleRoutePlan = remainingRoutePlan(routePlan, currentLocation, navigationActive);
+  const route = visibleRoutePlan
     ? [{
         id: 'planned-route',
         label: `${start?.label || 'Point A'} to ${destination?.label || 'Point B'}`,
-        positions: routePlan.positions,
+        positions: visibleRoutePlan.positions,
         color: routeAlerts.some(alert => alert.severity === 'critical') ? '#dc2626' : '#2563eb',
         weight: 6,
       }]
