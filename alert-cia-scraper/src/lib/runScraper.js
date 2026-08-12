@@ -54,7 +54,26 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     duplicates: scraped.stats.duplicates_skipped + (database.duplicates || 0),
     failed: failedRequests,
   });
-  completeScraperProgress({ success: database.enabled ? database.saved : true, error: database.errors?.[0] || null });
+  const resultSummary = {
+    mode: safeMode,
+    endpoint_type: endpointType,
+    source_key: sourceKey,
+    page_from: pageFrom,
+    page_to: pageTo,
+    sources_checked: scraped.stats.sources_checked,
+    pages_checked: scraped.stats.pages_checked,
+    articles_checked: scraped.stats.articles_checked,
+    new_incidents: database.newIncidents || 0,
+    merged_incidents: database.mergedIncidents || 0,
+    duplicates_skipped: scraped.stats.duplicates_skipped + (database.duplicates || 0),
+    rejected_articles: rejected.length,
+    failed_requests: failedRequests,
+  };
+  completeScraperProgress({
+    success: database.enabled ? database.saved : true,
+    error: database.errors?.[0] || null,
+    summary: resultSummary,
+  });
   return {
     success: database.enabled ? database.saved : true,
     mode: safeMode,

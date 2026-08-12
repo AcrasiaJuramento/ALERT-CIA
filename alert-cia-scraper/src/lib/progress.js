@@ -17,6 +17,7 @@ function initialProgress() {
     started_at: null,
     updated_at: new Date().toISOString(),
     error: null,
+    last_run: null,
   };
 }
 
@@ -26,8 +27,10 @@ function state() {
 }
 
 export function startScraperProgress({ mode, sourcesTotal }) {
+  const previous = state();
   globalThis[progressKey] = {
     ...initialProgress(),
+    last_run: previous.last_run || null,
     running: true,
     mode,
     phase: "starting",
@@ -45,11 +48,19 @@ export function updateScraperProgress(changes = {}) {
   };
 }
 
-export function completeScraperProgress({ success = true, error = null } = {}) {
+export function completeScraperProgress({ success = true, error = null, summary = null } = {}) {
   updateScraperProgress({
     running: false,
     phase: success ? "completed" : "failed",
     error,
+    last_run: summary
+      ? {
+        ...summary,
+        success,
+        completed_at: new Date().toISOString(),
+        error,
+      }
+      : state().last_run || null,
   });
 }
 

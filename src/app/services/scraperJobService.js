@@ -4,7 +4,7 @@ import {
   triggerScraperRefresh,
 } from './supabase';
 
-const DEFAULT_SCRAPER_SOURCE_COUNT = 15;
+const DEFAULT_SCRAPER_SOURCE_COUNT = 1;
 
 const listeners = new Set();
 let controller = null;

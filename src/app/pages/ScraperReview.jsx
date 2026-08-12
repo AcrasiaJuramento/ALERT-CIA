@@ -42,6 +42,7 @@ const REJECTION_REASONS = [
   { value: "location_unknown", label: "Unknown Location" },
   { value: "low_confidence", label: "Low Confidence" },
   { value: "insufficient_information", label: "Insufficient Info" },
+  { value: "outside_date_range", label: "Outside Date Range" },
   { value: "fetch_failed", label: "Fetch Failed" },
   { value: "extract_failed", label: "Extract Failed" },
 ];
@@ -70,6 +71,13 @@ function statusLabel(status = "") {
 
 function fmt(value) {
   return value ? formatLongDateTime(value) : "-";
+}
+
+function locationLabel(item = {}) {
+  return [
+    item.verifiedBarangay || item.extractedBarangay,
+    item.verifiedMunicipality || item.extractedMunicipality,
+  ].filter(Boolean).join(", ");
 }
 
 function SourceLink({ href }) {
@@ -176,7 +184,7 @@ function RecordCard({ record, records, onRefresh }) {
         </div>
       </div>
       <div className="mt-3 grid gap-2 text-xs md:grid-cols-4">
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Extracted Location</span>{record.extractedBarangay || "-"}, {record.extractedMunicipality || "Isabela"}</div>
+        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">{record.verifiedBarangay || record.verifiedMunicipality ? "Verified Location" : "Extracted Location"}</span>{record.verifiedBarangay || record.extractedBarangay || "-"}, {record.verifiedMunicipality || record.extractedMunicipality || "Isabela"}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Raw Location</span>{record.rawLocationText || record.location || "-"}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Classification</span>{record.classificationReason || "Legacy record needs review."}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Scraped</span>{fmt(record.scrapedAt)}</div>
@@ -365,7 +373,16 @@ export default function ScraperReview() {
   const [runs, setRuns] = useState([]);
   const [sourceHealth, setSourceHealth] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ status: "pending_review", sourceId: "", municipality: "", confidence: "", reason: "" });
+  const [filters, setFilters] = useState({
+    status: "pending_review",
+    sourceId: "",
+    municipality: "",
+    location: "",
+    confidence: "",
+    reason: "",
+    dateFrom: "",
+    dateTo: "",
+  });
   const [query, setQuery] = useState("");
   const updateFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }));
 
@@ -373,17 +390,34 @@ export default function ScraperReview() {
     setLoading(true);
     try {
       const [recordRows, candidateRows, sourceRows, runRows, healthRows] = await Promise.all([
-        listScraperRecords({ status: filters.status, sourceId: filters.sourceId, municipality: filters.municipality, confidence: filters.confidence, limit: 100 }),
-        listRejectedScraperCandidates({ reason: filters.reason, sourceId: filters.sourceId, municipality: filters.municipality, confidence: filters.confidence, limit: 100 }),
+        listScraperRecords({
+          status: filters.status,
+          sourceId: filters.sourceId,
+          municipality: filters.municipality,
+          confidence: filters.confidence,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          limit: 500,
+        }),
+        listRejectedScraperCandidates({
+          reason: filters.reason,
+          sourceId: filters.sourceId,
+          municipality: filters.municipality,
+          confidence: filters.confidence,
+          dateFrom: filters.dateFrom,
+          dateTo: filters.dateTo,
+          limit: 500,
+        }),
         listScraperSources(),
         listScraperRuns({ limit: 10 }),
         listScraperSourceHealth().catch(() => []),
       ]);
+      const activeSourceKeys = new Set((sourceRows || []).map(source => source.source_key || source.key));
       setRecords(recordRows);
       setCandidates(candidateRows);
       setSources(sourceRows || []);
       setRuns(runRows || []);
-      setSourceHealth(healthRows || []);
+      setSourceHealth((healthRows || []).filter(row => activeSourceKeys.has(row.sourceKey)));
     } catch (error) {
       toast.error(error.message || "Unable to load scraper review queue.");
     } finally {
@@ -394,16 +428,24 @@ export default function ScraperReview() {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.status, filters.sourceId, filters.municipality, filters.confidence, filters.reason]);
+  }, [filters.status, filters.sourceId, filters.municipality, filters.confidence, filters.reason, filters.dateFrom, filters.dateTo]);
 
   const visibleRecords = useMemo(() => records.filter(record => {
     const needle = query.toLowerCase();
-    return !needle || [record.title, record.snippet, record.extractedMunicipality, record.extractedBarangay, record.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
-  }), [query, records]);
+    const matchesQuery = !needle || [record.title, record.snippet, record.extractedMunicipality, record.extractedBarangay, record.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
+    const matchesLocation = !filters.location || locationLabel(record) === filters.location;
+    return matchesQuery && matchesLocation;
+  }), [filters.location, query, records]);
   const visibleCandidates = useMemo(() => candidates.filter(candidate => {
     const needle = query.toLowerCase();
-    return !needle || [candidate.title, candidate.snippet, candidate.extractedMunicipality, candidate.rejectionReason, candidate.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
-  }), [candidates, query]);
+    const matchesQuery = !needle || [candidate.title, candidate.snippet, candidate.extractedMunicipality, candidate.extractedBarangay, candidate.rejectionReason, candidate.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
+    const matchesLocation = !filters.location || locationLabel(candidate) === filters.location;
+    return matchesQuery && matchesLocation;
+  }), [candidates, filters.location, query]);
+  const locationOptions = useMemo(() => {
+    const values = [...records, ...candidates].map(locationLabel).filter(Boolean);
+    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+  }, [candidates, records]);
   const latestRun = runs[0];
 
   return (
@@ -436,7 +478,7 @@ export default function ScraperReview() {
         <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           <Filter className="h-4 w-4" /> Filters
         </div>
-        <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto_auto_auto]">
+        <div className="grid gap-3 xl:grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search title, location, source..." className="h-9 w-full rounded-lg border border-border bg-input-background pl-9 pr-3 text-xs" />
@@ -444,7 +486,13 @@ export default function ScraperReview() {
           <Select value={filters.status} onChange={value => updateFilter("status", value)}>{REVIEW_STATUSES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>
           <Select value={filters.sourceId} onChange={value => updateFilter("sourceId", value)}><option value="">All sources</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</Select>
           <Select value={filters.confidence} onChange={value => updateFilter("confidence", value)}>{CONFIDENCE_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>
-          <input value={filters.municipality} onChange={event => updateFilter("municipality", event.target.value)} placeholder="Municipality" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
+          <Select value={filters.location} onChange={value => updateFilter("location", value)}>
+            <option value="">All locations</option>
+            {locationOptions.map(location => <option key={location} value={location}>{location}</option>)}
+          </Select>
+          <input value={filters.dateFrom} onChange={event => updateFilter("dateFrom", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="From date" />
+          <input value={filters.dateTo} onChange={event => updateFilter("dateTo", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="To date" />
+          <input value={filters.municipality} onChange={event => updateFilter("municipality", event.target.value)} placeholder="Municipality text" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
         </div>
       </div>
 

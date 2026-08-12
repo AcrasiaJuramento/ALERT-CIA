@@ -75,7 +75,7 @@ export default function MapMonitoring() {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [activeLayer, setActiveLayer] = useState(null);
   const [activeSource, setActiveSource] = useState('all');
-  const [mapScope, setMapScope] = useState('echague');
+  const [mapScope, setMapScope] = useState('isabela');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
@@ -228,8 +228,8 @@ export default function MapMonitoring() {
   const layerOptions = [
     { key: 'verifiedMdrrmo', label: 'Verified MDRRMO Incidents' },
     { key: 'pcrReports', label: 'PCR Reports' },
-    { key: 'verifiedScraped', label: 'Verified Web-Scraped Accidents' },
-    { key: 'unverifiedScraped', label: 'Unverified Scraper Candidates' },
+    { key: 'verifiedScraped', label: 'Verified Bombo Radyo Accidents' },
+    { key: 'unverifiedScraped', label: 'Unverified Bombo Radyo Candidates' },
     { key: 'accidentProneAreas', label: 'Accident-Prone Areas' },
     { key: 'criticalZones', label: 'Critical Zones' },
     { key: 'advisories', label: 'Advisories' },

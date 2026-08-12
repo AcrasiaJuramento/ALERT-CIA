@@ -313,15 +313,17 @@ function geographyPoint(value) {
 
 function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
   const type = incidentTypeToMapType(row);
-  const extractedBarangay = row.extracted_barangay || row.raw_payload?.location?.barangay || "";
-  const linkedBarangayMatches = extractedBarangay && row.barangay?.name &&
-    normalizedBarangayName(extractedBarangay) === normalizedBarangayName(row.barangay.name);
+  const mappedBarangay = row.verified_barangay || row.extracted_barangay || row.raw_payload?.location?.barangay || row.barangay?.name || "";
+  const mappedMunicipality = row.verified_municipality || row.extracted_municipality || row.raw_payload?.location?.municipality || row.barangay?.municipality || "";
+  const linkedBarangayMatches = mappedBarangay && row.barangay?.name &&
+    normalizedBarangayName(mappedBarangay) === normalizedBarangayName(row.barangay.name);
   const centroid = linkedBarangayMatches ? geographyPoint(row.barangay?.centroid) : null;
   const precision = row.geocode_precision || row.raw_payload?.geocode_precision || "unknown";
-  const geocodeIsSafe = !extractedBarangay || ["barangay", "road", "barangay_master"].includes(precision);
+  const geocodeIsSafe = !mappedBarangay || ["barangay", "road", "barangay_master"].includes(precision);
   const lat = boundaryPoint?.lat ?? centroid?.lat ?? (geocodeIsSafe ? Number(row.latitude) : Number.NaN);
   const lng = boundaryPoint?.lng ?? centroid?.lng ?? (geocodeIsSafe ? Number(row.longitude) : Number.NaN);
   const date = row.scraped_at ? new Date(row.scraped_at) : new Date();
+  const verifiedLocationText = [mappedBarangay, mappedMunicipality, "Isabela, Philippines"].filter(Boolean).join(", ");
 
   return {
     id: `SCR-${String(row.id).slice(0, 8)}`,
@@ -335,7 +337,9 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     externalSourceUrl: row.source_url,
     type,
     severity: severityToMapSeverity(row.severity, type),
-    location: row.location_text || row.display_name || row.barangay?.name || "Location from external source",
+    barangay: mappedBarangay,
+    municipality: mappedMunicipality,
+    location: verifiedLocationText || row.location_text || row.display_name || row.barangay?.name || "Location from external source",
     lat,
     lng,
     latitude: lat,
@@ -362,8 +366,8 @@ async function scraperRowsToMapIncidents(rows = []) {
   return Promise.all(rows.map(async (row) => {
     const location = row.raw_payload?.location || {};
     const boundaryPoint = await resolveIsabelaBarangayGeometry({
-      barangay: row.extracted_barangay || location.barangay || row.barangay?.name,
-      municipality: row.extracted_municipality || location.municipality || row.barangay?.municipality,
+      barangay: row.verified_barangay || row.extracted_barangay || location.barangay || row.barangay?.name,
+      municipality: row.verified_municipality || row.extracted_municipality || location.municipality || row.barangay?.municipality,
     });
     return scraperRecordToMapIncident(row, boundaryPoint);
   }));
@@ -371,7 +375,7 @@ async function scraperRowsToMapIncidents(rows = []) {
 
 export async function listScraperSources() {
   return runSupabaseRequest(client =>
-    client.from("scraper_sources").select("*").order("name", { ascending: true }),
+    client.from("scraper_sources").select("*").eq("active", true).order("name", { ascending: true }),
   "Unable to load scraper sources.");
 }
 
@@ -546,11 +550,12 @@ export async function listScraperSourceHealth() {
   return asRows(rows).map(scraperSourceHealthToApp);
 }
 
-export async function listScraperRecords({ status, category, sourceId, municipality, barangay, confidence, limit = 100, from = 0 } = {}) {
+export async function listScraperRecords({ status, category, sourceId, municipality, barangay, confidence, dateFrom, dateTo, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
+      .eq("source_site", "bombo")
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
       .range(from, from + limit - 1);
@@ -560,23 +565,28 @@ export async function listScraperRecords({ status, category, sourceId, municipal
     if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
     if (barangay) query = query.ilike("extracted_barangay", `%${barangay}%`);
     if (confidence) query = query.eq("classification_confidence", confidence);
+    if (dateFrom) query = query.gte("scraped_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("scraped_at", `${dateTo}T23:59:59.999`);
     return query;
   }, "Unable to load scraper records.");
 
   return asRows(rows).map(scraperRecordToApp);
 }
 
-export async function listRejectedScraperCandidates({ reason, sourceId, municipality, confidence, limit = 100, from = 0 } = {}) {
+export async function listRejectedScraperCandidates({ reason, sourceId, municipality, confidence, dateFrom, dateTo, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("scraper_article_candidates")
       .select("*, source:scraper_sources(id, name, source_key)")
+      .eq("source_site", "bombo")
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
     if (reason) query = query.eq("rejection_reason", reason);
     if (sourceId) query = query.eq("source_id", sourceId);
     if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
     if (confidence) query = query.eq("classification_confidence", confidence);
+    if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+    if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
     return query;
   }, "Unable to load rejected scraper candidates.");
   return asRows(rows).map(scraperCandidateToApp);
@@ -587,6 +597,7 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
     client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
+      .eq("source_site", "bombo")
       .in("status", ["approved", "promoted", "matched", "imported"])
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
@@ -604,6 +615,7 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
       client
         .from("scraper_records")
         .select("*, barangay:barangays(id, name, municipality, province, centroid)")
+        .eq("source_site", "bombo")
         .in("status", ["approved", "promoted", "matched", "imported"])
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
@@ -620,25 +632,18 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
 
 export async function listOfficerScrapedMapIncidents({ limit = 200, includeUnverified = true } = {}) {
   if (!isSupabaseConfigured) return [];
-  const cacheKey = `alert-cia:officer-scraped-map:${limit}`;
 
-  try {
-    const rows = await runSupabaseRequest(client =>
-      client
-        .from("scraper_records")
-        .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
-        .in("status", includeUnverified ? ["pending_review", "approved", "promoted", "new", "matched", "imported"] : ["approved", "promoted", "matched", "imported"])
-        .is("deleted_at", null)
-        .order("scraped_at", { ascending: false })
-        .limit(limit),
-    "Unable to load officer scraper map incidents.");
-    const mapped = await scraperRowsToMapIncidents(asRows(rows).filter(isAccidentMapRow));
-    return writeBrowserCache(cacheKey, mapped);
-  } catch (error) {
-    const cached = readBrowserCache(cacheKey);
-    if (cached) return cached;
-    throw error;
-  }
+  const rows = await runSupabaseRequest(client =>
+    client
+      .from("scraper_records")
+      .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
+      .eq("source_site", "bombo")
+      .in("status", includeUnverified ? ["pending_review", "approved", "promoted", "new", "matched", "imported"] : ["approved", "promoted", "matched", "imported"])
+      .is("deleted_at", null)
+      .order("scraped_at", { ascending: false })
+      .limit(limit),
+  "Unable to load officer scraper map incidents.");
+  return scraperRowsToMapIncidents(asRows(rows).filter(isAccidentMapRow));
 }
 
 export async function updateScraperRecordStatus(recordId, status, errorMessage = null) {
