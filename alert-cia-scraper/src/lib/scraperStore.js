@@ -420,6 +420,7 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
   let inserted = 0;
   let merged = 0;
   let duplicates = 0;
+  let invalidRecords = 0;
   const errors = [];
   try {
     const sourceIds = await syncSources(client);
@@ -451,6 +452,7 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
             raw_location_text: record.location?.rawLocationText || record.location_text,
             raw_payload: record,
           }], sourceIds, runId);
+          invalidRecords += 1;
           continue;
         }
         if (exactUrls.has(record.source_url)) {
@@ -534,11 +536,13 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
       matched_count: merged,
       ignored_count: duplicates,
       failed_count: errors.length,
-      error_message: errors.slice(0, 10).join("\n") || null,
+      error_message: status === "failed" ? errors.slice(0, 10).join("\n") : null,
       metadata: {
         mode,
         ...scrapeStats,
         rejected_count: rejected.length,
+        invalid_record_count: invalidRecords,
+        partial_errors: errors.slice(0, 10),
         rejected_saved_count: candidateResult.saved,
         source_health: sourceHealth,
       },

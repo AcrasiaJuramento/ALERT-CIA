@@ -269,8 +269,10 @@ function RunDiagnostics({ runs }) {
   const latest = runs[0];
   const metadata = latest?.metadata || {};
   const health = Array.isArray(metadata.source_health) ? metadata.source_health : [];
+  const partialErrors = Array.isArray(metadata.partial_errors) ? metadata.partial_errors : [];
   const failedSources = health.filter(item => item.status === "failed").length;
   const warningSources = health.filter(item => item.status === "warning").length;
+  const showRunError = latest?.status === "failed" && latest?.error_message;
   return (
     <section className="mb-5 rounded-lg border border-border bg-card p-4">
       <div className="mb-3">
@@ -284,7 +286,12 @@ function RunDiagnostics({ runs }) {
         <Metric label="Rejected" value={metadata.rejected_count ?? "-"} />
         <Metric label="Failed Sources" value={failedSources || warningSources ? `${failedSources}/${warningSources}` : "0"} />
       </div>
-      {latest?.error_message && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{latest.error_message}</div>}
+      {showRunError && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{latest.error_message}</div>}
+      {!showRunError && partialErrors.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+          {partialErrors.length} article save issue{partialErrors.length === 1 ? "" : "s"} were skipped after the run completed.
+        </div>
+      )}
     </section>
   );
 }
