@@ -5,6 +5,10 @@ const localDevelopmentOrigins = [
   "http://127.0.0.1:5176",
 ];
 
+const productionOrigins = [
+  "https://alert-cia.vercel.app",
+];
+
 function isLocalDevelopmentOrigin(origin = "") {
   try {
     const url = new URL(origin);
@@ -21,7 +25,19 @@ function configuredOrigins() {
     .filter(Boolean);
 
   values.push(...localDevelopmentOrigins);
+  values.push(...productionOrigins);
   return new Set(values);
+}
+
+function isAllowedVercelPreviewOrigin(origin = "") {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    return protocol === "https:" &&
+      hostname.endsWith(".vercel.app") &&
+      (hostname === "alert-cia.vercel.app" || hostname.startsWith("alert-cia-"));
+  } catch {
+    return false;
+  }
 }
 
 export function getCorsHeaders(request, methods = "GET, OPTIONS") {
@@ -30,7 +46,8 @@ export function getCorsHeaders(request, methods = "GET, OPTIONS") {
   const originAllowed = origin && (
     origin === requestOrigin ||
     configuredOrigins().has(origin) ||
-    isLocalDevelopmentOrigin(origin)
+    isLocalDevelopmentOrigin(origin) ||
+    isAllowedVercelPreviewOrigin(origin)
   );
   const headers = {
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
