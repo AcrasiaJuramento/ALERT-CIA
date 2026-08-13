@@ -1,17 +1,109 @@
-const AIRWAY_OPTIONS=["Open Airway","Closed Airway","NT/OPA","Jaw Thrust","Suction","Finger Sweep","Abdominal Thrust"];
-const BREATHING_OPTIONS=["Positive","Negative","O2 Not Required","O2 Given","Nasal Cannula","Simple Mask","Non-Rebreather Mask","Others"];
-const PULSE_OPTIONS=["Positive","Negative","Strong","Weak"];
-const PUPIL_OPTIONS=["Equal","Dilated","Constricted","No Reaction"];
-const SKIN_OPTIONS=["Warm","Cold","Dry","Moist","Pale","Flushed","Jaundiced"];
-const PAIN_QUALITY_OPTIONS=["Crushing","Stabbing","Aching","Gnawing","Burning","Tearing","Cramping"];
-const MEDICAL_HISTORY_OPTIONS=["None","Heart Disease","Hypertension","Seizure","COPD","Diabetes Mellitus","Asthma","Stroke"];
-const INTERVENTIONS=["Vital signs monitored and recorded","Wound care given","Wound dressing applied","Application of C-Collar","Oxygen inhalation","CPR / compression / rescue breathing / AED","Suctioning","Sponge bath","Cold pack / hot pack","Application of wood splint/s","Application of arm sling","Application of traction splint","Application of KED","Elastic / triangular bandage","Loaded on a spine board","Placed in recovery position","Endorsement to relative / PNP","Conveyance and endorsement to HOC","Others"];
-const BODY_MAP_WIDTH=670,BODY_MAP_HEIGHT=621,LEGACY_BODY_MAP_WIDTH=600,LEGACY_BODY_MAP_HEIGHT=330;
-const clampBodyValue=value=>Math.max(0,Math.min(1,value));
-function normalizeBowValue(value){const original=String(value??"").trim();if(!original)return"";const normalized=original.toLowerCase();if(["positive","+","yes","pos"].includes(normalized))return"Positive";if(["negative","-","no","neg"].includes(normalized))return"Negative";return original;}
-function normalizedBodyCoordinate(value,axis="x"){const number=Number(value);if(!Number.isFinite(number))return 0;if(number>=0&&number<=1)return number;return clampBodyValue(number/(axis==="y"?LEGACY_BODY_MAP_HEIGHT:LEGACY_BODY_MAP_WIDTH));}
-function canonicalBodyCoordinate(value,axis="x"){return normalizedBodyCoordinate(value,axis)*(axis==="y"?BODY_MAP_HEIGHT:BODY_MAP_WIDTH);}
-function normalizedBodySize(mark={}){const normalized=Number(mark.sizeNormalized);if(Number.isFinite(normalized)&&normalized>0)return Math.min(1,normalized);const legacySize=Number(mark.size);return Number.isFinite(legacySize)&&legacySize>0?Math.min(1,legacySize/LEGACY_BODY_MAP_WIDTH):0.09;}
+const AIRWAY_OPTIONS = [
+  "Open Airway",
+  "Closed Airway",
+  "NT/OPA",
+  "Jaw Thrust",
+  "Suction",
+  "Finger Sweep",
+  "Abdominal Thrust",
+];
+const BREATHING_OPTIONS = [
+  "Positive",
+  "Negative",
+  "O2 Not Required",
+  "O2 Given",
+  "Nasal Cannula",
+  "Simple Mask",
+  "Non-Rebreather Mask",
+  "Others",
+];
+const PULSE_OPTIONS = ["Positive", "Negative", "Strong", "Weak"];
+const PUPIL_OPTIONS = ["Equal", "Dilated", "Constricted", "No Reaction"];
+const SKIN_OPTIONS = [
+  "Warm",
+  "Cold",
+  "Dry",
+  "Moist",
+  "Pale",
+  "Flushed",
+  "Jaundiced",
+];
+const PAIN_QUALITY_OPTIONS = [
+  "Crushing",
+  "Stabbing",
+  "Aching",
+  "Gnawing",
+  "Burning",
+  "Tearing",
+  "Cramping",
+];
+const MEDICAL_HISTORY_OPTIONS = [
+  "None",
+  "Heart Disease",
+  "Hypertension",
+  "Seizure",
+  "COPD",
+  "Diabetes Mellitus",
+  "Asthma",
+  "Stroke",
+];
+const INTERVENTIONS = [
+  "Vital signs monitored and recorded",
+  "Wound care given",
+  "Wound dressing applied",
+  "Application of C-Collar",
+  "Oxygen inhalation",
+  "CPR / compression / rescue breathing / AED",
+  "Suctioning",
+  "Sponge bath",
+  "Cold pack / hot pack",
+  "Application of wood splint/s",
+  "Application of arm sling",
+  "Application of traction splint",
+  "Application of KED",
+  "Elastic / triangular bandage",
+  "Loaded on a spine board",
+  "Placed in recovery position",
+  "Endorsement to relative / PNP",
+  "Conveyance and endorsement to HOC",
+  "Others",
+];
+const BODY_MAP_WIDTH = 670,
+  BODY_MAP_HEIGHT = 621,
+  LEGACY_BODY_MAP_WIDTH = 600,
+  LEGACY_BODY_MAP_HEIGHT = 330;
+const clampBodyValue = (value) => Math.max(0, Math.min(1, value));
+function normalizeBowValue(value) {
+  const original = String(value ?? "").trim();
+  if (!original) return "";
+  const normalized = original.toLowerCase();
+  if (["positive", "+", "yes", "pos"].includes(normalized)) return "Positive";
+  if (["negative", "-", "no", "neg"].includes(normalized)) return "Negative";
+  return original;
+}
+function normalizedBodyCoordinate(value, axis = "x") {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  if (number >= 0 && number <= 1) return number;
+  return clampBodyValue(
+    number / (axis === "y" ? LEGACY_BODY_MAP_HEIGHT : LEGACY_BODY_MAP_WIDTH),
+  );
+}
+function canonicalBodyCoordinate(value, axis = "x") {
+  return (
+    normalizedBodyCoordinate(value, axis) *
+    (axis === "y" ? BODY_MAP_HEIGHT : BODY_MAP_WIDTH)
+  );
+}
+function normalizedBodySize(mark = {}) {
+  const normalized = Number(mark.sizeNormalized);
+  if (Number.isFinite(normalized) && normalized > 0)
+    return Math.min(1, normalized);
+  const legacySize = Number(mark.size);
+  return Number.isFinite(legacySize) && legacySize > 0
+    ? Math.min(1, legacySize / LEGACY_BODY_MAP_WIDTH)
+    : 0.09;
+}
 
 const DEFAULT_ASSETS = {
   body: "",
@@ -45,12 +137,15 @@ const asArray = (value) => (Array.isArray(value) ? value : []);
 const asObject = (value) =>
   value && typeof value === "object" && !Array.isArray(value) ? value : {};
 
-const comparableChoice = value => String(value ?? '').trim().toLowerCase();
+const comparableChoice = (value) =>
+  String(value ?? "")
+    .trim()
+    .toLowerCase();
 
 const isOn = (selected, option) => {
   const expected = comparableChoice(option);
   return Array.isArray(selected)
-    ? selected.some(value => comparableChoice(value) === expected)
+    ? selected.some((value) => comparableChoice(value) === expected)
     : comparableChoice(selected) === expected;
 };
 
@@ -71,10 +166,7 @@ function safeImageDataUri(value) {
 
 function optionLine(options, selected) {
   return options
-    .map(
-      (option) =>
-        `<span class="opt">${mark(selected, option)}</span>`,
-    )
+    .map((option) => `<span class="opt">${mark(selected, option)}</span>`)
     .join("");
 }
 
@@ -99,10 +191,7 @@ function bodyOverlay(marks = []) {
     .map((markItem, index) => {
       const color = cleanColor(markItem?.color);
 
-      if (
-        Array.isArray(markItem?.points) &&
-        markItem.points.length
-      ) {
+      if (Array.isArray(markItem?.points) && markItem.points.length) {
         const points = markItem.points
           .map(
             (point) =>
@@ -115,35 +204,19 @@ function bodyOverlay(marks = []) {
             points="${points}"
             fill="none"
             stroke="${color}"
-            stroke-width="${
-              markItem.type === "eraser" ? 12 : 5
-            }"
+            stroke-width="${markItem.type === "eraser" ? 12 : 5}"
             stroke-linecap="round"
             stroke-linejoin="round"
           />
         `;
       }
 
-      const x = canonicalBodyCoordinate(
-        markItem?.x ?? markItem?.x2,
-        "x",
-      );
-      const y = canonicalBodyCoordinate(
-        markItem?.y ?? markItem?.y2,
-        "y",
-      );
-      const x1 = canonicalBodyCoordinate(
-        markItem?.fromX ?? markItem?.x1,
-        "x",
-      );
-      const y1 = canonicalBodyCoordinate(
-        markItem?.fromY ?? markItem?.y1,
-        "y",
-      );
+      const x = canonicalBodyCoordinate(markItem?.x ?? markItem?.x2, "x");
+      const y = canonicalBodyCoordinate(markItem?.y ?? markItem?.y2, "y");
+      const x1 = canonicalBodyCoordinate(markItem?.fromX ?? markItem?.x1, "x");
+      const y1 = canonicalBodyCoordinate(markItem?.fromY ?? markItem?.y1, "y");
 
-      const tool = String(
-        markItem?.tool || markItem?.type || "",
-      ).toLowerCase();
+      const tool = String(markItem?.tool || markItem?.type || "").toLowerCase();
 
       if (tool === "arrow") {
         return `
@@ -217,11 +290,7 @@ function bodyOverlay(marks = []) {
             font-weight="700"
             dominant-baseline="hanging"
           >
-            ${escapeHtml(
-              markItem?.label ||
-                markItem?.text ||
-                "Injury",
-            )}
+            ${escapeHtml(markItem?.label || markItem?.text || "Injury")}
           </text>
         `;
       }
@@ -245,18 +314,14 @@ function bodyMap(record, bodyImageDataUri, assets) {
   const savedImage = safeImageDataUri(body.image);
 
   const baseImage =
-    savedImage ||
-    safeImageDataUri(bodyImageDataUri) ||
-    assets.body;
+    savedImage || safeImageDataUri(bodyImageDataUri) || assets.body;
 
   return `
     <div class="body-map">
       <div class="body-map-frame">
       ${
         baseImage
-          ? `<img src="${escapeHtml(
-              baseImage,
-            )}" alt="Body map" />`
+          ? `<img src="${escapeHtml(baseImage)}" alt="Body map" />`
           : `<div class="body-placeholder">
               FRONT / BACK BODY MAP
             </div>`
@@ -345,15 +410,11 @@ export function buildPCRHtml(
   const bow = normalizeBowValue(obstetric.bow);
   const crash = asObject(record.crash);
   const allergies = asObject(record.allergies);
-  const hospitalization = asObject(
-    record.hospitalization,
-  );
+  const hospitalization = asObject(record.hospitalization);
   const smoking = asObject(record.smoking);
   const alcohol = asObject(record.alcohol);
   const interventions = asObject(record.interventions);
-  const interventionDetails = asObject(
-    record.interventionDetails,
-  );
+  const interventionDetails = asObject(record.interventionDetails);
 
   const originalVitals = asArray(record.vitals);
 
@@ -361,27 +422,19 @@ export function buildPCRHtml(
     ...originalVitals.slice(0, 3),
     ...Array.from(
       {
-        length: Math.max(
-          0,
-          3 - originalVitals.length,
-        ),
+        length: Math.max(0, 3 - originalVitals.length),
       },
       () => ({}),
     ),
   ];
 
-  const originalMedications = asArray(
-    record.medications,
-  );
+  const originalMedications = asArray(record.medications);
 
   const medications = [
     ...originalMedications.slice(0, 4),
     ...Array.from(
       {
-        length: Math.max(
-          0,
-          4 - originalMedications.length,
-        ),
+        length: Math.max(0, 4 - originalMedications.length),
       },
       () => ({}),
     ),
@@ -393,8 +446,7 @@ export function buildPCRHtml(
 
   // Use the latest recorded assessment.
   // Change to [0] if the first assessment should be used instead.
-  const currentGcs =
-    gcsAssessments[gcsAssessments.length - 1] || {};
+  const currentGcs = gcsAssessments[gcsAssessments.length - 1] || {};
 
   const currentGcsTotal = gcsTotal(currentGcs);
 
@@ -406,7 +458,15 @@ export function buildPCRHtml(
   const continuationSections = [
     continuationTable(
       "Additional vital-sign assessments",
-      ["#", "Time", "Blood pressure", "Pulse", "Respiratory", "Temperature", "Oxygen saturation"],
+      [
+        "#",
+        "Time",
+        "Blood pressure",
+        "Pulse",
+        "Respiratory",
+        "Temperature",
+        "Oxygen saturation",
+      ],
       additionalVitals.map(
         (vital, index) => `
           <tr>
@@ -448,7 +508,7 @@ export function buildPCRHtml(
           </tr>`,
       ),
     ),
-    String(record.notes || '').trim()
+    String(record.notes || "").trim()
       ? `<h2>Additional notes</h2><div class="continuation-notes">${rowValue(record.notes)}</div>`
       : "",
   ].filter(Boolean);
@@ -465,23 +525,19 @@ export function buildPCRHtml(
       </section>`
     : "";
 
-  const half = Math.ceil(
-    INTERVENTIONS.length / 2,
-  );
+  const half = Math.ceil(INTERVENTIONS.length / 2);
 
-  const interventionRows = Array.from(
-    { length: half },
-    (_, index) => {
-      const interventionCell = (name) => {
-        if (!name) {
-          return `
+  const interventionRows = Array.from({ length: half }, (_, index) => {
+    const interventionCell = (name) => {
+      if (!name) {
+        return `
             <td></td>
             <td></td>
             <td></td>
           `;
-        }
+      }
 
-        return `
+      return `
           <td>
             ${escapeHtml(name)}
 
@@ -489,9 +545,7 @@ export function buildPCRHtml(
               interventionDetails[name]
                 ? `
                   <small>
-                    ${escapeHtml(
-                      interventionDetails[name],
-                    )}
+                    ${escapeHtml(interventionDetails[name])}
                   </small>
                 `
                 : ""
@@ -499,32 +553,23 @@ export function buildPCRHtml(
           </td>
 
           <td class="yn">
-            ${checked(
-              interventions[name] === "Yes",
-            )}
+            ${checked(interventions[name] === "Yes")}
           </td>
 
           <td class="yn">
-            ${checked(
-              interventions[name] === "No",
-            )}
+            ${checked(interventions[name] === "No")}
           </td>
         `;
-      };
+    };
 
-      return `
+    return `
         <tr>
-          ${interventionCell(
-            INTERVENTIONS[index],
-          )}
+          ${interventionCell(INTERVENTIONS[index])}
 
-          ${interventionCell(
-            INTERVENTIONS[index + half],
-          )}
+          ${interventionCell(INTERVENTIONS[index + half])}
         </tr>
       `;
-    },
-  ).join("");
+  }).join("");
 
   return `
 <!doctype html>
@@ -605,7 +650,8 @@ export function buildPCRHtml(
     }
 
     .continuation-table {
-      table-layout: auto;
+      width: 100%;
+      table-layout: fixed;
     }
 
     .continuation-table tr {
@@ -625,6 +671,10 @@ export function buildPCRHtml(
       width: 100%;
       border-collapse: collapse;
       table-layout: fixed;
+    }
+
+    col {
+      width: auto;
     }
 
     th,
@@ -756,19 +806,19 @@ export function buildPCRHtml(
     }
 
     .height-5 {
-      height: 5.4mm;
+      height: 7mm;
     }
 
     .height-6 {
-      height: 6.4mm;
+      height: 8mm;
     }
 
     .height-10 {
-      height: 10mm;
+      height: 11mm;
     }
 
     .height-14 {
-      height: 14mm;
+      height: 15mm;
     }
 
     .no-padding {
@@ -777,7 +827,7 @@ export function buildPCRHtml(
 
     .triage td {
       font-weight: 700;
-      text-align: center;
+      text-align:justify;
     }
 
     .triage-red {
@@ -854,8 +904,37 @@ export function buildPCRHtml(
       text-align: center;
     }
 
+    .vitals-col-label {
+      width: 54%;
+    }
+
+    .vitals-col-value {
+      width: 15.333%;
+    }
+
     .gcs {
+      width: 100%;
       font-size: 5.6px;
+    }
+
+    .gcs-response-col {
+      width: 18%;
+    }
+
+    .gcs-score-col {
+      width: 7%;
+    }
+
+    .gcs-verbal-col {
+      width: 18%;
+    }
+
+    .gcs-motor-col {
+      width: 20%;
+    }
+
+    .gcs-total-col {
+      width: 23%;
     }
 
     .gcs th,
@@ -895,6 +974,7 @@ export function buildPCRHtml(
     }
 
     .interventions {
+      width: 100%;
       font-size: 6.3px;
     }
 
@@ -902,9 +982,17 @@ export function buildPCRHtml(
       height: 5.2mm;
     }
 
-    .interventions .yn {
+    .interventions .intervention-name-col {
+      width: 39%;
+    }
+
+    .interventions .intervention-yn-col {
       width: 5.5%;
+    }
+
+    .interventions .yn {
       text-align: center;
+      width: auto;
     }
 
     .interventions small {
@@ -1074,16 +1162,22 @@ export function buildPCRHtml(
       </div>
 
       <table>
+        <colgroup>
+          <col style="width: 25%" />
+          <col style="width: 25%" />
+          <col style="width: 25%" />
+          <col style="width: 25%" />
+        </colgroup>
         <tr class="height-5">
-          <th style="width: 20%">
+          <th>
             RESPONSE NO.
           </th>
 
-          <td style="width: 20%">
+          <td>
             ${rowValue(record.responseNumber)}
           </td>
 
-          <th style="width: 20%">
+          <th>
             VEHICLE
           </th>
 
@@ -1098,9 +1192,7 @@ export function buildPCRHtml(
           </th>
 
           <td>
-            ${rowValue(
-              record.respondingTeam || record.team,
-            )}
+            ${rowValue(record.respondingTeam || record.team)}
           </td>
 
           <td colspan="2" class="small">
@@ -1126,26 +1218,19 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 44%" />
+          <col style="width: 12%" />
+          <col style="width: 19%" />
+          <col style="width: 10%" />
+          <col style="width: 15%" />
+        </colgroup>
         <tr class="height-5">
-          <th style="width: 44%">
-            PATIENT NAME
-          </th>
-
-          <th style="width: 12%">
-            AGE
-          </th>
-
-          <th style="width: 19%">
-            BIRTHDAY
-          </th>
-
-          <th style="width: 10%">
-            GENDER
-          </th>
-
-          <th>
-            CIVIL STATUS
-          </th>
+          <th>PATIENT NAME</th>
+          <th>AGE</th>
+          <th>BIRTHDAY</th>
+          <th>GENDER</th>
+          <th>CIVIL STATUS</th>
         </tr>
 
         <tr class="height-6">
@@ -1172,18 +1257,15 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 44%" />
+          <col style="width: 31%" />
+          <col style="width: 25%" />
+        </colgroup>
         <tr class="height-5">
-          <th style="width: 44%">
-            ADDRESS
-          </th>
-
-          <th style="width: 31%">
-            CONTACT PERSON
-          </th>
-
-          <th>
-            CONTACT NUMBER
-          </th>
+          <th>ADDRESS</th>
+          <th>CONTACT PERSON</th>
+          <th>CONTACT NUMBER</th>
         </tr>
 
         <tr class="height-6">
@@ -1202,23 +1284,21 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 28%" />
+          <col style="width: 24%" />
+          <col style="width: 24%" />
+          <col style="width: 24%" />
+        </colgroup>
         <tr class="height-5">
-          <th style="width: 28%">
-            NATURE OF CALL
-          </th>
+          <th>NATURE OF CALL</th>
 
           <td class="center">
-            ${mark(
-              record.natureOfCall,
-              "Emergency",
-            )}
+            ${mark(record.natureOfCall, "Emergency")}
           </td>
 
           <td class="center">
-            ${mark(
-              record.natureOfCall,
-              "Conduction",
-            )}
+            ${mark(record.natureOfCall, "Conduction")}
           </td>
         </tr>
 
@@ -1252,6 +1332,14 @@ export function buildPCRHtml(
       </table>
 
       <table class="small">
+        <colgroup>
+          <col style="width: 16.6667%" />
+          <col style="width: 16.6667%" />
+          <col style="width: 16.6667%" />
+          <col style="width: 16.6667%" />
+          <col style="width: 16.6667%" />
+          <col style="width: 16.6665%" />
+        </colgroup>
         <tr>
           <th>DISPATCHED TIME</th>
           <th>ARRIVAL AT THE SCENE</th>
@@ -1263,10 +1351,7 @@ export function buildPCRHtml(
 
         <tr class="height-6">
           <td>
-            ${rowValue(
-              timeline.dispatchTime ||
-                record.dispatchedTime,
-            )}
+            ${rowValue(timeline.dispatchTime || record.dispatchedTime)}
           </td>
 
           <td>
@@ -1292,10 +1377,15 @@ export function buildPCRHtml(
       </table>
 
       <table class="triage">
+        <colgroup>
+          <col style="width: 13%" />
+          <col style="width: 21.75%" />
+          <col style="width: 21.75%" />
+          <col style="width: 21.75%" />
+          <col style="width: 21.75%" />
+        </colgroup>
         <tr>
-          <th style="width: 13%">
-            TRIAGE
-          </th>
+          <th>TRIAGE</th>
 
           <td class="triage-red">
             ${checked(record.triage === "Red")}
@@ -1320,6 +1410,10 @@ export function buildPCRHtml(
       </table>
 
       <table class="emergency">
+        <colgroup>
+          <col style="width: 82%" />
+          <col style="width: 18%" />
+        </colgroup>
         <tr>
           <th colspan="2">
             TYPE OF EMERGENCY
@@ -1327,13 +1421,9 @@ export function buildPCRHtml(
         </tr>
 
         <tr>
-          <td style="width: 82%" class="small">
+          <td class="small">
             <b>
-              ${checked(
-                asArray(
-                  record.emergencyTypes,
-                ).includes("Medical"),
-              )}
+              ${checked(asArray(record.emergencyTypes).includes("Medical"))}
               MEDICAL
             </b>
 
@@ -1356,11 +1446,7 @@ export function buildPCRHtml(
             <br />
 
             <b>
-              ${checked(
-                asArray(
-                  record.traumaTypes,
-                ).includes("Trauma"),
-              )}
+              ${checked(asArray(record.traumaTypes).includes("Trauma"))}
               TRAUMA
             </b>
 
@@ -1378,11 +1464,7 @@ export function buildPCRHtml(
             </div>
 
             <div>
-              ${checked(
-                asArray(
-                  record.traumaTypes,
-                ).includes("Assault"),
-              )}
+              ${checked(asArray(record.traumaTypes).includes("Assault"))}
               ASSAULT
 
               <span class="tiny">
@@ -1393,20 +1475,14 @@ export function buildPCRHtml(
             </div>
 
             <div>
-              ${checked(
-                asArray(
-                  record.traumaTypes,
-                ).includes("Animal Bite"),
-              )}
+              ${checked(asArray(record.traumaTypes).includes("Animal Bite"))}
               ANIMAL BITE
 
               <span class="tiny">
                 Pls. specify:
               </span>
 
-              ${rowValue(
-                record.animalBiteDetails,
-              )}
+              ${rowValue(record.animalBiteDetails)}
             </div>
 
             <div>
@@ -1418,23 +1494,16 @@ export function buildPCRHtml(
 
               <b>
                 ${checked(
-                  asArray(
-                    record.traumaTypes,
-                  ).includes(
-                    "Motor Vehicle Crash",
-                  ),
+                  asArray(record.traumaTypes).includes("Motor Vehicle Crash"),
                 )}
                 MOTOR VEHICLE CRASH
               </b>
             </div>
           </td>
 
-          <td style="width: 18%" class="small">
+          <td class="small">
             <b>Nature:</b><br />
-            ${rowValue(
-              record.incidentNature ||
-                "Self-Inflicted / Accidental",
-            )}
+            ${rowValue(record.incidentNature || "Self-Inflicted / Accidental")}
 
             <br />
 
@@ -1455,9 +1524,19 @@ export function buildPCRHtml(
       </table>
 
       <table class="small section-pair">
+        <colgroup>
+          <col style="width: 50%" />
+          <col style="width: 50%" />
+        </colgroup>
         <tr>
-          <td class="no-padding" style="width: 50%">
+          <td class="no-padding">
             <table>
+              <colgroup>
+                <col style="width: 16%" />
+                <col style="width: 34%" />
+                <col style="width: 14%" />
+                <col style="width: 36%" />
+              </colgroup>
               <tr><th colspan="4">OBSTETRIC DATA</th></tr>
               <tr><th>LMP</th><td>${rowValue(obstetric.lmp)}</td><th>G / P</th><td>${rowValue(obstetric.g)} / ${rowValue(obstetric.p)}</td></tr>
               <tr><th>EDC</th><td>${rowValue(obstetric.edc)}</td><th>BOW</th><td>${mark(bow, "Positive")} ${mark(bow, "Negative")}${bow && !["Positive", "Negative"].includes(bow) ? ` Other: ${rowValue(bow)}` : ""}</td></tr>
@@ -1465,8 +1544,14 @@ export function buildPCRHtml(
               <tr><th>IE (cm)</th><td>${rowValue(obstetric.ie)}</td><th>PLACENTA</th><td>${rowValue(obstetric.placenta)}</td></tr>
             </table>
           </td>
-          <td class="no-padding" style="width: 50%">
+          <td class="no-padding">
             <table>
+              <colgroup>
+                <col style="width: 20%" />
+                <col style="width: 32%" />
+                <col style="width: 18%" />
+                <col style="width: 30%" />
+              </colgroup>
               <tr><th colspan="4">MOTOR VEHICLE CRASH DETAILS</th></tr>
               <tr><th>Type</th><td colspan="3">${checked(crash.selfAccident === true || crash.selfAccident === "Yes")} SELF-ACCIDENT &nbsp; ${checked(crash.collision === true || crash.collision === "Yes")} COLLISION</td></tr>
               <tr><th>Vehicle Involved</th><td>${rowValue(crash.vehicle)}</td><th>Role</th><td>${rowValue(crash.role)}</td></tr>
@@ -1478,11 +1563,12 @@ export function buildPCRHtml(
       </table>
 
       <table>
-        <tr>
-          <td
-            class="chief"
-            style="width: 47%"
-          >
+        <colgroup>
+          <col style="width: 47%" />
+          <col style="width: 53%" />
+        </colgroup>
+                <tr>
+          <td class="chief">
             <b>
               CHIEF COMPLAINT/INITIAL ASSESSMENT:
             </b>
@@ -1496,26 +1582,24 @@ export function buildPCRHtml(
             class="no-padding"
             rowspan="2"
           >
-            ${bodyMap(
-              record,
-              bodyImageDataUri,
-              assets,
-            )}
+            ${bodyMap(record, bodyImageDataUri, assets)}
           </td>
         </tr>
 
         <tr>
           <td class="no-padding">
             <table class="vitals">
+              <colgroup>
+                <col class="vitals-col-label" />
+                <col class="vitals-col-value" />
+                <col class="vitals-col-value" />
+                <col class="vitals-col-value" />
+              </colgroup>
               <tr>
-                <th style="width: 54%">
-                  VITAL SIGNS
-                </th>
+                <th>VITAL SIGNS</th>
 
                 ${vitals
-                  .map(
-                    (vital) => `<th>TIME<br />${rowValue(vital.time)}</th>`,
-                  )
+                  .map((vital) => `<th>TIME<br />${rowValue(vital.time)}</th>`)
                   .join("")}
               </tr>
 
@@ -1525,12 +1609,7 @@ export function buildPCRHtml(
                 </th>
 
                 ${vitals
-                  .map(
-                    (vital) =>
-                      `<td>${rowValue(
-                        vital.bp,
-                      )}</td>`,
-                  )
+                  .map((vital) => `<td>${rowValue(vital.bp)}</td>`)
                   .join("")}
               </tr>
 
@@ -1540,12 +1619,7 @@ export function buildPCRHtml(
                 </th>
 
                 ${vitals
-                  .map(
-                    (vital) =>
-                      `<td>${rowValue(
-                        vital.pulse,
-                      )}</td>`,
-                  )
+                  .map((vital) => `<td>${rowValue(vital.pulse)}</td>`)
                   .join("")}
               </tr>
 
@@ -1555,12 +1629,7 @@ export function buildPCRHtml(
                 </th>
 
                 ${vitals
-                  .map(
-                    (vital) =>
-                      `<td>${rowValue(
-                        vital.respiratory,
-                      )}</td>`,
-                  )
+                  .map((vital) => `<td>${rowValue(vital.respiratory)}</td>`)
                   .join("")}
               </tr>
 
@@ -1570,12 +1639,7 @@ export function buildPCRHtml(
                 </th>
 
                 ${vitals
-                  .map(
-                    (vital) =>
-                      `<td>${rowValue(
-                        vital.temperature,
-                      )}</td>`,
-                  )
+                  .map((vital) => `<td>${rowValue(vital.temperature)}</td>`)
                   .join("")}
               </tr>
 
@@ -1585,12 +1649,7 @@ export function buildPCRHtml(
                 </th>
 
                 ${vitals
-                  .map(
-                    (vital) =>
-                      `<td>${rowValue(
-                        vital.oxygen,
-                      )}</td>`,
-                  )
+                  .map((vital) => `<td>${rowValue(vital.oxygen)}</td>`)
                   .join("")}
               </tr>
             </table>
@@ -1667,11 +1726,7 @@ export function buildPCRHtml(
             <div class="gcs-recorded-label">RECORDED TOTAL</div>
 
             <div class="gcs-recorded-score">
-              ${
-                currentGcsTotal !== ""
-                  ? rowValue(currentGcsTotal)
-                  : "—"
-              }
+              ${currentGcsTotal !== "" ? rowValue(currentGcsTotal) : "—"}
             </div>
 
             <div class="gcs-recorded-breakdown">
@@ -1711,11 +1766,12 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 47%" />
+          <col style="width: 53%" />
+        </colgroup>
         <tr class="height-6">
-          <th
-            style="width: 47%"
-            class="left"
-          >
+          <th class="left">
             CONSENT FOR CARE:
             ${rowValue(record.consentForCare)}
           </th>
@@ -1728,27 +1784,21 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 14%" />
+          <col style="width: 20%" />
+          <col style="width: 20%" />
+        </colgroup>
         <tr>
-          <td
-            style="width: 46%"
-            class="compact-signature"
-          >
-            ${signatureMark(
-              record,
-              "Consent for Care",
-              "consent",
-            )}
+          <td class="compact-signature">
+            ${signatureMark(record, "Consent for Care", "consent")}
           </td>
 
-          <th style="width: 14%">
-            RECEIVED BY
-          </th>
+          <th>RECEIVED BY</th>
 
           <td colspan="2">
-            ${rowValue(
-              record.receivedBy ||
-                record.receiverName,
-            )}
+            ${rowValue(record.receivedBy || record.receiverName)}
           </td>
         </tr>
 
@@ -1760,19 +1810,14 @@ export function buildPCRHtml(
           <th>HOSPITAL</th>
 
           <td colspan="2">
-            ${rowValue(
-              record.endorsementHospital ||
-                record.hospitalName,
-            )}
+            ${rowValue(record.endorsementHospital || record.hospitalName)}
           </td>
         </tr>
 
         <tr>
           <th>
             DATE &amp; TIME
-            ${rowValue(
-              asObject(record.signatureDates).consent,
-            )}
+            ${rowValue(asObject(record.signatureDates).consent)}
           </th>
 
           <th>DATE</th>
@@ -1789,6 +1834,10 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 50%" />
+          <col style="width: 50%" />
+        </colgroup>
         <tr>
           <th class="left">
             ENDORSEMENT OF VALUABLES
@@ -1829,9 +1878,7 @@ export function buildPCRHtml(
         <tr>
           <th>
             DATE &amp; TIME
-            ${rowValue(
-              asObject(record.signatureDates).receiver,
-            )}
+            ${rowValue(asObject(record.signatureDates).receiver)}
           </th>
 
           <td></td>
@@ -1840,8 +1887,7 @@ export function buildPCRHtml(
       
     </div>
   </section>
-
-  <section class="page page-two">
+    <section class="page page-two">
     ${
       assets.medicalStar
         ? `
@@ -1856,10 +1902,12 @@ export function buildPCRHtml(
 
     <div class="content">
       <table>
+        <colgroup>
+          <col style="width: 45%" />
+          <col style="width: 55%" />
+        </colgroup>
         <tr>
-          <th style="width: 45%">
-            SUSPECTED SPINAL INJURY
-          </th>
+          <th>SUSPECTED SPINAL INJURY</th>
 
           <td class="center">
             ${yn(record.suspectedSpinal)}
@@ -1868,29 +1916,22 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 54%" />
+        </colgroup>
         <tr>
           <th>AIRWAY</th>
           <th>BREATHING</th>
         </tr>
 
         <tr>
-          <td
-            style="
-              width: 46%;
-              vertical-align: top;
-            "
-          >
-            ${optionLine(
-              AIRWAY_OPTIONS,
-              record.airway,
-            )}
+          <td style="vertical-align: top">
+            ${optionLine(AIRWAY_OPTIONS, record.airway)}
           </td>
 
           <td style="vertical-align: top">
-            ${optionLine(
-              BREATHING_OPTIONS,
-              record.breathing,
-            )}
+            ${optionLine(BREATHING_OPTIONS, record.breathing)}
 
             <br />
 
@@ -1917,10 +1958,7 @@ export function buildPCRHtml(
           <td>
             <b>PULSE:</b>
 
-            ${optionLine(
-              PULSE_OPTIONS,
-              record.pulseFindings,
-            )}
+            ${optionLine(PULSE_OPTIONS, record.pulseFindings)}
           </td>
 
           <td>
@@ -1935,9 +1973,7 @@ export function buildPCRHtml(
             &nbsp;
 
             Controlled:
-            ${rowValue(
-              record.bleedingControlled,
-            )}
+            ${rowValue(record.bleedingControlled)}
           </td>
         </tr>
 
@@ -1950,10 +1986,7 @@ export function buildPCRHtml(
           <td>
             <b>PUPILS:</b>
 
-            ${optionLine(
-              PUPIL_OPTIONS,
-              record.pupils,
-            )}
+            ${optionLine(PUPIL_OPTIONS, record.pupils)}
           </td>
         </tr>
 
@@ -1961,33 +1994,23 @@ export function buildPCRHtml(
           <td colspan="2">
             <b>SKIN:</b>
 
-            ${optionLine(
-              SKIN_OPTIONS,
-              record.skin,
-            )}
+            ${optionLine(SKIN_OPTIONS, record.skin)}
           </td>
         </tr>
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 54%" />
+        </colgroup>
         <tr>
-          <td
-            style="
-              width: 46%;
-              vertical-align: top;
-            "
-          >
+          <td style="vertical-align: top">
             <b>PAIN ASSESSMENT:</b>
 
-            ${mark(
-              record.painPositive,
-              "Positive",
-            )}
+            ${mark(record.painPositive, "Positive")}
 
-            ${mark(
-              record.painPositive,
-              "Negative",
-            )}
+            ${mark(record.painPositive, "Negative")}
 
             <br />
 
@@ -2009,7 +2032,7 @@ export function buildPCRHtml(
             }
             ${
               score
-                ? `<div class="pain-score-marker" style="left: ${2 + (Number(score) * 9.6)}%">▼</div>`
+                ? `<div class="pain-score-marker" style="left: ${2 + Number(score) * 9.6}%">▼</div>`
                 : ""
             }
             </div>
@@ -2025,24 +2048,15 @@ export function buildPCRHtml(
 
             Onset:
 
-            ${mark(
-              record.painOnset,
-              "Sudden",
-            )}
+            ${mark(record.painOnset, "Sudden")}
 
-            ${mark(
-              record.painOnset,
-              "Gradual",
-            )}
+            ${mark(record.painOnset, "Gradual")}
 
             <br />
 
             Quality:
 
-            ${optionLine(
-              PAIN_QUALITY_OPTIONS,
-              record.painQuality,
-            )}
+            ${optionLine(PAIN_QUALITY_OPTIONS, record.painQuality)}
 
             Others:
             ${rowValue(record.painOther)}
@@ -2051,27 +2065,20 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 54%" />
+        </colgroup>
         <tr>
           <th>ALLERGIES</th>
           <th>MEDICATIONS</th>
         </tr>
 
         <tr>
-          <td
-            style="
-              width: 46%;
-              vertical-align: top;
-            "
-          >
-            ${mark(
-              allergies.status,
-              "With Allergies",
-            )}
+          <td style="vertical-align: top">
+            ${mark(allergies.status, "With Allergies")}
 
-            ${mark(
-              allergies.status,
-              "No Allergies",
-            )}
+            ${mark(allergies.status, "No Allergies")}
 
             <br />
 
@@ -2090,15 +2097,9 @@ export function buildPCRHtml(
           </td>
 
           <td style="vertical-align: top">
-            ${mark(
-              record.medicationStatus,
-              "With Medications",
-            )}
+            ${mark(record.medicationStatus, "With Medications")}
 
-            ${mark(
-              record.medicationStatus,
-              "None",
-            )}
+            ${mark(record.medicationStatus, "None")}
 
             <br />
 
@@ -2107,22 +2108,16 @@ export function buildPCRHtml(
                 (medication) => `
                   Drug:
                   <span class="line">
-                    ${rowValue(
-                      medication.drug,
-                    )}
+                    ${rowValue(medication.drug)}
                   </span>
 
                   Dose:
                   <span class="line">
-                    ${rowValue(
-                      medication.dose,
-                    )}
+                    ${rowValue(medication.dose)}
                   </span>
 
                   Date &amp; Time taken:
-                  ${rowValue(
-                    medication.dateTime,
-                  )}
+                  ${rowValue(medication.dateTime)}
 
                   <br />
                 `,
@@ -2133,70 +2128,54 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 54%" />
+        </colgroup>
         <tr>
           <th>MEDICAL HISTORY</th>
           <th>HOSPITALIZATION HISTORY</th>
         </tr>
 
         <tr>
-          <td style="width: 46%">
-            ${optionLine(
-              MEDICAL_HISTORY_OPTIONS,
-              record.medicalHistory,
-            )}
+          <td>
+            ${optionLine(MEDICAL_HISTORY_OPTIONS, record.medicalHistory)}
 
             Others:
-            ${rowValue(
-              record.medicalHistoryOther,
-            )}
+            ${rowValue(record.medicalHistoryOther)}
           </td>
 
           <td>
-            ${mark(
-              hospitalization.status,
-              "Yes",
-            )}
+            ${mark(hospitalization.status, "Yes")}
 
-            ${mark(
-              hospitalization.status,
-              "None",
-            )}
+            ${mark(hospitalization.status, "None")}
 
             <br />
 
             Date of last Confinement:
-            ${rowValue(
-              hospitalization.date,
-            )}
+            ${rowValue(hospitalization.date)}
 
             <br />
 
             Where:
-            ${rowValue(
-              hospitalization.where,
-            )}
+            ${rowValue(hospitalization.where)}
 
             Due to:
-            ${rowValue(
-              hospitalization.reason,
-            )}
+            ${rowValue(hospitalization.reason)}
           </td>
         </tr>
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 46%" />
+          <col style="width: 27%" />
+          <col style="width: 27%" />
+        </colgroup>
         <tr>
-          <th style="width: 46%">
-            LAST ORAL INTAKE
-          </th>
-
-          <th>
-            DO YOU SMOKE?
-          </th>
-
-          <th>
-            DO YOU DRINK ALCOHOL?
-          </th>
+          <th>LAST ORAL INTAKE</th>
+          <th>DO YOU SMOKE?</th>
+          <th>DO YOU DRINK ALCOHOL?</th>
         </tr>
 
         <tr>
@@ -2207,9 +2186,7 @@ export function buildPCRHtml(
             <br /><br />
 
             Date &amp; Time:
-            ${rowValue(
-              record.oralIntakeDateTime,
-            )}
+            ${rowValue(record.oralIntakeDateTime)}
           </td>
 
           <td>
@@ -2238,18 +2215,27 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 28%" />
+          <col style="width: 72%" />
+        </colgroup>
         <tr>
-          <th style="width: 28%">
-            EVENTS PRIOR TO INJURY:
-          </th>
+          <th>EVENTS PRIOR TO INJURY:</th>
 
           <td class="height-10">
             ${rowValue(record.eventsPrior)}
           </td>
         </tr>
       </table>
-
-      <table class="interventions">
+            <table class="interventions">
+        <colgroup>
+          <col class="intervention-name-col" />
+          <col class="intervention-yn-col" />
+          <col class="intervention-yn-col" />
+          <col class="intervention-name-col" />
+          <col class="intervention-yn-col" />
+          <col class="intervention-yn-col" />
+        </colgroup>
         <tr>
           <th>INTERVENTIONS</th>
           <th>YES</th>
@@ -2263,6 +2249,10 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 50%" />
+          <col style="width: 50%" />
+        </colgroup>
         <tr>
           <th>
             REASON/S FOR TRANSFER/NOT
@@ -2286,11 +2276,12 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 48%" />
+          <col style="width: 52%" />
+        </colgroup>
         <tr>
-          <td
-            class="resident-lines"
-            style="width: 48%"
-          >
+          <td class="resident-lines">
             ${rowValue(record.residentOnDuty)}
           </td>
 
@@ -2346,24 +2337,17 @@ export function buildPCRHtml(
       </table>
 
       <table>
+        <colgroup>
+          <col style="width: 33.3333%" />
+          <col style="width: 33.3333%" />
+          <col style="width: 33.3334%" />
+        </colgroup>
         <tr>
-          ${signature(
-            record,
-            "Patient",
-            "patient",
-          )}
+          ${signature(record, "Patient", "patient")}
 
-          ${signature(
-            record,
-            "Witness",
-            "witness1",
-          )}
+          ${signature(record, "Witness", "witness1")}
 
-          ${signature(
-            record,
-            "Witness",
-            "witness2",
-          )}
+          ${signature(record, "Witness", "witness2")}
         </tr>
       </table>
     </div>
@@ -2375,8 +2359,8 @@ export function buildPCRHtml(
 }
 
 function hasGcsValue(row) {
-  return ["time", "eye", "verbal", "motor"].some(
-    (key) => String(row?.[key] ?? "").trim(),
+  return ["time", "eye", "verbal", "motor"].some((key) =>
+    String(row?.[key] ?? "").trim(),
   );
 }
 
@@ -2391,7 +2375,8 @@ function recordedGcsRows(record) {
 function gcsTotal(row) {
   const rawValues = [row?.eye, row?.verbal, row?.motor];
   const values = rawValues.map(Number);
-  return rawValues.every(value => String(value ?? '').trim()) && values.every(Number.isFinite)
+  return rawValues.every((value) => String(value ?? "").trim()) &&
+    values.every(Number.isFinite)
     ? values.reduce((total, value) => total + value, 0)
     : "";
 }
@@ -2407,9 +2392,36 @@ function painScore(record) {
 
 function continuationTable(title, headers, rows) {
   if (!rows.length) return "";
+
+  const widthSets = {
+    "Additional vital-sign assessments": [
+      "7%",
+      "13%",
+      "17%",
+      "13%",
+      "16%",
+      "16%",
+      "18%",
+    ],
+    "Recorded Glasgow Coma Scale assessments": [
+      "7%",
+      "15%",
+      "18%",
+      "20%",
+      "20%",
+    ],
+    "Additional medications": ["7%", "37%", "22%", "34%"],
+  };
+
+  const fallback = `${(100 / headers.length).toFixed(3)}%`;
+  const widths = widthSets[title] || headers.map(() => fallback);
+
   return `
     <h2>${escapeHtml(title)}</h2>
-    <table class="continuation-table">
+    <table class="continuation-table continuation-${headers.length}-col">
+      <colgroup>
+        ${headers.map((_, index) => `<col style="width: ${widths[index] || fallback}" />`).join("")}
+      </colgroup>
       <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
       <tbody>${rows.join("")}</tbody>
     </table>
