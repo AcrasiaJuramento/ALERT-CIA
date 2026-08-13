@@ -28,7 +28,9 @@ function setState(changes) {
   emit();
 }
 
-function buildLocalProgress(mode, sourcesTotal = DEFAULT_SCRAPER_SOURCE_COUNT) {
+function buildLocalProgress(mode, sourcesTotal = DEFAULT_SCRAPER_SOURCE_COUNT, options = {}) {
+  const pageFrom = options.pageFrom ?? null;
+  const pageTo = options.pageTo ?? null;
   return {
     running: true,
     mode,
@@ -36,9 +38,9 @@ function buildLocalProgress(mode, sourcesTotal = DEFAULT_SCRAPER_SOURCE_COUNT) {
     source_name: mode === 'full' ? 'Full scrape queued' : 'Update scrape queued',
     source_index: 0,
     sources_total: sourcesTotal,
-    page: null,
-    page_to: null,
-    max_pages: mode === 'full' ? 'all' : 3,
+    page: pageFrom,
+    page_to: pageTo,
+    max_pages: mode === 'full' ? 'all' : pageTo || 1,
     article: 0,
     articles_total: 0,
   };
@@ -75,7 +77,7 @@ export function cancelScraperJob() {
   });
 }
 
-export async function startScraperJob(mode = 'update') {
+export async function startScraperJob(mode = 'update', options = {}) {
   if (state.running) return getScraperJobState();
 
   controller = new AbortController();
@@ -84,7 +86,7 @@ export async function startScraperJob(mode = 'update') {
     mode,
     message: '',
     error: '',
-    progress: buildLocalProgress(mode),
+    progress: buildLocalProgress(mode, DEFAULT_SCRAPER_SOURCE_COUNT, options),
   });
 
   try {
@@ -95,7 +97,7 @@ export async function startScraperJob(mode = 'update') {
         const sourceTotal = activeSources.length || sources.length || DEFAULT_SCRAPER_SOURCE_COUNT;
         setState({
           progress: {
-            ...(state.progress || buildLocalProgress(mode, sourceTotal)),
+            ...(state.progress || buildLocalProgress(mode, sourceTotal, options)),
             sources_total: sourceTotal,
             source_name: mode === 'full' ? 'Full scrape running' : 'Update scrape running',
           },
@@ -110,7 +112,7 @@ export async function startScraperJob(mode = 'update') {
           onSourceStart: ({ source, index, total, pageFrom, pageTo, maxPages }) => {
             setState({
               progress: {
-                ...(state.progress || buildLocalProgress(mode, total)),
+                ...(state.progress || buildLocalProgress(mode, total, options)),
                 source_name: source.name || source.source_key || 'News source',
                 source_index: index,
                 sources_total: total,
@@ -122,7 +124,13 @@ export async function startScraperJob(mode = 'update') {
             });
           },
         })
-      : await triggerScraperRefresh({ type: 'vehicular', mode, signal: controller.signal });
+      : await triggerScraperRefresh({
+          type: 'vehicular',
+          mode,
+          pageFrom: options.pageFrom ?? 1,
+          pageTo: options.pageTo ?? 1,
+          signal: controller.signal,
+        });
 
     if (controller.signal.aborted) return getScraperJobState();
 

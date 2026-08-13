@@ -92,6 +92,10 @@ function readIncidentType(record = {}) {
   return toTitleCase(record.classification || record.type || record.incidentType || record.category || 'Other');
 }
 
+function readMunicipality(record = {}) {
+  return record.municipality || record.verifiedMunicipality || record.extractedMunicipality || 'Unspecified';
+}
+
 function readSourceType(record = {}) {
   const sourceKind = normalizeValue(record.sourceKind);
   if (sourceKind.includes('scraped') || record.scraperStatus) return 'scraped';
@@ -148,6 +152,7 @@ function passFilters(record = {}, filters = {}) {
   if (filters.endDate && (!date || date > new Date(`${filters.endDate}T23:59:59`))) return false;
   if (filters.incidentType && filters.incidentType !== 'all' && readIncidentType(record) !== filters.incidentType) return false;
   if (filters.severity && filters.severity !== 'all' && toTitleCase(readSeverity(record)) !== filters.severity) return false;
+  if (filters.municipality && filters.municipality !== 'all' && readMunicipality(record) !== filters.municipality) return false;
   if (filters.barangay && filters.barangay !== 'all' && (record.barangay || record.location || 'Unspecified') !== filters.barangay) return false;
   if (filters.sourceType && filters.sourceType !== 'all' && readSourceType(record) !== filters.sourceType) return false;
   if (filters.timeOfDay && filters.timeOfDay !== 'all' && getTimeOfDay(record.time) !== filters.timeOfDay) return false;
@@ -160,6 +165,7 @@ export function getAccidentProneFilterOptions(records = []) {
   return {
     incidentTypes: [{ value: 'all', label: 'All' }, ...unique(readIncidentType).map(value => ({ value, label: value }))],
     severities: [{ value: 'all', label: 'All' }, ...unique(record => toTitleCase(readSeverity(record))).map(value => ({ value, label: value }))],
+    municipalities: [{ value: 'all', label: 'All' }, ...unique(readMunicipality).map(value => ({ value, label: value }))],
     barangays: [{ value: 'all', label: 'All' }, ...unique(record => record.barangay || record.location || 'Unspecified').map(value => ({ value, label: value }))],
     sourceTypes: [
       { value: 'all', label: 'All' },
@@ -169,9 +175,10 @@ export function getAccidentProneFilterOptions(records = []) {
   };
 }
 
-export function calculateAccidentProneAreas(records = [], { publicOnly = false, filters = {} } = {}) {
+export function calculateAccidentProneAreas(records = [], { publicOnly = false, filters = {}, groupBy = 'barangay' } = {}) {
   const includePending = !publicOnly;
   const grouped = new Map();
+  const groupByMunicipality = groupBy === 'municipality';
 
   records.forEach(record => {
     if (!passFilters(record, filters)) return;
@@ -182,11 +189,15 @@ export function calculateAccidentProneAreas(records = [], { publicOnly = false, 
     if (publicOnly && reliability < 1) return;
 
     const barangay = record.barangay || record.location || 'Unspecified Area';
+    const municipality = readMunicipality(record);
+    const areaName = groupByMunicipality ? municipality : barangay;
     const sourceType = readSourceType(record);
-    const key = barangay;
+    const key = groupByMunicipality ? `municipality:${municipality}` : `barangay:${municipality}:${barangay}`;
     const group = grouped.get(key) || {
-      barangay,
-      municipality: 'Echague',
+      barangay: areaName,
+      area_label: areaName,
+      group_by: groupByMunicipality ? 'municipality' : 'barangay',
+      municipality,
       records: [],
       latSum: 0,
       lngSum: 0,

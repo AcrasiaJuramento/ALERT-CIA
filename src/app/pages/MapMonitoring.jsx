@@ -5,11 +5,12 @@ import {
   RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, supabase } from '../services/supabase';
+import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, supabase } from '../services/supabase';
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea, isWithinIsabelaMapArea } from '../utils/mapData';
 import { formatDateAndTime } from '../utils/dateFormat';
+import { ISABELA_MUNICIPALITIES } from '../data/isabelaMunicipalities';
 import {
   calculateAccidentProneAreas,
   formatRiskLevel,
@@ -59,15 +60,31 @@ function getSourceGroup(incident) {
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 
+function failedLayerMessage(results = []) {
+  const failed = results.filter(([, result]) => result.status === 'rejected').map(([label]) => label);
+  if (!failed.length) return '';
+  if (failed.length === results.length) return 'Unable to load map records. Check Supabase/network connection and retry.';
+  return `${failed.join(', ')} unavailable. Showing remaining map records.`;
+}
+
 const DEFAULT_RISK_FILTERS = {
   startDate: '',
   endDate: '',
   incidentType: 'all',
   severity: 'all',
+  municipality: 'all',
   barangay: 'all',
   sourceType: 'all',
   timeOfDay: 'all',
 };
+
+function getRecordMunicipality(record = {}) {
+  return record.municipality || record.verifiedMunicipality || record.extractedMunicipality || (isWithinEchagueMapArea(record) ? 'Echague' : '');
+}
+
+function isPromotableScrapedRecord(record = {}) {
+  return getSourceGroup(record) === 'scraper' && record.recordId && (!record.relatedIncidentId || record.sourceKind !== 'promoted_scraped');
+}
 
 export default function MapMonitoring() {
   const navigate = useNavigate();
@@ -76,6 +93,7 @@ export default function MapMonitoring() {
   const [activeLayer, setActiveLayer] = useState(null);
   const [activeSource, setActiveSource] = useState('all');
   const [mapScope, setMapScope] = useState('isabela');
+  const [selectedMunicipality, setSelectedMunicipality] = useState('all');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
@@ -94,12 +112,12 @@ export default function MapMonitoring() {
     barangayBoundaries: true,
     routes: true,
   });
-  const riskFilters = DEFAULT_RISK_FILTERS;
   const [incidents, setIncidents] = useState([]);
   const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
   const [mapError, setMapError] = useState('');
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
+  const [linkingRecordId, setLinkingRecordId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const scraperRefreshing = scraperJob.running;
@@ -126,8 +144,11 @@ export default function MapMonitoring() {
           setIncidents(officialRecords);
           setScrapedIncidents(scrapedRecords);
           setPcrIncidents(pcrRecords);
-          const failed = [officialResult, scrapedResult, pcrResult].find(result => result.status === 'rejected');
-          setMapError(failed?.reason?.message || '');
+          setMapError(failedLayerMessage([
+            ['Official incidents', officialResult],
+            ['Scraper records', scrapedResult],
+            ['PCR records', pcrResult],
+          ]));
         }
       } catch (error) {
         if (mounted) setMapError(error.message || 'Unable to load map records.');
@@ -173,15 +194,49 @@ export default function MapMonitoring() {
     return subscribeScraperJob(setScraperJob);
   }, []);
 
+  useEffect(() => {
+    if (mapScope !== 'isabela') setSelectedMunicipality('all');
+  }, [mapScope]);
+
   const refreshScraperData = async (mode = 'update') => {
     setScrapeMenuOpen(false);
     try {
-      await startScraperJob(mode);
+      await startScraperJob(mode, mode === 'update' ? { pageFrom: 1, pageTo: 1 } : {});
       setReloadKey(key => key + 1);
     } catch {
       // The shared scraper job service owns the visible error state.
     }
   };
+
+  const openOrCreateLinkedRecord = async (record) => {
+    if (!record) return;
+    if (record.sourceKind === 'pcr_report' && record.recordId) {
+      navigate(`/admin/pcr/new?edit=${record.recordId}`);
+      return;
+    }
+    if (!record.sourceKind || record.sourceKind === 'official' || record.sourceKind === 'promoted_scraped') {
+      navigate(`/admin/incidents/${record.relatedIncidentId || record.id}`);
+      return;
+    }
+    if (!isPromotableScrapedRecord(record)) return;
+
+    setMapError('');
+    setLinkingRecordId(record.recordId);
+    try {
+      const incidentId = await promoteScraperRecordToIncident(record.recordId);
+      setReloadKey(key => key + 1);
+      navigate(`/admin/incidents/${incidentId}`);
+    } catch (error) {
+      setMapError(error.message || 'Unable to create linked incident record from this scraped article.');
+    } finally {
+      setLinkingRecordId(null);
+    }
+  };
+
+  const riskFilters = useMemo(() => ({
+    ...DEFAULT_RISK_FILTERS,
+    municipality: mapScope === 'isabela' ? selectedMunicipality : 'all',
+  }), [mapScope, selectedMunicipality]);
 
   const mapIncidents = useMemo(
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
@@ -191,6 +246,7 @@ export default function MapMonitoring() {
         if (getSourceGroup(item) === 'scraper') return isWithinIsabelaMapArea(item);
         return isWithinEchagueMapArea(item);
       })
+      .filter(item => mapScope !== 'isabela' || selectedMunicipality === 'all' || getRecordMunicipality(item) === selectedMunicipality)
       .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource)
       .filter(item => {
         const group = getSourceGroup(item);
@@ -199,7 +255,7 @@ export default function MapMonitoring() {
         if (group === 'official') return mapLayers.verifiedMdrrmo;
         return true;
       }),
-    [activeSource, incidents, mapLayers.pcrReports, mapLayers.unverifiedScraped, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, mapScope, pcrIncidents, scrapedIncidents]
+    [activeSource, incidents, mapLayers.pcrReports, mapLayers.unverifiedScraped, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, mapScope, pcrIncidents, scrapedIncidents, selectedMunicipality]
   );
   const riskSourceRecords = useMemo(
     () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
@@ -209,12 +265,17 @@ export default function MapMonitoring() {
         if (getSourceGroup(item) === 'scraper') return isWithinIsabelaMapArea(item);
         return isWithinEchagueMapArea(item);
       })
+      .filter(item => mapScope !== 'isabela' || selectedMunicipality === 'all' || getRecordMunicipality(item) === selectedMunicipality)
       .filter(item => getSourceGroup(item) !== 'scraper' || item.sourceKind !== 'scraped'),
-    [incidents, mapScope, pcrIncidents, scrapedIncidents]
+    [incidents, mapScope, pcrIncidents, scrapedIncidents, selectedMunicipality]
   );
   const accidentProneAreas = useMemo(
-    () => calculateAccidentProneAreas(riskSourceRecords, { publicOnly: false, filters: riskFilters }),
-    [riskFilters, riskSourceRecords]
+    () => calculateAccidentProneAreas(riskSourceRecords, {
+      publicOnly: false,
+      filters: riskFilters,
+      groupBy: mapScope === 'isabela' ? 'municipality' : 'barangay',
+    }),
+    [mapScope, riskFilters, riskSourceRecords]
   );
   const highRiskAreas = accidentProneAreas.filter(area => ['High', 'Critical'].includes(area.risk_level));
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
@@ -225,6 +286,14 @@ export default function MapMonitoring() {
     pcr_report: pcrIncidents.length,
     scraper: scrapedIncidents.length,
   };
+  const municipalityOptions = useMemo(() => {
+    const seen = new Set(ISABELA_MUNICIPALITIES);
+    [...incidents, ...pcrIncidents, ...scrapedIncidents].forEach(record => {
+      const municipality = getRecordMunicipality(record);
+      if (municipality) seen.add(municipality);
+    });
+    return ['all', ...[...seen].sort((left, right) => left.localeCompare(right))];
+  }, [incidents, pcrIncidents, scrapedIncidents]);
   const layerOptions = [
     { key: 'verifiedMdrrmo', label: 'Verified MDRRMO Incidents' },
     { key: 'pcrReports', label: 'PCR Reports' },
@@ -525,6 +594,10 @@ export default function MapMonitoring() {
                   <span className="text-foreground">{selectedInc.barangay || selectedInc.location || 'Unspecified'}</span>
                 </div>
                 <div className="rounded-lg bg-secondary/60 p-2">
+                  <span className="block uppercase tracking-wide">Municipality</span>
+                  <span className="text-foreground">{getRecordMunicipality(selectedInc) || 'Unspecified'}</span>
+                </div>
+                <div className="rounded-lg bg-secondary/60 p-2">
                   <span className="block uppercase tracking-wide">Date / Time</span>
                   <span className="text-foreground">{formatDateAndTime(selectedInc.date, selectedInc.time)}</span>
                 </div>
@@ -541,6 +614,16 @@ export default function MapMonitoring() {
                   <span className="text-foreground">{selectedInc.recordId || selectedInc.relatedIncidentId || selectedInc.responseId || 'Official'}</span>
                 </div>
               </div>
+              {selectedInc.externalSourceUrl && (
+                <a
+                  href={selectedInc.externalSourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mb-3 block truncate text-[10px] font-semibold text-blue-400 hover:text-blue-300"
+                >
+                  Source article: {selectedInc.externalSourceUrl}
+                </a>
+              )}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <span className={`text-xs font-semibold ${statusColors[selectedInc.status]}`}>
@@ -549,15 +632,11 @@ export default function MapMonitoring() {
                   <span className="text-xs text-muted-foreground">{selectedInc.assignedTeam}</span>
                 </div>
                 <button
-                  onClick={() => {
-                    if (!selectedInc.sourceKind || selectedInc.sourceKind === 'official' || selectedInc.sourceKind === 'promoted_scraped') {
-                      navigate(`/admin/incidents/${selectedInc.relatedIncidentId || selectedInc.id}`);
-                    }
-                  }}
-                  disabled={selectedInc.sourceKind && !['official', 'promoted_scraped'].includes(selectedInc.sourceKind)}
+                  onClick={() => openOrCreateLinkedRecord(selectedInc)}
+                  disabled={linkingRecordId === selectedInc.recordId}
                   className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all"
                 >
-                  {selectedInc.sourceKind && !['official', 'promoted_scraped'].includes(selectedInc.sourceKind) ? 'Linked record' : 'Details'} <ChevronRight className="w-3 h-3" />
+                  {linkingRecordId === selectedInc.recordId ? 'Creating...' : isPromotableScrapedRecord(selectedInc) ? 'Create linked record' : 'Details'} <ChevronRight className="w-3 h-3" />
                 </button>
               </div>
             </div>
@@ -586,6 +665,20 @@ export default function MapMonitoring() {
                 <span className="text-sm font-semibold text-foreground">{mapScope === 'isabela' ? 'Isabela Accident Intelligence' : 'Operational Records'}</span>
               </div>
               <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
+              {mapScope === 'isabela' && (
+                <label className="mt-3 block">
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Location</span>
+                  <select
+                    value={selectedMunicipality}
+                    onChange={(event) => setSelectedMunicipality(event.target.value)}
+                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground outline-none focus:border-blue-500"
+                  >
+                    {municipalityOptions.map(value => (
+                      <option key={value} value={value}>{value === 'all' ? 'All Isabela municipalities' : value}</option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
                 {sourceFilters.map(({ key, label, icon: Icon }) => (
                   <button
@@ -638,11 +731,7 @@ export default function MapMonitoring() {
                       {area.records.slice(0, 4).map(record => (
                         <button
                           key={record.id || record.recordId}
-                          onClick={() => {
-                            if (!record.sourceKind || record.sourceKind === 'official' || record.sourceKind === 'promoted_scraped') {
-                              navigate(`/admin/incidents/${record.relatedIncidentId || record.id}`);
-                            }
-                          }}
+                          onClick={() => openOrCreateLinkedRecord(record)}
                           className="block w-full truncate rounded px-1 py-0.5 text-left text-[10px] text-blue-400 hover:bg-secondary/60"
                         >
                           {record.title || record.description || record.id}

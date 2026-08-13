@@ -16,6 +16,7 @@ import {
   mergeScraperRecords,
   rejectScraperRecord,
 } from "../services/supabase";
+import { ISABELA_MUNICIPALITIES } from "../data/isabelaMunicipalities";
 import { formatLongDateTime } from "../utils/dateFormat";
 
 const REVIEW_STATUSES = [
@@ -73,11 +74,24 @@ function fmt(value) {
   return value ? formatLongDateTime(value) : "-";
 }
 
+function settledValue(result, fallback) {
+  return result.status === "fulfilled" ? result.value : fallback;
+}
+
 function locationLabel(item = {}) {
   return [
     item.verifiedBarangay || item.extractedBarangay,
     item.verifiedMunicipality || item.extractedMunicipality,
   ].filter(Boolean).join(", ");
+}
+
+function municipalityLabel(item = {}) {
+  const normalized = String(item.verifiedMunicipality || item.extractedMunicipality || "")
+    .replace(/\b(?:city|municipality)\b/ig, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return ISABELA_MUNICIPALITIES.find(municipality => municipality.toLowerCase() === normalized) || "";
 }
 
 function SourceLink({ href }) {
@@ -384,7 +398,6 @@ export default function ScraperReview() {
     status: "pending_review",
     sourceId: "",
     municipality: "",
-    location: "",
     confidence: "",
     reason: "",
     dateFrom: "",
@@ -396,7 +409,7 @@ export default function ScraperReview() {
   const load = async () => {
     setLoading(true);
     try {
-      const [recordRows, candidateRows, sourceRows, runRows, healthRows] = await Promise.all([
+      const [recordResult, candidateResult, sourceResult, runResult, healthResult] = await Promise.allSettled([
         listScraperRecords({
           status: filters.status,
           sourceId: filters.sourceId,
@@ -417,14 +430,27 @@ export default function ScraperReview() {
         }),
         listScraperSources(),
         listScraperRuns({ limit: 10 }),
-        listScraperSourceHealth().catch(() => []),
+        listScraperSourceHealth(),
       ]);
+      const recordRows = settledValue(recordResult, []);
+      const candidateRows = settledValue(candidateResult, []);
+      const sourceRows = settledValue(sourceResult, []);
+      const runRows = settledValue(runResult, []);
+      const healthRows = settledValue(healthResult, []);
       const activeSourceKeys = new Set((sourceRows || []).map(source => source.source_key || source.key));
       setRecords(recordRows);
       setCandidates(candidateRows);
       setSources(sourceRows || []);
       setRuns(runRows || []);
       setSourceHealth((healthRows || []).filter(row => activeSourceKeys.has(row.sourceKey)));
+
+      const requiredFailure = [recordResult, candidateResult, sourceResult].find(result => result.status === "rejected");
+      const diagnosticsFailure = [runResult, healthResult].find(result => result.status === "rejected");
+      if (requiredFailure) {
+        toast.error(requiredFailure.reason?.message || "Some scraper review records could not be loaded.");
+      } else if (diagnosticsFailure) {
+        toast.warning("Scraper records loaded, but run diagnostics are temporarily unavailable.");
+      }
     } catch (error) {
       toast.error(error.message || "Unable to load scraper review queue.");
     } finally {
@@ -440,19 +466,15 @@ export default function ScraperReview() {
   const visibleRecords = useMemo(() => records.filter(record => {
     const needle = query.toLowerCase();
     const matchesQuery = !needle || [record.title, record.snippet, record.extractedMunicipality, record.extractedBarangay, record.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
-    const matchesLocation = !filters.location || locationLabel(record) === filters.location;
-    return matchesQuery && matchesLocation;
-  }), [filters.location, query, records]);
+    const matchesMunicipality = !filters.municipality || municipalityLabel(record) === filters.municipality;
+    return matchesQuery && matchesMunicipality;
+  }), [filters.municipality, query, records]);
   const visibleCandidates = useMemo(() => candidates.filter(candidate => {
     const needle = query.toLowerCase();
     const matchesQuery = !needle || [candidate.title, candidate.snippet, candidate.extractedMunicipality, candidate.extractedBarangay, candidate.rejectionReason, candidate.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
-    const matchesLocation = !filters.location || locationLabel(candidate) === filters.location;
-    return matchesQuery && matchesLocation;
-  }), [candidates, filters.location, query]);
-  const locationOptions = useMemo(() => {
-    const values = [...records, ...candidates].map(locationLabel).filter(Boolean);
-    return [...new Set(values)].sort((a, b) => a.localeCompare(b));
-  }, [candidates, records]);
+    const matchesMunicipality = !filters.municipality || municipalityLabel(candidate) === filters.municipality;
+    return matchesQuery && matchesMunicipality;
+  }), [candidates, filters.municipality, query]);
   const latestRun = runs[0];
 
   return (
@@ -485,7 +507,7 @@ export default function ScraperReview() {
         <div className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">
           <Filter className="h-4 w-4" /> Filters
         </div>
-        <div className="grid gap-3 xl:grid-cols-[1fr_auto_auto_auto_auto_auto_auto_auto]">
+        <div className="grid gap-3 xl:grid-cols-[1fr_auto_auto_auto_auto_auto_auto]">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search title, location, source..." className="h-9 w-full rounded-lg border border-border bg-input-background pl-9 pr-3 text-xs" />
@@ -493,13 +515,12 @@ export default function ScraperReview() {
           <Select value={filters.status} onChange={value => updateFilter("status", value)}>{REVIEW_STATUSES.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>
           <Select value={filters.sourceId} onChange={value => updateFilter("sourceId", value)}><option value="">All sources</option>{sources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}</Select>
           <Select value={filters.confidence} onChange={value => updateFilter("confidence", value)}>{CONFIDENCE_OPTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>
-          <Select value={filters.location} onChange={value => updateFilter("location", value)}>
-            <option value="">All locations</option>
-            {locationOptions.map(location => <option key={location} value={location}>{location}</option>)}
+          <Select value={filters.municipality} onChange={value => updateFilter("municipality", value)}>
+            <option value="">All municipalities</option>
+            {ISABELA_MUNICIPALITIES.map(municipality => <option key={municipality} value={municipality}>{municipality}</option>)}
           </Select>
           <input value={filters.dateFrom} onChange={event => updateFilter("dateFrom", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="From date" />
           <input value={filters.dateTo} onChange={event => updateFilter("dateTo", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="To date" />
-          <input value={filters.municipality} onChange={event => updateFilter("municipality", event.target.value)} placeholder="Municipality text" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
         </div>
       </div>
 

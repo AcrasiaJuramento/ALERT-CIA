@@ -25,6 +25,15 @@ export class SupabaseServiceError extends Error {
 
 export function formatSupabaseError(error, fallback = "Supabase request failed.") {
   if (!error) return fallback;
+  const rawMessage = [
+    error.message,
+    error.details,
+    error.hint,
+    error.cause?.message,
+  ].filter(Boolean).join(" ");
+  if (/failed to fetch|networkerror|load failed/i.test(rawMessage)) {
+    return "Network request failed. Check your internet connection, Supabase project URL, and local dev session, then retry.";
+  }
   const parts = [
     error.message,
     error.details && `Details: ${error.details}`,

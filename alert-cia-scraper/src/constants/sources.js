@@ -48,7 +48,7 @@ export const SOURCES = [
   source("bombo", "Bombo Radyo Cauayan", "https://cauayan.bomboradyo.com", "https://cauayan.bomboradyo.com/?s=accidents", {
     paginationType: "wordpress_search",
     pageUrl: wpSearch("https://cauayan.bomboradyo.com", "accidents"),
-    searchTerms: ["aksidente", "accidents", "banggaan", "disgrasya"],
+    searchTerms: ["accidents", "aksidente", "banggan", "salpukan", "crash"],
     searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com", term)(page),
     articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
   }),

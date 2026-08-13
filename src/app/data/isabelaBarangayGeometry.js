@@ -10,6 +10,11 @@ function normalizeName(value = '') {
     .replace(/\bgeneral\b/g, 'gen')
     .replace(/\bsanta\b/g, 'sta')
     .replace(/\bsanto\b/g, 'sto')
+    .replace(/\b(?:1|i|one|uno)\b/g, '1')
+    .replace(/\b(?:2|ii|two|dos)\b/g, '2')
+    .replace(/\b(?:3|iii|three|tres)\b/g, '3')
+    .replace(/\b(?:4|iv|four|kwatro|cuatro)\b/g, '4')
+    .replace(/\b(?:5|v|five|singko|cinco)\b/g, '5')
     .replace(/\b(?:city|municipality|barangay|brgy|bgy|baryo|poblacion)\b/g, '')
     .replace(/[^a-z0-9]+/g, '');
 }

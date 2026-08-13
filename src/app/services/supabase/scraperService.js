@@ -298,6 +298,11 @@ function normalizedBarangayName(value = "") {
     .replace(/\bgeneral\b/g, "gen")
     .replace(/\bsanta\b/g, "sta")
     .replace(/\bsanto\b/g, "sto")
+    .replace(/\b(?:1|i|one|uno)\b/g, "1")
+    .replace(/\b(?:2|ii|two|dos)\b/g, "2")
+    .replace(/\b(?:3|iii|three|tres)\b/g, "3")
+    .replace(/\b(?:4|iv|four|kwatro|cuatro)\b/g, "4")
+    .replace(/\b(?:5|v|five|singko|cinco)\b/g, "5")
     .replace(/\b(?:barangay|brgy|bgy|baryo)\b/g, "")
     .replace(/[^a-z0-9]+/g, "");
 }
@@ -565,7 +570,7 @@ export async function listScraperRecords({ status, category, sourceId, municipal
     if (status) query = query.eq("status", status);
     if (category) query = query.eq("category", category);
     if (sourceId) query = query.eq("source_id", sourceId);
-    if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
+    if (municipality) query = query.or(`extracted_municipality.ilike.%${municipality}%,verified_municipality.ilike.%${municipality}%`);
     if (barangay) query = query.ilike("extracted_barangay", `%${barangay}%`);
     if (confidence) query = query.eq("classification_confidence", confidence);
     if (dateFrom) query = query.gte("scraped_at", `${dateFrom}T00:00:00`);
