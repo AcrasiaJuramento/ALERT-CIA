@@ -337,7 +337,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     recordId: row.id,
     sourceKind: row.related_incident_id || row.status === "promoted" || row.status === "imported"
       ? "promoted_scraped"
-      : row.public_visible || row.status === "approved" || row.status === "matched"
+      : row.public_visible || row.status === "verified" || row.status === "approved" || row.status === "matched"
         ? "reviewed_scraped"
         : "scraped",
     sourceLabel: row.source?.name || row.source_site || "External source",
@@ -641,21 +641,35 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   }
 }
 
-export async function listOfficerScrapedMapIncidents({ limit = 200, includeUnverified = true } = {}) {
+export async function listOfficerScrapedMapIncidents({ limit = 500, includeUnverified = true } = {}) {
   if (!isSupabaseConfigured) return [];
 
-  const rows = await runSupabaseRequest(client =>
-    client
+  const selectColumns = "*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)";
+  const reviewedStatuses = ["approved", "promoted", "matched", "imported"];
+  const pendingStatuses = ["pending_review", "new"];
+  const buildQuery = (client, statuses, rowLimit) => client
       .from("scraper_records")
-      .select("*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)")
+      .select(selectColumns)
       .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
       .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
-      .in("status", includeUnverified ? ["pending_review", "approved", "promoted", "new", "matched", "imported"] : ["approved", "promoted", "matched", "imported"])
+      .in("status", statuses)
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
-      .limit(limit),
-  "Unable to load officer scraper map incidents.");
-  return scraperRowsToMapIncidents(asRows(rows).filter(isAccidentMapRow));
+      .limit(rowLimit);
+
+  const reviewedRows = await runSupabaseRequest(
+    client => buildQuery(client, reviewedStatuses, limit),
+    "Unable to load verified scraper map incidents.",
+  );
+  let pendingRows = [];
+  if (includeUnverified) {
+    pendingRows = await runSupabaseRequest(
+      client => buildQuery(client, pendingStatuses, Math.min(limit, 200)),
+      "Unable to load pending scraper map incidents.",
+    ).catch(() => []);
+  }
+  const rowsById = new Map([...asRows(reviewedRows), ...asRows(pendingRows)].map(row => [row.id, row]));
+  return scraperRowsToMapIncidents([...rowsById.values()].filter(isAccidentMapRow));
 }
 
 export async function updateScraperRecordStatus(recordId, status, errorMessage = null) {

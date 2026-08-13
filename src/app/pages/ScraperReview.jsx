@@ -63,7 +63,7 @@ function confidenceClass(value = "") {
 }
 
 function statusLabel(status = "") {
-  if (status === "approved" || status === "matched") return "Verified";
+  if (status === "verified" || status === "approved" || status === "matched") return "Verified";
   if (status === "ignored") return "Rejected";
   if (status === "pending_review" || status === "new") return "Needs Review";
   if (status === "promoted" || status === "imported") return "Promoted";
@@ -494,7 +494,7 @@ export default function ScraperReview() {
 
       <div className="mb-5 grid gap-3 md:grid-cols-4">
         <Metric label="Review Queue" value={records.filter(item => ["pending_review", "new"].includes(item.status)).length} />
-        <Metric label="Verified Loaded" value={records.filter(item => ["approved", "matched", "promoted", "imported"].includes(item.status)).length} />
+        <Metric label="Verified Loaded" value={records.filter(item => ["verified", "approved", "matched", "promoted", "imported"].includes(item.status)).length} />
         <Metric label="Rejected Articles" value={candidates.length} />
         <Metric label="Last Run Articles" value={latestRun?.fetched_count ?? "-"} />
       </div>
