@@ -118,64 +118,203 @@ function latestGcsTotal(record = {}) {
 }
 
 export async function exportPCRToPdf(record) {
-  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  await document.fonts?.ready;
-  const source = [...document.querySelectorAll(".pcr-print-source")]
-    .find(element => element.dataset.pcrExportId === String(record.id || ""));
-  if (!source) throw new Error("PCR export layout is not available.");
+  try {
+    await new Promise(resolve =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(resolve),
+      ),
+    );
 
-  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
-    import("html2canvas"),
-    import("jspdf"),
-  ]);
-  const frame = source.querySelector("iframe");
-  if (frame && frame.contentDocument?.readyState !== "complete") {
-    await new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(() => reject(new Error("PCR preview did not finish loading.")), 10000);
-      frame.addEventListener("load", () => {
-        window.clearTimeout(timeout);
-        resolve();
-      }, { once: true });
-    });
-  }
-  const pageRoot = frame?.contentDocument || source;
-  await pageRoot.fonts?.ready;
-  const pages = [...pageRoot.querySelectorAll(".page, .pcr-page")];
-  if (!pages.length) throw new Error("PCR export pages are not available.");
-  await Promise.all([...pageRoot.images].map(image => {
-    if (image.complete && image.naturalWidth > 0) return image.decode?.().catch(() => undefined);
-    return new Promise(resolve => {
-      image.addEventListener("load", resolve, { once: true });
-      image.addEventListener("error", resolve, { once: true });
-    });
-  }));
+    const source = [...document.querySelectorAll(".pcr-print-source")]
+      .find(
+        element =>
+          element.dataset.pcrExportId ===
+          String(record.id || ""),
+      );
 
-  const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: [215.9, 330.2], compress: true });
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
-
-  for (let index = 0; index < pages.length; index += 1) {
-    let canvas;
-    source.style.visibility = "visible";
-    try {
-      canvas = await html2canvas(pages[index], {
-        backgroundColor: "#ffffff",
-        scale: 3,
-        useCORS: true,
-        logging: false,
-        imageTimeout: 0,
-      });
-    } finally {
-      source.style.visibility = "hidden";
+    if (!source) {
+      throw new Error("PCR export layout is not available.");
     }
-    const ratio = Math.min(pageWidth / canvas.width, pageHeight / canvas.height);
-    const width = canvas.width * ratio;
-    const height = canvas.height * ratio;
-    if (index > 0) pdf.addPage();
-    pdf.addImage(canvas.toDataURL("image/png"), "PNG", (pageWidth - width) / 2, 0, width, height, undefined, "FAST");
-  }
 
-  pdf.save(`${record.responseNumber || "PCR-report"}.pdf`);
+    const frame = source.querySelector("iframe");
+
+    if (!frame) {
+      throw new Error("PCR export iframe is not available.");
+    }
+
+    const printWindow = frame.contentWindow;
+    const printDocument = frame.contentDocument;
+
+    if (!printWindow || !printDocument) {
+      throw new Error("PCR print document is not available.");
+    }
+
+    // Wait until the iframe has completed rendering.
+    if (printDocument.readyState !== "complete") {
+      await new Promise((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          reject(
+            new Error(
+              "PCR preview did not finish loading.",
+            ),
+          );
+        }, 10000);
+
+        frame.addEventListener(
+          "load",
+          () => {
+            window.clearTimeout(timeout);
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    }
+
+    // Wait for fonts.
+    if (printDocument.fonts?.ready) {
+      await printDocument.fonts.ready;
+    }
+
+    // Wait for images.
+    await Promise.all(
+      [...printDocument.images].map(image => {
+        if (
+          image.complete &&
+          image.naturalWidth > 0
+        ) {
+          return image.decode?.().catch(() => undefined);
+        }
+
+        return new Promise(resolve => {
+          image.addEventListener(
+            "load",
+            resolve,
+            { once: true },
+          );
+
+          image.addEventListener(
+            "error",
+            resolve,
+            { once: true },
+          );
+        });
+      }),
+    );
+
+    /*
+     * Force the actual PCR iframe document to use the
+     * same physical page size as the preview.
+     */
+    const exportStyle =
+      printDocument.createElement("style");
+
+    exportStyle.setAttribute(
+      "data-pcr-export-print",
+      "true",
+    );
+
+    exportStyle.textContent = `
+      @page {
+        size: 215.9mm 330.2mm;
+        margin: 0;
+      }
+
+      html,
+      body {
+        margin: 0 !important;
+        padding: 0 !important;
+        background: #fff !important;
+
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      *,
+      *::before,
+      *::after {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .page {
+        width: 215.9mm !important;
+        height: 330.2mm !important;
+        margin: 0 !important;
+        box-shadow: none !important;
+
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .page:last-child {
+        page-break-after: auto !important;
+      }
+
+      /* Preserve PCR shaded cells */
+      th,
+      .shade {
+        background-color: #d9d9d9 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      /* Preserve triage colors */
+      .triage-red {
+        background-color: #f10d0d !important;
+        color: #111 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .triage-yellow {
+        background-color: #fff400 !important;
+        color: #111 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .triage-green {
+        background-color: #8ed15d !important;
+        color: #111 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .triage-black {
+        background-color: #151515 !important;
+        color: #fff !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+    `;
+
+    printDocument.head.appendChild(exportStyle);
+
+    // Give the browser one final layout pass.
+    await new Promise(resolve => {
+      printWindow.requestAnimationFrame(() => {
+        printWindow.requestAnimationFrame(resolve);
+      });
+    });
+
+    // Print the ACTUAL PCR iframe document.
+    printWindow.focus();
+    printWindow.print();
+
+    // Clean up after printing.
+    window.setTimeout(() => {
+      exportStyle.remove();
+    }, 1000);
+
+  } catch (error) {
+    console.error(
+      "PCR PDF export failed:",
+      error,
+    );
+
+    throw error;
+  }
 }
 
 export async function exportPCRToDocx(record) {
