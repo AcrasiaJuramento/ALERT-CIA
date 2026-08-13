@@ -283,10 +283,34 @@ function legacyQualityFields(record) {
 }
 
 async function updateLegacyIncidentRecord(client, incidentId, record, runId) {
+  const existingResult = await client.from("scraper_records")
+    .select("status, public_visible, needs_manual_review, verified_by, verified_at, verified_municipality, verified_barangay, verified_purok_sitio, verified_road_place, processed_at, error_message")
+    .eq("scraped_incident_id", incidentId)
+    .is("deleted_at", null)
+    .maybeSingle();
+  if (existingResult.error) throw existingResult.error;
+
+  const existing = existingResult.data || {};
+  const reviewLocked = Boolean(existing.public_visible || existing.verified_at || ["approved", "matched", "promoted", "imported"].includes(existing.status));
+  const qualityFields = legacyQualityFields(record);
+  const preservedReviewFields = reviewLocked ? {
+    status: existing.status,
+    public_visible: existing.public_visible,
+    needs_manual_review: existing.needs_manual_review,
+    verified_by: existing.verified_by,
+    verified_at: existing.verified_at,
+    verified_municipality: existing.verified_municipality || qualityFields.verified_municipality,
+    verified_barangay: existing.verified_barangay || qualityFields.verified_barangay,
+    verified_purok_sitio: existing.verified_purok_sitio || qualityFields.verified_purok_sitio,
+    verified_road_place: existing.verified_road_place || qualityFields.verified_road_place,
+    processed_at: existing.processed_at || qualityFields.processed_at,
+    error_message: existing.error_message,
+  } : qualityFields;
+
   const { error } = await client.from("scraper_records")
     .update({
       ...legacyLocationFields(record, runId),
-      ...legacyQualityFields(record),
+      ...preservedReviewFields,
       updated_at: new Date().toISOString(),
     })
     .eq("scraped_incident_id", incidentId)
@@ -404,8 +428,24 @@ async function refreshExactSourceRecord(client, record, runId) {
   if (!incidentId) return false;
 
   await addIncidentSource(client, incidentId, record);
+  const existingIncidentResult = await client.from("scraped_incidents")
+    .select("needs_manual_review, verified_by, verified_at, verified_municipality, verified_barangay, verified_purok_sitio, verified_road_place")
+    .eq("id", incidentId)
+    .maybeSingle();
+  if (existingIncidentResult.error) throw existingIncidentResult.error;
+
+  const existingIncident = existingIncidentResult.data || {};
   const canonicalUpdate = incidentRow(record);
   delete canonicalUpdate.incident_key;
+  if (existingIncident.verified_at || existingIncident.verified_by || existingIncident.needs_manual_review === false) {
+    canonicalUpdate.needs_manual_review = existingIncident.needs_manual_review;
+    canonicalUpdate.verified_by = existingIncident.verified_by;
+    canonicalUpdate.verified_at = existingIncident.verified_at;
+    canonicalUpdate.verified_municipality = existingIncident.verified_municipality || canonicalUpdate.verified_municipality;
+    canonicalUpdate.verified_barangay = existingIncident.verified_barangay || canonicalUpdate.verified_barangay;
+    canonicalUpdate.verified_purok_sitio = existingIncident.verified_purok_sitio || canonicalUpdate.verified_purok_sitio;
+    canonicalUpdate.verified_road_place = existingIncident.verified_road_place || canonicalUpdate.verified_road_place;
+  }
   const canonicalResult = await client.from("scraped_incidents").update(canonicalUpdate).eq("id", incidentId);
   if (canonicalResult.error) throw canonicalResult.error;
 
