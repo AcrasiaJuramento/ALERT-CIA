@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Edit2, Plus, Power, Radio, Save, Search, Shield, UserCog, X } from 'lucide-react';
-import { assignProfileRole, assignProfileToRespondingTeam, createCrewMember, deactivateProfile, getActiveTeamMembership, listCrewMembers, listProfiles, listRespondingTeams, updateCrewMember, updateProfile } from '../services/supabase';
+import { CheckCircle2, Copy, Edit2, Eye, EyeOff, Plus, Power, Radio, Save, Search, Shield, UserCog, X } from 'lucide-react';
+import { assignProfileRole, assignProfileToRespondingTeam, createCrewMember, createOfficerAccountByAdmin, deactivateProfile, getActiveTeamMembership, listCrewMembers, listProfiles, listRespondingTeams, updateCrewMember, updateProfile } from '../services/supabase';
 
 const roleBadge = {
   administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -34,6 +34,15 @@ const roleOptions = [
   { value: 'dispatcher', label: 'Dispatcher Officer' },
   { value: 'field_responder', label: 'Field Officer' },
 ];
+const createUserInitialForm = {
+  name: '',
+  email: '',
+  password: '',
+  contact: '',
+  position: '',
+  agency: '',
+  role: 'field_responder',
+};
 
 const editableFields = ['display_name', 'email', 'contact_number', 'position_title', 'agency'];
 const crewRoleOptions = [
@@ -59,7 +68,7 @@ function profileToRow(profile = {}) {
     email: profile.email || '',
     contact: profile.contact_number || '',
     position: profile.position_title || '',
-    agency: profile.station?.name || '',
+    agency: profile.agency || profile.station?.name || '',
     role: profile.roles?.[0]?.role || 'field_responder',
     teamId: activeTeam?.team_id || '',
     teamName: activeTeam?.team?.name || '',
@@ -70,6 +79,12 @@ function profileToRow(profile = {}) {
     lastLogin: '-',
     raw: profile,
   };
+}
+
+function generateTemporaryPassword() {
+  const bytes = new Uint8Array(18);
+  globalThis.crypto.getRandomValues(bytes);
+  return `Alert-${btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, '').slice(0, 18)}!7`;
 }
 
 export default function UserManagement() {
@@ -86,6 +101,10 @@ export default function UserManagement() {
   const [crewRoster, setCrewRoster] = useState([]);
   const [crewForm, setCrewForm] = useState({ name: '', role: 'driver', contactNumber: '', respondingTeamId: '' });
   const [editingCrew, setEditingCrew] = useState({});
+  const [createUserOpen, setCreateUserOpen] = useState(false);
+  const [createUserForm, setCreateUserForm] = useState(() => ({ ...createUserInitialForm, password: generateTemporaryPassword() }));
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [provisionedAccount, setProvisionedAccount] = useState(null);
   const [formError, setFormError] = useState('');
 
   const loadUsers = async () => {
@@ -116,6 +135,13 @@ export default function UserManagement() {
 
   const replaceRow = profile => {
     setUserList(current => current.map(row => (row.id === profile.id ? profileToRow(profile) : row)));
+  };
+  const upsertRow = profile => {
+    setUserList(current => {
+      const nextRow = profileToRow(profile);
+      if (current.some(row => row.id === profile.id)) return current.map(row => (row.id === profile.id ? nextRow : row));
+      return [...current, nextRow].sort((a, b) => a.name.localeCompare(b.name));
+    });
   };
 
   const teamNameById = teamId => teamOptions.find(team => team.id === teamId)?.name || '';
@@ -176,6 +202,34 @@ export default function UserManagement() {
       setFormError(requestError.message || 'Unable to save user details.');
     } finally {
       setSavingId('');
+    }
+  };
+
+  const handleCreateUser = async event => {
+    event.preventDefault();
+    setFormError('');
+    if (createUserForm.password.length < 12) {
+      setFormError('Use a temporary password with at least 12 characters.');
+      return;
+    }
+    try {
+      const profile = await createOfficerAccountByAdmin({
+        ...createUserForm,
+        name: createUserForm.name.trim(),
+        email: createUserForm.email.trim(),
+        contact: createUserForm.contact.trim(),
+        position: createUserForm.position.trim(),
+        agency: createUserForm.agency.trim(),
+      });
+      upsertRow(profile);
+      setProvisionedAccount({
+        email: createUserForm.email.trim(),
+        password: createUserForm.password,
+        name: createUserForm.name.trim(),
+      });
+      setCreateUserForm({ ...createUserInitialForm, password: generateTemporaryPassword() });
+    } catch (requestError) {
+      setFormError(requestError.message || 'Unable to create account.');
     }
   };
 
@@ -340,7 +394,13 @@ export default function UserManagement() {
           </h1>
           <p className="text-muted-foreground text-xs mt-0.5">{userList.length} registered personnel</p>
         </div>
-        <button onClick={loadUsers} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all">Refresh</button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => { setFormError(''); setProvisionedAccount(null); setCreateUserOpen(true); }} className="flex items-center gap-1.5 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold transition-all">
+            <Plus className="h-3.5 w-3.5" />
+            Create Account
+          </button>
+          <button onClick={loadUsers} className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition-all">Refresh</button>
+        </div>
       </div>
 
       {/* Role Filter Cards */}
@@ -605,6 +665,81 @@ export default function UserManagement() {
               <button type="submit" disabled={savingId === editUser.id} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-900 text-white text-xs font-semibold">
                 <Save className="w-3.5 h-3.5" />
                 Save Changes
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {createUserOpen && (
+        <Modal title="Create Staff Account" onClose={() => setCreateUserOpen(false)}>
+          <form onSubmit={handleCreateUser} className="space-y-4">
+            <div className="rounded-lg border border-blue-500/25 bg-blue-500/10 px-3 py-2 text-xs text-blue-300">
+              Account creation is administrator-only. Give these credentials directly to the user and have them change the password after first login.
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Full Name" value={createUserForm.name} onChange={value => setCreateUserForm(form => ({ ...form, name: value }))} />
+              <Field label="Email" type="email" value={createUserForm.email} onChange={value => setCreateUserForm(form => ({ ...form, email: value }))} />
+              <Field label="Contact Number" value={createUserForm.contact} onChange={value => setCreateUserForm(form => ({ ...form, contact: value }))} />
+              <Field label="Position / Rank" value={createUserForm.position} onChange={value => setCreateUserForm(form => ({ ...form, position: value }))} />
+              <div className="sm:col-span-2">
+                <Field label="Agency / Unit" value={createUserForm.agency} onChange={value => setCreateUserForm(form => ({ ...form, agency: value }))} />
+              </div>
+              <label className="block">
+                <span className="block text-xs font-medium text-muted-foreground mb-1.5">Role</span>
+                <select
+                  value={createUserForm.role}
+                  onChange={event => setCreateUserForm(form => ({ ...form, role: event.target.value }))}
+                  className="w-full rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground focus:outline-none focus:border-blue-500"
+                >
+                  {roleOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label className="block">
+                <span className="block text-xs font-medium text-muted-foreground mb-1.5">Temporary Password</span>
+                <div className="flex gap-2">
+                  <div className="relative min-w-0 flex-1">
+                    <input
+                      type={showCreatePassword ? 'text' : 'password'}
+                      required
+                      minLength={12}
+                      value={createUserForm.password}
+                      onChange={event => setCreateUserForm(form => ({ ...form, password: event.target.value }))}
+                      className="w-full rounded-lg border border-border bg-input-background px-3 py-2 pr-9 text-sm text-foreground focus:outline-none focus:border-blue-500"
+                    />
+                    <button type="button" onClick={() => setShowCreatePassword(show => !show)} className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:text-foreground" title={showCreatePassword ? 'Hide password' : 'Show password'}>
+                      {showCreatePassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                  <button type="button" onClick={() => setCreateUserForm(form => ({ ...form, password: generateTemporaryPassword() }))} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground">
+                    Generate
+                  </button>
+                </div>
+              </label>
+            </div>
+            {provisionedAccount && (
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-3 text-xs text-green-300">
+                <div className="mb-2 font-semibold">Account created. Share credentials once:</div>
+                <div className="font-mono text-foreground">{provisionedAccount.email}</div>
+                <div className="mt-1 flex items-center justify-between gap-2 font-mono text-foreground">
+                  <span className="break-all">{provisionedAccount.password}</span>
+                  <button
+                    type="button"
+                    onClick={() => navigator.clipboard?.writeText(`Email: ${provisionedAccount.email}\nPassword: ${provisionedAccount.password}`)}
+                    className="inline-flex shrink-0 items-center gap-1 rounded bg-green-600 px-2 py-1 font-semibold text-white"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                    Copy
+                  </button>
+                </div>
+              </div>
+            )}
+            {formError && <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{formError}</div>}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setCreateUserOpen(false)} className="px-3 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground text-xs font-semibold">Close</button>
+              <button type="submit" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-semibold">
+                <Plus className="w-3.5 h-3.5" />
+                Create Account
               </button>
             </div>
           </form>

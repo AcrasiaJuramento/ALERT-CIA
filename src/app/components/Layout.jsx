@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Bell, ChevronDown, Database, ExternalLink, LogOut, Menu, Moon, Radio, Siren, Sun, X,
+  Bell, ChevronDown, Database, ExternalLink, KeyRound, LogOut, Menu, Moon, Radio, Siren, Sun, UserCircle, X,
 } from 'lucide-react';
 import { getAuthorizedNavigation, getCurrentPage, isNavigationItemActive, PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
@@ -89,6 +89,7 @@ export default function Layout() {
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
   const navItems = getAuthorizedNavigation(user.role);
   const currentPage = getCurrentPage(location.pathname);
+  const currentPageLabel = location.pathname === '/admin/profile' ? 'Profile Management' : currentPage?.label;
   const showGlobalScraperJob = scraperJob.running && !location.pathname.startsWith('/admin/map');
 
   useEffect(() => subscribeScraperJob(setScraperJob), []);
@@ -156,8 +157,8 @@ export default function Layout() {
           <button onClick={() => setMobileSidebarOpen(true)} className="md:hidden w-8 h-8 grid place-items-center rounded-lg text-muted-foreground hover:bg-secondary"><Menu className="w-4 h-4" /></button>
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="hidden md:grid w-8 h-8 place-items-center rounded-lg text-muted-foreground hover:bg-secondary">{sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}</button>
           <div className="min-w-0">
-            <h1 className="text-sm font-semibold text-foreground truncate">{currentPage?.label ?? (location.pathname.includes('access-denied') ? 'Access Denied' : 'Command Center')}</h1>
-            <div className="text-[10px] text-muted-foreground truncate">Command Center / {currentPage?.group ? `${currentPage.group} / ` : ''}{currentPage?.label ?? 'Restricted Page'}</div>
+            <h1 className="text-sm font-semibold text-foreground truncate">{currentPageLabel ?? (location.pathname.includes('access-denied') ? 'Access Denied' : 'Command Center')}</h1>
+            <div className="text-[10px] text-muted-foreground truncate">Command Center / {currentPage?.group ? `${currentPage.group} / ` : ''}{currentPageLabel ?? 'Restricted Page'}</div>
           </div>
           <ConnectionIndicator />
           <ActiveIncidentBadge />
@@ -205,7 +206,37 @@ export default function Layout() {
 
           <div className="relative">
             <button onClick={() => { setUserMenuOpen(!userMenuOpen); setNotifOpen(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-secondary"><div className="w-8 h-8 bg-blue-600 rounded-full grid place-items-center text-xs font-bold text-white">{user.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="hidden md:block text-left"><div className="text-xs font-semibold text-foreground">{user.name}</div><div className="text-[10px] text-muted-foreground">{roleLabel}</div></div><ChevronDown className="w-3 h-3 text-muted-foreground" /></button>
-            {userMenuOpen && <div className="fixed right-4 top-16 z-[2100] w-52 bg-card border border-border rounded-lg shadow-2xl overflow-hidden"><div className="px-4 py-3 border-b border-border"><div className="text-xs font-semibold">{user.name}</div><div className="text-[10px] text-muted-foreground">{user.email}</div></div><button onClick={handleLogout} className="w-full text-left px-4 py-2.5 text-xs text-red-400 hover:bg-secondary">Logout</button></div>}
+            {userMenuOpen && (
+              <div className="fixed right-4 top-16 z-[2100] w-52 overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
+                <div className="border-b border-border px-4 py-3">
+                  <div className="text-xs font-semibold">{user.name}</div>
+                  <div className="text-[10px] text-muted-foreground">{user.email}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    navigate('/admin/profile');
+                  }}
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-medium text-foreground hover:bg-secondary"
+                >
+                  <UserCircle className="h-4 w-4 text-blue-400" />
+                  Profile Management
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserMenuOpen(false);
+                    navigate('/admin/change-password');
+                  }}
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-xs font-medium text-foreground hover:bg-secondary"
+                >
+                  <KeyRound className="h-4 w-4 text-amber-400" />
+                  Change Password
+                </button>
+                <button onClick={handleLogout} className="w-full border-t border-border px-4 py-2.5 text-left text-xs text-red-400 hover:bg-secondary">Logout</button>
+              </div>
+            )}
           </div>
         </header>
         <main className="relative z-0 flex-1 overflow-auto bg-background"><Outlet /></main>

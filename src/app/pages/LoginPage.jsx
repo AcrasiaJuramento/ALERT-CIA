@@ -179,7 +179,7 @@ export default function LoginPage() {
                 />
                 <span className="text-sm text-muted-foreground">Remember me</span>
               </label>
-              <button type="button" className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
+              <button type="button" onClick={() => navigate('/forgot-password')} className="text-sm text-blue-400 hover:text-blue-300 transition-colors">
                 Forgot password?
               </button>
             </div>
@@ -204,15 +204,8 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Register link */}
           <div className="text-center mt-6">
-            <span className="text-muted-foreground text-sm">Don't have an account? </span>
-            <button
-              onClick={() => navigate('/register')}
-              className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
-            >
-              Request Access
-            </button>
+            <span className="text-muted-foreground text-sm">Accounts are issued by the system administrator.</span>
           </div>
         </div>
       </div>

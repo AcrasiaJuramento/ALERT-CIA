@@ -2,6 +2,7 @@ import { runSupabaseRequest } from "./errors";
 import { getSupabaseClient } from "../../lib/supabaseClient";
 
 const PUBLIC_REGISTRATION_ROLES = new Set(["dispatcher", "field_responder"]);
+const ADMIN_PROVISIONING_ROLES = new Set(["dispatcher", "field_responder"]);
 
 export function getRegistrationErrorMessage(error) {
   const message = error?.message || "";
@@ -26,7 +27,28 @@ export function assertPublicRegistrationRole(role) {
   }
 }
 
+async function getFunctionErrorMessage(error) {
+  const message = error?.message || "";
+  if (error?.name === "FunctionsFetchError" || message.toLowerCase().includes("failed to send a request")) {
+    return "The admin account provisioning function is not reachable. Deploy the Supabase Edge Function named admin-create-user and confirm its service-role secret is configured.";
+  }
+
+  try {
+    const payload = await error?.context?.json?.();
+    return payload?.error || message;
+  } catch {
+    return message;
+  }
+}
+
 export async function registerOfficerAccount({
+  role,
+}) {
+  assertPublicRegistrationRole(role);
+  throw new Error("Public registration is disabled. Accounts must be created by an administrator in User Management.");
+}
+
+export async function createOfficerAccountByAdmin({
   name,
   email,
   password,
@@ -35,24 +57,38 @@ export async function registerOfficerAccount({
   agency,
   role,
 }) {
-  assertPublicRegistrationRole(role);
+  if (!ADMIN_PROVISIONING_ROLES.has(role)) {
+    throw new Error("Administrators can create Dispatcher and Field Officer accounts from this screen.");
+  }
 
   const client = getSupabaseClient();
-  const { data, error } = await client.auth.signUp({
-    email,
-    password,
-    options: {
-      data: {
-        display_name: name,
-        name,
-        contact_number: contact,
-        position_title: position,
-        agency,
-        role,
-      },
+  const { data, error } = await client.functions.invoke("admin-create-user", {
+    body: {
+      name,
+      email,
+      password,
+      contact,
+      position,
+      agency,
+      role,
     },
   });
 
+  if (error) throw new Error(await getFunctionErrorMessage(error));
+  if (data?.error) throw new Error(data.error);
+  return data.profile;
+}
+
+export async function sendPasswordResetEmail(email) {
+  const client = getSupabaseClient();
+  const redirectTo = `${window.location.origin}/reset-password`;
+  const { error } = await client.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw error;
+}
+
+export async function changeCurrentUserPassword(password) {
+  const client = getSupabaseClient();
+  const { data, error } = await client.auth.updateUser({ password });
   if (error) throw error;
   return data;
 }
@@ -69,6 +105,22 @@ export async function getCurrentUserProfile() {
       .eq("id", authData.user.id)
       .maybeSingle();
   }, "Unable to load current profile.");
+}
+
+export async function updateCurrentUserProfile({
+  displayName,
+  contactNumber,
+  positionTitle,
+  agency,
+}) {
+  return runSupabaseRequest(client =>
+    client.rpc("update_current_profile", {
+      p_display_name: displayName,
+      p_contact_number: contactNumber,
+      p_position_title: positionTitle,
+      p_agency: agency,
+    }),
+  "Unable to update your profile.");
 }
 
 export async function listProfiles() {

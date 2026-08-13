@@ -101,10 +101,8 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-4 text-center">
-            <Link to="/register" className="text-blue-400">
-              Register
-            </Link>
+          <div className="mt-4 text-center text-sm text-slate-400">
+            Accounts are issued by the system administrator.
           </div>
         </div>
       </div>

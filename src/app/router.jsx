@@ -3,7 +3,8 @@ import Layout from './components/Layout'
 import PublicLayout from './components/PublicLayout'
 import LandingPage from './pages/LandingPage'
 import LoginPage from './pages/LoginPage'
-import RegisterPage from './pages/RegisterPage'
+import ForgotPasswordPage from './pages/ForgotPasswordPage'
+import ChangePasswordPage from './pages/ChangePasswordPage'
 import Dashboard from './pages/Dashboard'
 import PCRModule from './pages/PCRModule'
 import DispatchModule from './pages/DispatchModule'
@@ -18,6 +19,7 @@ import Analytics from './pages/Analytics'
 import ReportsAnalytics from './pages/ReportsAnalytics'
 import ScraperReview from './pages/ScraperReview'
 import UserManagement from './pages/UserManagement'
+import ProfileManagement from './pages/ProfileManagement'
 import SystemSettings from './pages/SystemSettings'
 import PublicDashboard from './pages/public/PublicDashboard'
 import PublicIncidentList from './pages/public/PublicIncidentList'
@@ -31,7 +33,9 @@ const protect = (permission, element) => <ProtectedRoute permission={permission}
 export const router = createBrowserRouter([
   { path: '/', element: <LandingPage /> },
   { path: '/login', element: <LoginPage /> },
-  { path: '/register', element: <RegisterPage /> },
+  { path: '/forgot-password', element: <ForgotPasswordPage /> },
+  { path: '/reset-password', element: <ChangePasswordPage /> },
+  { path: '/register', element: <Navigate to="/login" replace /> },
   {
     path: '/admin',
     element: protect(null, <Layout />),
@@ -48,6 +52,8 @@ export const router = createBrowserRouter([
       { path: 'reports-analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <ReportsAnalytics />) },
       { path: 'scraper-review', element: protect(PERMISSIONS.MANAGE_SCRAPER, <ScraperReview />) },
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
+      { path: 'profile', element: protect(null, <ProfileManagement />) },
+      { path: 'change-password', element: protect(null, <ChangePasswordPage embedded />) },
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
       { path: 'access-denied', element: <AccessDenied /> },
       { path: 'dispatch', element: protect(PERMISSIONS.VIEW_DISPATCH, <DispatchRecords />) },

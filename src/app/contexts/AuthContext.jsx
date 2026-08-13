@@ -228,11 +228,21 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const refreshUserProfile = async () => {
+    if (!isSupabaseConfigured || !user?.id) return user;
+    const profile = await loadSupabaseProfile(user.id);
+    const nextUser = profileToUser(profile);
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
+    setUser(nextUser);
+    return nextUser;
+  };
+
   const value = useMemo(() => ({
     user,
     authLoading,
     login,
     logout,
+    refreshUserProfile,
     roleLabel: user ? ROLE_LABELS[user.role] : '',
     can: permission => hasPermission(user?.role, permission),
   }), [user, authLoading]);

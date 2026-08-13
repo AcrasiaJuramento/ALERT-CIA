@@ -316,10 +316,10 @@ export default function LandingPage() {
               <ArrowRight className="w-5 h-5" />
             </button>
             <button
-              onClick={() => navigate('/register')}
+              onClick={() => navigate('/login')}
               className="px-8 py-4 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl border border-slate-700 transition-all"
             >
-              Register Account
+              Staff Login
             </button>
           </div>
           <div className="flex items-center justify-center gap-2 mt-8 text-slate-500">
