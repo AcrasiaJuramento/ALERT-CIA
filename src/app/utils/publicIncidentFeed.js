@@ -4,7 +4,7 @@ import {
   listPCRMapIncidents,
   listPublicPCRMapIncidents,
 } from '../services/supabase';
-import { hasValidLatLng, isWithinEchagueMapArea } from './mapData';
+import { hasValidLatLng, isWithinIsabelaMapArea } from './mapData';
 
 function isAccidentRecord(record = {}) {
   const values = [
@@ -55,13 +55,13 @@ function sanitizeForPublic(record = {}) {
 export async function loadPublicAccidentIncidents({ officialLimit = 500, scrapedLimit = 200, pcrLimit = 200 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
-      listIncidents({ limit: officialLimit }).catch(() => []),
+      listIncidents({ publicOnly: true, limit: officialLimit }).catch(() => []),
     ]),
     listPublicPCRMapIncidents({ limit: pcrLimit })
       .catch(() => listPCRMapIncidents({ publicOnly: true, limit: pcrLimit }))
       .catch(() => []),
     Promise.all([
-      listOfficerScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
+      listOfficerScrapedMapIncidents({ limit: scrapedLimit, includeUnverified: false }).catch(() => []),
     ]),
   ]);
 
@@ -79,6 +79,6 @@ export async function loadPublicAccidentIncidents({ officialLimit = 500, scraped
 
   return mergeMapRecords([...publicAndAccidentReports, ...pcrOnly, ...scrapedAccidents])
     .filter(hasValidLatLng)
-    .filter(isWithinEchagueMapArea)
+    .filter(isWithinIsabelaMapArea)
     .map(sanitizeForPublic);
 }

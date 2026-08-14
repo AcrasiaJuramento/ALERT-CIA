@@ -861,6 +861,7 @@ export default function PublicMap() {
             clusterMarkers={false}
             autoFit={!route.length && !selectedIncidentId}
             compact
+            scope="isabela"
           />
 
           <div className="absolute left-3 top-3 z-[500] md:left-4">
