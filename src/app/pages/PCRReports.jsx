@@ -232,7 +232,7 @@ export default function PCRReports() {
               <td className="px-4 py-3"><div className="font-semibold">{record.patientName || 'Unnamed patient'}</div><div className="text-xs text-muted-foreground">{record.age && `${record.age} yrs`} {record.gender}</div></td>
               <td className="px-4 py-3">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</td>
               <td className="px-4 py-3 max-w-52 truncate">{record.placeOfIncident || '-'}</td>
-              <td className="px-4 py-3 text-xs"><div>{record.dispatchId ? <span className="rounded-full bg-blue-500/15 px-2 py-1 font-semibold text-blue-400">Linked</span> : <span className="text-muted-foreground">Unlinked</span>}</div><div className="mt-1 text-[10px] text-muted-foreground">{record.workflowLabel}</div></td>
+              <td className="px-4 py-3 text-xs"><div>{record.dispatchId ? <span className="rounded-full bg-blue-500/15 px-2 py-1 font-semibold text-blue-400">Linked</span> : <span className="text-muted-foreground">Manual</span>}</div></td>
               <td className="px-4 py-3">
                 <span className={`px-2 py-1 rounded-full text-[11px] font-semibold ${isReviewable(record) ? 'bg-amber-500/15 text-amber-500' : record.status === 'Verified' ? 'bg-green-500/15 text-green-500' : record.status === 'Rejected' ? 'bg-red-500/15 text-red-500' : 'bg-slate-500/15 text-slate-400'}`}>{displayStatus(record)}</span>
                 {record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}
