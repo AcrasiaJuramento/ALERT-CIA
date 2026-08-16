@@ -3,6 +3,7 @@ import { ROLES, ROLE_LABELS, hasPermission } from '../access/rbac';
 import { localServerClient } from '../api/local-server-client';
 import { checkConnection, getConnectionState } from '../network/connection-manager';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
+import { logAuditEvent } from '../services/supabase/auditService';
 
 const AUTH_STORAGE_KEY = 'alert-cia-auth-user';
 const OFFLINE_AUTH_KEY = 'alert-cia-offline-auth';
@@ -201,6 +202,7 @@ export function AuthProvider({ children }) {
       await saveOfflineLogin(nextUser, password);
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
       setUser(nextUser);
+      void logAuditEvent({ action: 'USER_LOGIN', module: 'AUTH', recordReference: nextUser.id, description: `${nextUser.name} signed in to ALERT-CIA.`, platform: 'Web', metadata: { source: 'supabase' } });
       return nextUser;
     }
 
@@ -223,6 +225,9 @@ export function AuthProvider({ children }) {
   };
 
   const logout = async () => {
+    if (user?.id && isSupabaseConfigured) {
+      await logAuditEvent({ action: 'USER_LOGOUT', module: 'AUTH', recordReference: user.id, description: `${user.name} signed out of ALERT-CIA.`, platform: 'Web' });
+    }
     if (isSupabaseConfigured) await supabase.auth.signOut();
     localStorage.removeItem(AUTH_STORAGE_KEY);
     setUser(null);

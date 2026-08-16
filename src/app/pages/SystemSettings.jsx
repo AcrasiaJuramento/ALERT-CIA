@@ -7,6 +7,7 @@ import { checkConnection } from '../network/connection-manager';
 import { checkLocalHealth } from '../network/health-checks';
 import { getLocalServerConfig, localServerUrl, resetLocalServerConfig, saveLocalServerConfig } from '../services/device-service';
 import { formatLongDateTime } from '../utils/dateFormat';
+import { logAuditEvent } from '../services/supabase/auditService';
 
 const tabs = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
@@ -100,6 +101,19 @@ export default function SystemSettings() {
     setLocalServer(next);
     await checkConnection({ force: true });
     flashSaved();
+    void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: 'local-server', description: 'Local server connection settings were updated.', platform: 'Web', metadata: { setting: 'local_server_connection' } });
+  };
+
+  const updateNotificationPreference = (key, value) => {
+    const previous = preferences[key];
+    updatePreferences({ [key]: value });
+    void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: key, description: `${key} notification preference was updated.`, platform: 'Web', metadata: { setting: key, previous, next: value } });
+  };
+
+  const updateTheme = mode => {
+    const previous = isDarkMode ? 'dark' : 'light';
+    setThemeMode(mode);
+    if (previous !== mode) void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: 'theme', description: 'Display theme was updated.', platform: 'Web', metadata: { setting: 'theme', previous, next: mode } });
   };
 
   const testLocal = async () => {
@@ -124,11 +138,11 @@ export default function SystemSettings() {
 
   const enableBrowserNotifications = async value => {
     if (!value) {
-      updatePreferences({ browserEnabled: false });
+      updateNotificationPreference('browserEnabled', false);
       return;
     }
     const permission = await requestBrowserPermission();
-    if (permission !== 'granted') updatePreferences({ browserEnabled: false });
+    if (permission !== 'granted') updateNotificationPreference('browserEnabled', false);
   };
 
   return (
@@ -167,13 +181,13 @@ export default function SystemSettings() {
               <h2 className="text-sm font-bold text-foreground">Realtime Notifications</h2>
               <p className="mt-0.5 text-xs text-muted-foreground">Controls apply to cloud realtime events and local server events.</p>
             </div>
-            <SettingRow icon={Bell} label="In-app notifications" desc="Show alerts in the notification drawer." checked={preferences.inAppEnabled} onChange={value => updatePreferences({ inAppEnabled: value })} />
-            <SettingRow icon={Bell} label="PCR updates" desc="Notify when patient care reports are submitted or updated." checked={preferences.pcrEnabled} onChange={value => updatePreferences({ pcrEnabled: value })} />
-            <SettingRow icon={Radio} label="Dispatch updates" desc="Notify when dispatch status changes locally or in cloud." checked={preferences.dispatchEnabled} onChange={value => updatePreferences({ dispatchEnabled: value })} />
-            <SettingRow icon={DatabaseZap} label="Incident and response updates" desc="Notify when response records change in cloud." checked={preferences.incidentEnabled} onChange={value => updatePreferences({ incidentEnabled: value })} />
-            <SettingRow icon={Volume2} label="Notification sound" desc="Play a short tone when a new allowed notification arrives." checked={preferences.soundEnabled} onChange={value => updatePreferences({ soundEnabled: value })} />
+            <SettingRow icon={Bell} label="In-app notifications" desc="Show alerts in the notification drawer." checked={preferences.inAppEnabled} onChange={value => updateNotificationPreference('inAppEnabled', value)} />
+            <SettingRow icon={Bell} label="PCR updates" desc="Notify when patient care reports are submitted or updated." checked={preferences.pcrEnabled} onChange={value => updateNotificationPreference('pcrEnabled', value)} />
+            <SettingRow icon={Radio} label="Dispatch updates" desc="Notify when dispatch status changes locally or in cloud." checked={preferences.dispatchEnabled} onChange={value => updateNotificationPreference('dispatchEnabled', value)} />
+            <SettingRow icon={DatabaseZap} label="Incident and response updates" desc="Notify when response records change in cloud." checked={preferences.incidentEnabled} onChange={value => updateNotificationPreference('incidentEnabled', value)} />
+            <SettingRow icon={Volume2} label="Notification sound" desc="Play a short tone when a new allowed notification arrives." checked={preferences.soundEnabled} onChange={value => updateNotificationPreference('soundEnabled', value)} />
             <SettingRow icon={Bell} label="Browser popups" desc="Use the operating system browser notification permission." checked={preferences.browserEnabled} onChange={enableBrowserNotifications} />
-            <SettingRow icon={Bell} label="Critical only" desc="Suppress normal updates and show only critical or urgent notifications." checked={preferences.criticalOnly} onChange={value => updatePreferences({ criticalOnly: value })} />
+            <SettingRow icon={Bell} label="Critical only" desc="Suppress normal updates and show only critical or urgent notifications." checked={preferences.criticalOnly} onChange={value => updateNotificationPreference('criticalOnly', value)} />
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
               <div className="text-xs text-muted-foreground">{notifications.length} notifications stored on this device.</div>
               <button type="button" onClick={clearAll} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary">
@@ -193,8 +207,8 @@ export default function SystemSettings() {
               <div>
                 <label className={labelClass}>Theme</label>
                 <div className="grid grid-cols-2 gap-2">
-                  <button type="button" onClick={() => setThemeMode('light')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${!isDarkMode ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-border text-muted-foreground hover:bg-secondary'}`}>Light</button>
-                  <button type="button" onClick={() => setThemeMode('dark')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-border text-muted-foreground hover:bg-secondary'}`}>Dark</button>
+                  <button type="button" onClick={() => updateTheme('light')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${!isDarkMode ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-border text-muted-foreground hover:bg-secondary'}`}>Light</button>
+                  <button type="button" onClick={() => updateTheme('dark')} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${isDarkMode ? 'border-blue-500 bg-blue-500/10 text-blue-500' : 'border-border text-muted-foreground hover:bg-secondary'}`}>Dark</button>
                 </div>
               </div>
               <div>

@@ -21,6 +21,7 @@ import ReportsAnalytics from './pages/ReportsAnalytics'
 import ScraperReview from './pages/ScraperReview'
 import LandmarkMapping from './pages/LandmarkMapping'
 import UserManagement from './pages/UserManagement'
+import AuditLogs from './pages/AuditLogs'
 import ProfileManagement from './pages/ProfileManagement'
 import SystemSettings from './pages/SystemSettings'
 import PublicDashboard from './pages/public/PublicDashboard'
@@ -55,6 +56,7 @@ export const router = createBrowserRouter([
       { path: 'scraper-review', element: protect(PERMISSIONS.MANAGE_SCRAPER, <ScraperReview />) },
       { path: 'landmarks', element: protect(PERMISSIONS.MANAGE_SCRAPER, <LandmarkMapping />) },
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
+      { path: 'audit-logs', element: protect(PERMISSIONS.VIEW_AUDIT_LOGS, <AuditLogs />) },
       { path: 'profile', element: protect(null, <ProfileManagement />) },
       { path: 'change-password', element: protect(null, <ChangePasswordPage embedded />) },
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },

@@ -11,6 +11,7 @@ import {
   MapPin,
   Radio as RadioIcon,
   Settings,
+  ShieldCheck,
   Users,
 } from 'lucide-react';
 
@@ -42,6 +43,7 @@ export const PERMISSIONS = {
   VIEW_DISPATCH: 'dispatch:view',
   CREATE_DISPATCH: 'dispatch:create',
   MANAGE_SCRAPER: 'scraper:manage',
+  VIEW_AUDIT_LOGS: 'audit:view',
 };
 
 export const ROLE_PERMISSIONS = {
@@ -78,6 +80,7 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_SETTINGS,
     PERMISSIONS.VIEW_DISPATCH,
     PERMISSIONS.MANAGE_SCRAPER,
+    PERMISSIONS.VIEW_AUDIT_LOGS,
   ],
 };
 
@@ -95,6 +98,7 @@ export const NAVIGATION_ITEMS = [
   { label: 'Scraper Review', icon: Database, path: '/admin/scraper-review', permission: PERMISSIONS.MANAGE_SCRAPER, group: 'TOOLS' },
   { label: 'Landmark Mapping', icon: MapPin, path: '/admin/landmarks', permission: PERMISSIONS.MANAGE_SCRAPER, group: 'TOOLS' },
   { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS, group: 'TOOLS' },
+  { label: 'Audit Logs', icon: ShieldCheck, path: '/admin/audit-logs', permission: PERMISSIONS.VIEW_AUDIT_LOGS, group: 'TOOLS' },
   { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS, group: 'TOOLS' },
 ];
 
