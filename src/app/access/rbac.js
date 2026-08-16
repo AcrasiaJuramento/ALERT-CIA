@@ -8,6 +8,7 @@ import {
   FileText,
   LayoutDashboard,
   Map,
+  MapPin,
   Radio as RadioIcon,
   Settings,
   Users,
@@ -91,9 +92,10 @@ export const NAVIGATION_ITEMS = [
   { label: 'Patient Care Records', icon: FileText, path: '/admin/pcr', permission: PERMISSIONS.VIEW_PCR_RECORDS, group: 'PCR' },
   { label: 'Analytics', icon: BarChart2, path: '/admin/analytics', permission: PERMISSIONS.VIEW_ANALYTICS, group: 'REPORTS' },
   { label: 'Spreadsheets Report', icon: FileSpreadsheet, path: '/admin/reports-analytics', permission: PERMISSIONS.VIEW_ANALYTICS, group: 'REPORTS' },
-  { label: 'Scraper Review', icon: Database, path: '/admin/scraper-review', permission: PERMISSIONS.MANAGE_SCRAPER, group: 'REPORTS' },
-  { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS },
-  { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS },
+  { label: 'Scraper Review', icon: Database, path: '/admin/scraper-review', permission: PERMISSIONS.MANAGE_SCRAPER, group: 'TOOLS' },
+  { label: 'Landmark Mapping', icon: MapPin, path: '/admin/landmarks', permission: PERMISSIONS.MANAGE_SCRAPER, group: 'TOOLS' },
+  { label: 'User Management', icon: Users, path: '/admin/users', permission: PERMISSIONS.MANAGE_USERS, group: 'TOOLS' },
+  { label: 'Settings', icon: Settings, path: '/admin/settings', permission: PERMISSIONS.VIEW_SETTINGS, group: 'TOOLS' },
 ];
 
 export function hasPermission(role, permission) {

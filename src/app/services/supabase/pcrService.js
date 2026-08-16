@@ -1,5 +1,6 @@
 import { runSupabaseRequest, runSupabaseRequestWithMeta } from "./errors";
 import { isValidIncidentCoordinate, patientBirthdayFromRecord, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
+import { locationAssessment } from "../../utils/locationAccuracy";
 import { randomUuid } from "../../utils/uuid";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -147,6 +148,13 @@ const PCR_LIST_SELECT = `
 
 const ADMIN_PCR_MAP_STATUSES = ["in_progress", "submitted", "verified", "completed"];
 const PUBLIC_PCR_MAP_STATUSES = ["verified"];
+const PCR_STATUS_RANK = {
+  verified: 0,
+  completed: 1,
+  submitted: 2,
+  in_progress: 3,
+  draft: 4,
+};
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
@@ -208,17 +216,53 @@ function displayLocationText(...values) {
   return String(named || candidates[0] || "");
 }
 
+function pcrStatusRank(status = "") {
+  return PCR_STATUS_RANK[String(status || "").toLowerCase()] ?? 9;
+}
+
+function canonicalPcrRows(rows = []) {
+  const byResponse = new Map();
+  asRows(rows).forEach(row => {
+    if (!row.response_id) return;
+    const current = byResponse.get(row.response_id);
+    if (!current) {
+      byResponse.set(row.response_id, row);
+      return;
+    }
+    const currentRank = pcrStatusRank(current.status);
+    const nextRank = pcrStatusRank(row.status);
+    const currentUpdated = new Date(current.updated_at || current.created_at || 0).getTime();
+    const nextUpdated = new Date(row.updated_at || row.created_at || 0).getTime();
+    if (nextRank < currentRank || (nextRank === currentRank && nextUpdated > currentUpdated)) {
+      byResponse.set(row.response_id, row);
+    }
+  });
+  return [...byResponse.values()];
+}
+
 function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {}) {
   const response = row.response || {};
   const barangayPoint = geographyPoint(response.barangay?.centroid);
-  const lat = incident.latitude ?? incident.lat ?? response.latitude ?? barangayPoint?.lat ?? null;
-  const lng = incident.longitude ?? incident.lon ?? response.longitude ?? barangayPoint?.lng ?? null;
+  const hasIncidentCoordinates = Number.isFinite(Number(incident.latitude ?? incident.lat)) && Number.isFinite(Number(incident.longitude ?? incident.lon));
+  const hasResponseCoordinates = Number.isFinite(Number(response.latitude)) && Number.isFinite(Number(response.longitude));
+  const lat = hasIncidentCoordinates ? Number(incident.latitude ?? incident.lat) : hasResponseCoordinates ? Number(response.latitude) : barangayPoint?.lat ?? null;
+  const lng = hasIncidentCoordinates ? Number(incident.longitude ?? incident.lon) : hasResponseCoordinates ? Number(response.longitude) : barangayPoint?.lng ?? null;
   const type = classificationToType(incident.classification || row.incident_nature || response.type_of_incident);
   const dateValue = response.date_of_incident || row.completed_at || row.submitted_at || row.created_at;
   const date = dateValue ? new Date(dateValue) : new Date();
   const relatedIncidentId = incident.id || null;
   const isCompleted = incident.status === "pcr_completed";
-  const location = displayLocationText(response.barangay?.name, incident.location_text, response.location_text, response.place_of_incident, "Mapped PCR response");
+  const location = displayLocationText(incident.location_text, response.location_text, response.place_of_incident, response.barangay?.name, "Mapped PCR response");
+  const precision = hasIncidentCoordinates ? "official_incident_pin" : hasResponseCoordinates ? "response_pin" : barangayPoint ? "barangay_centroid" : "unknown";
+  const assessment = locationAssessment({
+    sourceKind: "pcr_report",
+    locationPrecision: precision,
+    mappingStatus: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "exact_geocode" : "needs_review",
+    coordinateSource: precision === "barangay_centroid" ? "barangay_centroid" : precision,
+    locationConfidence: precision === "barangay_centroid"
+      ? { level: "low", accuracy: "barangay_only", source: "barangay_centroid" }
+      : { level: "high", accuracy: "near_exact", source: precision },
+  });
 
   return {
     id: publicSafe ? `PCR-${String(row.id).slice(0, 8)}` : `PCR-${String(row.id).slice(0, 8)}`,
@@ -254,7 +298,15 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
     is_verified: isVerifiedMapStatus(row.status),
     is_public_visible: publicSafe || Boolean(incident.public_visible) || isVerifiedMapStatus(row.status),
     pcrStatus: row.status,
-    locationPrecision: incident.latitude && incident.longitude ? "incident_coordinates" : response.latitude && response.longitude ? "response_pin" : barangayPoint ? "barangay_centroid" : "unknown",
+    locationPrecision: precision,
+    coordinateSource: precision,
+    mappingStatus: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "exact_geocode" : "needs_review",
+    locationConfidence: assessment,
+    locationAccuracy: assessment.accuracy,
+    locationConfidenceLevel: assessment.level,
+    locationAccuracyLabel: assessment.label,
+    pointHotspotEligible: assessment.pointHotspotEligible,
+    approximateLocation: assessment.approximate,
   };
 }
 
@@ -284,7 +336,8 @@ export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = 
   }, "Unable to load PCR map locations.");
 
   const incidentByResponse = new Map(asRows(incidents).map(incident => [incident.response_id, incident]));
-  return pcrRows
+  return canonicalPcrRows(pcrRows)
+    .filter(row => !incidentByResponse.has(row.response_id))
     .map(row => {
       const incident = incidentByResponse.get(row.response_id);
       return pcrMapRowToIncident(row, incident, { publicSafe: publicOnly });

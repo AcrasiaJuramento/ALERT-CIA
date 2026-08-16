@@ -1,6 +1,7 @@
 import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
 import { resolveIsabelaBarangayGeometry } from "../../data/isabelaBarangayGeometry";
+import { locationAssessment } from "../../utils/locationAccuracy";
 
 const scraperApiBaseUrl = String(import.meta.env.VITE_SCRAPER_API_URL || "")
   .trim()
@@ -179,6 +180,9 @@ function scraperRecordToApp(row = {}) {
     classificationReason,
     articleContentHash: row.article_content_hash || row.raw_payload?.article_content_hash || "",
     locationConfidence: row.location_confidence || row.raw_payload?.location_confidence || row.raw_payload?.location?.confidence || {},
+    originalLocationSnapshot: row.original_location_snapshot || null,
+    locationCorrectedBy: row.location_corrected_by || null,
+    locationCorrectedAt: row.location_corrected_at || null,
   };
 }
 
@@ -236,6 +240,7 @@ function scraperSourceHealthToApp(row = {}) {
 }
 
 function scraperRecordToAnalyticsIncident(row = {}) {
+  const confidence = row.location_confidence || row.raw_payload?.location_confidence || {};
   const date = row.scraped_at ? new Date(row.scraped_at).toISOString().slice(0, 10) : "";
   const time = row.scraped_at ? new Date(row.scraped_at).toTimeString().slice(0, 5) : "";
   return {
@@ -263,6 +268,9 @@ function scraperRecordToAnalyticsIncident(row = {}) {
     classificationConfidence: row.classification_confidence || "",
     classificationScore: Number(row.classification_score || 0),
     matchConfidence: Number(row.match_confidence || 0),
+    locationConfidence: confidence,
+    locationPrecision: row.geocode_precision || row.raw_payload?.geocode_precision || "",
+    mappingStatus: row.mapping_status || "needs_review",
   };
 }
 
@@ -318,6 +326,10 @@ function geographyPoint(value) {
   return null;
 }
 
+function hasFiniteCoordinates(row = {}) {
+  return Number.isFinite(Number(row.latitude)) && Number.isFinite(Number(row.longitude));
+}
+
 function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
   const type = incidentTypeToMapType(row);
   const mappedBarangay = row.verified_barangay || row.extracted_barangay || row.raw_payload?.location?.barangay || row.barangay?.name || "";
@@ -327,10 +339,21 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
   const centroid = linkedBarangayMatches ? geographyPoint(row.barangay?.centroid) : null;
   const precision = row.geocode_precision || row.raw_payload?.geocode_precision || "unknown";
   const geocodeIsSafe = !mappedBarangay || ["barangay", "road", "barangay_master"].includes(precision);
-  const lat = boundaryPoint?.lat ?? centroid?.lat ?? (geocodeIsSafe ? Number(row.latitude) : Number.NaN);
-  const lng = boundaryPoint?.lng ?? centroid?.lng ?? (geocodeIsSafe ? Number(row.longitude) : Number.NaN);
+  const lat = hasFiniteCoordinates(row) ? Number(row.latitude) : boundaryPoint?.lat ?? centroid?.lat ?? (geocodeIsSafe ? Number(row.latitude) : Number.NaN);
+  const lng = hasFiniteCoordinates(row) ? Number(row.longitude) : boundaryPoint?.lng ?? centroid?.lng ?? (geocodeIsSafe ? Number(row.longitude) : Number.NaN);
   const date = row.scraped_at ? new Date(row.scraped_at) : new Date();
   const verifiedLocationText = [mappedBarangay, mappedMunicipality, "Isabela, Philippines"].filter(Boolean).join(", ");
+  const confidence = row.location_confidence || row.raw_payload?.location_confidence || {};
+  const basePrecision = boundaryPoint?.precision || (centroid ? "barangay_master" : precision);
+  const baseSource = confidence.source || boundaryPoint?.source || (centroid ? "Supabase barangay centroid" : row.raw_payload?.geocoded_from || "geocoder");
+  const baseMapping = boundaryPoint ? "matched_barangay" : row.mapping_status || "needs_review";
+  const assessment = locationAssessment({
+    locationConfidence: confidence,
+    locationPrecision: basePrecision,
+    mappingStatus: baseMapping,
+    coordinateSource: baseSource,
+    sourceKind: "reviewed_scraped",
+  });
 
   return {
     id: `SCR-${String(row.id).slice(0, 8)}`,
@@ -362,20 +385,31 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     publicVisible: Boolean(row.public_visible),
     scraperStatus: row.status,
     barangayBoundary: boundaryPoint?.feature || null,
-    locationPrecision: boundaryPoint?.precision || (centroid ? "barangay_master" : precision),
-    coordinateSource: boundaryPoint?.source || (centroid ? "Supabase barangay centroid" : row.raw_payload?.geocoded_from || "geocoder"),
-    mappingStatus: boundaryPoint ? "matched_barangay" : row.mapping_status || "needs_review",
+    locationPrecision: basePrecision,
+    coordinateSource: baseSource,
+    mappingStatus: baseMapping,
     matchConfidence: boundaryPoint ? 1 : Number(row.match_confidence || 0),
+    locationConfidence: confidence,
+    locationAccuracy: assessment.accuracy,
+    locationConfidenceLevel: assessment.level,
+    locationAccuracyLabel: assessment.label,
+    pointHotspotEligible: assessment.pointHotspotEligible,
+    approximateLocation: assessment.approximate,
+    originalLocationSnapshot: row.original_location_snapshot || null,
+    locationCorrectedBy: row.location_corrected_by || null,
+    locationCorrectedAt: row.location_corrected_at || null,
   };
 }
 
 async function scraperRowsToMapIncidents(rows = []) {
   return Promise.all(rows.map(async (row) => {
     const location = row.raw_payload?.location || {};
-    const boundaryPoint = await resolveIsabelaBarangayGeometry({
-      barangay: row.verified_barangay || row.extracted_barangay || location.barangay || row.barangay?.name,
-      municipality: row.verified_municipality || row.extracted_municipality || location.municipality || row.barangay?.municipality,
-    });
+    const boundaryPoint = !hasFiniteCoordinates(row)
+      ? await resolveIsabelaBarangayGeometry({
+        barangay: row.verified_barangay || row.extracted_barangay || location.barangay || row.barangay?.name,
+        municipality: row.verified_municipality || row.extracted_municipality || location.municipality || row.barangay?.municipality,
+      })
+      : null;
     return scraperRecordToMapIncident(row, boundaryPoint);
   }));
 }
@@ -725,22 +759,239 @@ export async function rejectScraperRecord(recordId, reason = "Rejected during re
 }
 
 export async function correctScraperRecordLocation(recordId, location = {}) {
-  return runSupabaseRequest(client =>
-    client
+  const userResult = supabase ? await supabase.auth.getUser().catch(() => null) : null;
+  const correctedBy = userResult?.data?.user?.id || null;
+  const accuracy = location.accuracy || "barangay_only";
+  const lat = Number(location.latitude);
+  const lng = Number(location.longitude);
+  const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
+  const level = accuracy === "unmapped" ? "unmapped" : accuracy === "near_exact" && hasCoordinates ? "high" : accuracy === "road_level" && hasCoordinates ? "medium" : "low";
+  const effectiveAccuracy = level === "low" && accuracy !== "unmapped" ? "barangay_only" : accuracy;
+  const source = effectiveAccuracy === "near_exact"
+    ? "manual_exact"
+    : effectiveAccuracy === "road_level"
+      ? "road"
+      : effectiveAccuracy === "unmapped"
+        ? "unmapped"
+        : "barangay_centroid";
+
+  return runSupabaseRequest(async client => {
+    const current = await client
+      .from("scraper_records")
+      .select("location_text, raw_location_text, display_name, latitude, longitude, verified_municipality, verified_barangay, verified_purok_sitio, verified_road_place, geocode_precision, mapping_status, location_confidence, original_location_snapshot")
+      .eq("id", recordId)
+      .maybeSingle();
+    if (current.error) return current;
+
+    const originalSnapshot = current.data?.original_location_snapshot || {
+      location_text: current.data?.location_text || null,
+      raw_location_text: current.data?.raw_location_text || null,
+      display_name: current.data?.display_name || null,
+      latitude: current.data?.latitude ?? null,
+      longitude: current.data?.longitude ?? null,
+      verified_municipality: current.data?.verified_municipality || null,
+      verified_barangay: current.data?.verified_barangay || null,
+      verified_purok_sitio: current.data?.verified_purok_sitio || null,
+      verified_road_place: current.data?.verified_road_place || null,
+      geocode_precision: current.data?.geocode_precision || null,
+      mapping_status: current.data?.mapping_status || null,
+      location_confidence: current.data?.location_confidence || {},
+    };
+
+    return client
       .from("scraper_records")
       .update({
         verified_municipality: location.municipality || null,
         verified_barangay: location.barangay || null,
         verified_purok_sitio: location.purokSitio || null,
         verified_road_place: location.road || null,
-        location_text: [location.barangay, location.municipality, "Isabela, Philippines"].filter(Boolean).join(", "),
+        extracted_municipality: location.municipality || null,
+        extracted_barangay: location.barangay || null,
+        purok_sitio: location.purokSitio || null,
+        location_text: [location.road, location.purokSitio, location.barangay, location.municipality, "Isabela, Philippines"].filter(Boolean).join(", "),
+        latitude: hasCoordinates ? lat : null,
+        longitude: hasCoordinates ? lng : null,
+        geocode_precision: source,
+        mapping_status: effectiveAccuracy === "unmapped" ? "needs_review" : hasCoordinates ? "exact_geocode" : "matched_barangay",
+        match_confidence: level === "high" ? 1 : level === "medium" ? 0.75 : level === "low" ? 0.45 : 0,
+        location_confidence: {
+          ...(current.data?.location_confidence || {}),
+          source,
+          level,
+          accuracy: effectiveAccuracy,
+          reason: location.reason || "Manual officer location correction.",
+          corrected: true,
+        },
+        original_location_snapshot: originalSnapshot,
+        location_corrected_by: correctedBy,
+        location_corrected_at: new Date().toISOString(),
         needs_manual_review: true,
         processed_at: new Date().toISOString(),
       })
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name, municipality, province)")
+      .single();
+  }, "Unable to correct scraper record location.").then(scraperRecordToApp);
+}
+
+export async function addOfficerVerifiedLandmarkFromCorrection(record = {}, location = {}) {
+  const lat = Number(location.latitude);
+  const lng = Number(location.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    throw new Error("Latitude and longitude are required before adding a verified landmark.");
+  }
+  const name = String(location.landmarkName || location.road || record.rawPayload?.location?.landmark || "").trim();
+  if (!name) throw new Error("Landmark name is required.");
+
+  const userResult = supabase ? await supabase.auth.getUser().catch(() => null) : null;
+  const verifiedBy = userResult?.data?.user?.id || null;
+  const aliases = String(location.aliases || "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  return runSupabaseRequest(client =>
+    client
+      .from("landmarks")
+      .upsert({
+        name,
+        aliases,
+        category: location.landmarkCategory || "other",
+        barangay: location.barangay || record.verifiedBarangay || record.extractedBarangay || null,
+        municipality: location.municipality || record.verifiedMunicipality || record.extractedMunicipality || "Echague",
+        province: "Isabela",
+        latitude: lat,
+        longitude: lng,
+        source: "officer",
+        source_id: record.id ? `scraper-record:${record.id}` : null,
+        verification_status: "officer_verified",
+        officer_verified: true,
+        verified_by: verifiedBy,
+        verified_at: new Date().toISOString(),
+        metadata: {
+          created_from: "scraper_review_correction",
+          scraper_record_id: record.id || null,
+          source_url: record.sourceUrl || null,
+          note: location.reason || null,
+        },
+      }, { onConflict: "source,source_id" })
+      .select("*")
       .single(),
-  "Unable to correct scraper record location.").then(scraperRecordToApp);
+  "Unable to add verified landmark.");
+}
+
+function landmarkRowToApp(row = {}) {
+  return {
+    id: row.id,
+    name: row.name || "",
+    aliases: Array.isArray(row.aliases) ? row.aliases : [],
+    category: row.category || "other",
+    barangay: row.barangay || "",
+    municipality: row.municipality || "",
+    province: row.province || "Isabela",
+    latitude: row.latitude,
+    longitude: row.longitude,
+    validationStatus: row.validation_status || "unchecked",
+    detectedBarangay: row.detected_barangay || "",
+    detectedMunicipality: row.detected_municipality || "",
+    verificationStatus: row.verification_status || "unverified",
+    officerVerified: Boolean(row.officer_verified),
+    source: row.source || "manual",
+    sourceId: row.source_id || "",
+    metadata: row.metadata || {},
+    verifiedBy: row.verified_by || null,
+    verifiedAt: row.verified_at || null,
+    updatedAt: row.updated_at,
+    createdAt: row.created_at,
+  };
+}
+
+function parseAliases(value) {
+  if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+  return String(value || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function safeSearchText(value = "") {
+  return String(value).replace(/[,%]/g, " ").trim();
+}
+
+export async function listLandmarks({ search = "", municipality = "", category = "", verificationStatus = "", validationStatus = "", limit = 200 } = {}) {
+  const rows = await runSupabaseRequest(client => {
+    let query = client
+      .from("landmarks")
+      .select("*")
+      .is("deleted_at", null)
+      .order("updated_at", { ascending: false })
+      .limit(limit);
+
+    if (municipality) query = query.ilike("municipality", `%${safeSearchText(municipality)}%`);
+    if (category) query = query.eq("category", category);
+    if (verificationStatus) query = query.eq("verification_status", verificationStatus);
+    if (validationStatus) query = query.eq("validation_status", validationStatus);
+    const searchText = safeSearchText(search);
+    if (searchText) {
+      query = query.or(`name.ilike.%${searchText}%,barangay.ilike.%${searchText}%,municipality.ilike.%${searchText}%`);
+    }
+    return query;
+  }, "Unable to load landmark registry.");
+
+  const normalizedSearch = String(search || "").trim().toLowerCase();
+  return asRows(rows)
+    .map(landmarkRowToApp)
+    .filter(row => !normalizedSearch || [
+      row.name,
+      row.barangay,
+      row.municipality,
+      ...row.aliases,
+    ].some(value => String(value || "").toLowerCase().includes(normalizedSearch)));
+}
+
+export async function saveLandmark(landmark = {}) {
+  const lat = Number(landmark.latitude);
+  const lng = Number(landmark.longitude);
+  if (!landmark.name?.trim()) throw new Error("Landmark name is required.");
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("Valid latitude and longitude are required.");
+
+  const userResult = supabase ? await supabase.auth.getUser().catch(() => null) : null;
+  const userId = userResult?.data?.user?.id || null;
+  const officerVerified = Boolean(landmark.officerVerified);
+  const payload = {
+    name: landmark.name.trim(),
+    aliases: parseAliases(landmark.aliases),
+    category: landmark.category || "other",
+    barangay: landmark.barangay || null,
+    municipality: landmark.municipality || null,
+    province: landmark.province || "Isabela",
+    latitude: lat,
+    longitude: lng,
+    source: landmark.source || "manual",
+    source_id: landmark.sourceId || null,
+    verification_status: officerVerified ? "officer_verified" : (landmark.verificationStatus || "unverified"),
+    officer_verified: officerVerified,
+    verified_by: officerVerified ? (landmark.verifiedBy || userId) : null,
+    verified_at: officerVerified ? (landmark.verifiedAt || new Date().toISOString()) : null,
+    metadata: landmark.metadata || {},
+  };
+
+  const request = landmark.id
+    ? client => client.from("landmarks").update(payload).eq("id", landmark.id).select("*").single()
+    : client => client.from("landmarks").insert(payload).select("*").single();
+
+  return runSupabaseRequest(request, "Unable to save landmark.").then(landmarkRowToApp);
+}
+
+export async function deleteLandmark(landmarkId) {
+  return runSupabaseRequest(client =>
+    client
+      .from("landmarks")
+      .update({ deleted_at: new Date().toISOString() })
+      .eq("id", landmarkId)
+      .select("*")
+      .single(),
+  "Unable to remove landmark.").then(landmarkRowToApp);
 }
 
 export async function mergeScraperRecords(sourceRecordId, targetRecordId) {

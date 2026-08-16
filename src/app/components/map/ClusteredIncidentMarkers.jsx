@@ -7,6 +7,7 @@ import { AlertTriangle, Flame, Droplets, Heart, MapPin, ShieldAlert } from 'luci
 import { getIncidentLatLng } from '../../utils/mapData';
 import { getIncidentStatusLabel } from '../../utils/incidentStatus';
 import { formatDateAndTime, formatLongDateTime } from '../../utils/dateFormat';
+import { locationAssessment } from '../../utils/locationAccuracy';
 
 const severityColors = {
   critical: '#dc2626',
@@ -27,10 +28,11 @@ const typeIcons = {
 function MarkerGlyph({ incident }) {
   const Icon = typeIcons[incident.type] || MapPin;
   const color = severityColors[incident.severity] || '#3b82f6';
+  const assessment = locationAssessment(incident);
 
   return (
     <div
-      className="leaflet-incident-marker"
+      className={`leaflet-incident-marker ${assessment.approximate ? 'leaflet-incident-marker--approximate' : ''}`}
       style={{
         '--marker-color': color,
       }}
@@ -43,6 +45,7 @@ function MarkerGlyph({ incident }) {
 function PopupContent({ incident }) {
   const isExternal = incident.sourceKind && incident.sourceKind !== 'official';
   const isPcr = incident.sourceKind === 'pcr_report' || incident.source_type === 'pcr_report';
+  const assessment = locationAssessment(incident);
 
   return (
     <div className="min-w-48 text-slate-900">
@@ -75,6 +78,11 @@ function PopupContent({ incident }) {
         <p className="mt-1 text-[10px] text-slate-500">
           Mapping: {incident.locationPrecision.replaceAll('_', ' ')}
           {incident.coordinateSource ? ` / ${incident.coordinateSource}` : ''}
+        </p>
+      )}
+      {isExternal && (
+        <p className={`mt-1 text-[10px] font-semibold ${assessment.level === 'high' ? 'text-green-700' : assessment.level === 'medium' ? 'text-amber-700' : 'text-orange-700'}`}>
+          {incident.locationAccuracyLabel || assessment.label}
         </p>
       )}
       {isExternal && ['unmatched_location', 'needs_review'].includes(incident.mappingStatus) && (
@@ -165,7 +173,10 @@ export function ClusteredIncidentMarkers({
           ? getSpreadLatLng(incident, coordinateIndexes, coordinateCounts)
           : getIncidentLatLng(incident),
         {
-        icon: createReactDivIcon(<MarkerGlyph incident={incident} />, 'leaflet-incident-marker-shell'),
+        icon: createReactDivIcon(
+          <MarkerGlyph incident={incident} />,
+          `leaflet-incident-marker-shell ${locationAssessment(incident).approximate ? 'leaflet-incident-marker-shell--approximate' : ''}`
+        ),
         riseOnHover: true,
         }
       );

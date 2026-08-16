@@ -125,6 +125,7 @@
 }
 
 .leaflet-incident-marker {
+  position: relative;
   width: 34px;
   height: 34px;
   display: grid;
@@ -139,6 +140,24 @@
 
 .leaflet-incident-marker svg {
   transform: rotate(45deg);
+}
+
+.leaflet-incident-marker--approximate {
+  opacity: 0.88;
+  border-style: solid;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.24), 0 0 0 6px color-mix(in srgb, var(--marker-color, #2563eb) 14%, transparent);
+}
+
+.leaflet-incident-marker--approximate::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  width: 7px;
+  height: 7px;
+  border: 1.5px solid white;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.35);
 }
 
 .leaflet-cluster-marker-shell {

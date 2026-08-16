@@ -6,6 +6,7 @@ import { extractArticle } from "../lib/extractArticle.js";
 import { diffFetchMetrics, fetchHTMLBatch, getFetchMetrics } from "../lib/fetchHTML.js";
 import { isAccidentRelevant } from "../lib/filters.js";
 import { geocode } from "../lib/geocode.js";
+import { applyLandmarkMatch, loadLandmarkRegistry, matchLocalLandmark } from "../lib/landmarkRegistry.js";
 import { extractLocation, ISABELA_PLACES, isValidLocation } from "../lib/locations.js";
 import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
 import { findExistingSourceUrls } from "../lib/scraperStore.js";
@@ -52,7 +53,7 @@ function hasIsabelaPlace(text = "") {
   return ISABELA_PLACES.some((place) => new RegExp(`\\b${place.replace(/ /g, "\\s+")}\\b`, "i").test(text));
 }
 
-async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
+async function processSource(source, mode, stats, seenUrls, pageRange = {}, landmarks = []) {
   const beforeFetch = getFetchMetrics();
   const sourceHealth = {
     source_key: source.key,
@@ -202,9 +203,20 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
       reject("location_unknown", "No supported Isabela city or municipality could be extracted from the accident context.");
       continue;
     }
-    const geo = await geocode(location);
+    const landmark = matchLocalLandmark({ text: combined, location, landmarks });
+    const geo = landmark
+      ? {
+        lat: Number(landmark.latitude),
+        lon: Number(landmark.longitude),
+        display_name: `${landmark.name}, ${landmark.barangay || landmark.detected_barangay || location.barangay || ""}, ${landmark.municipality}, Isabela, Philippines`,
+        geocoded_from: `local landmark registry:${landmark.id}`,
+        geocode_status: "success",
+        geocode_precision: "landmark",
+        geocode_confidence: 1,
+      }
+      : await geocode(location);
     const details = extractStructuredAccidentDetails(combined);
-    const record = {
+    const record = applyLandmarkMatch({
       title: article.title,
       snippet: article.snippet,
       body: article.body,
@@ -238,7 +250,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}) {
       geocode_status: geo.geocode_status,
       geocode_precision: geo.geocode_precision,
       geocode_confidence: geo.geocode_confidence,
-    };
+    }, landmark);
     record.incident_key = incidentKey(record);
     records.push(record);
     sourceHealth.incidents_detected += 1;
@@ -272,6 +284,7 @@ export async function scrapeSources({ mode = "update", sourceKey = null, pageFro
   const rejected = [];
   const sourceHealth = [];
   const seenUrls = new Set();
+  const landmarks = await loadLandmarkRegistry();
   startScraperProgress({ mode: safeMode, sourcesTotal: targetSources.length });
 
   for (const [sourceIndex, source] of targetSources.entries()) {
@@ -289,7 +302,7 @@ export async function scrapeSources({ mode = "update", sourceKey = null, pageFro
       articles_total: 0,
     });
     try {
-      const result = await processSource(source, safeMode, stats, seenUrls, { pageFrom, pageTo });
+      const result = await processSource(source, safeMode, stats, seenUrls, { pageFrom, pageTo }, landmarks);
       records.push(...result.records);
       rejected.push(...result.rejected);
       sourceHealth.push(result.health);

@@ -18,6 +18,7 @@ import AdvisoryModule from './pages/AdvisoryModule'
 import Analytics from './pages/Analytics'
 import ReportsAnalytics from './pages/ReportsAnalytics'
 import ScraperReview from './pages/ScraperReview'
+import LandmarkMapping from './pages/LandmarkMapping'
 import UserManagement from './pages/UserManagement'
 import ProfileManagement from './pages/ProfileManagement'
 import SystemSettings from './pages/SystemSettings'
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
       { path: 'analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <Analytics />) },
       { path: 'reports-analytics', element: protect(PERMISSIONS.VIEW_ANALYTICS, <ReportsAnalytics />) },
       { path: 'scraper-review', element: protect(PERMISSIONS.MANAGE_SCRAPER, <ScraperReview />) },
+      { path: 'landmarks', element: protect(PERMISSIONS.MANAGE_SCRAPER, <LandmarkMapping />) },
       { path: 'users', element: protect(PERMISSIONS.MANAGE_USERS, <UserManagement />) },
       { path: 'profile', element: protect(null, <ProfileManagement />) },
       { path: 'change-password', element: protect(null, <ChangePasswordPage embedded />) },

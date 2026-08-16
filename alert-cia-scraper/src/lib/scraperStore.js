@@ -244,7 +244,65 @@ function mappingFields(record) {
     geocode_precision: precision,
     match_confidence: Number(record.geocode_confidence || 0),
     mapping_status: mappingStatus,
-    location_confidence: record.location_confidence || record.location?.confidence || {},
+    location_confidence: locationConfidenceMetadata(record),
+  };
+}
+
+function locationConfidenceMetadata(record = {}) {
+  const precision = String(record.geocode_precision || "").toLowerCase();
+  const location = record.location || {};
+  const base = record.location_confidence || location.confidence || {};
+  const hasCoordinates = Number.isFinite(record.lat) && Number.isFinite(record.lon);
+  const hasLandmark = Boolean(location.landmark || location.intersection);
+  const hasRoadLevel = Boolean(location.road || location.purokSitio);
+  const hasBarangayOnly = Boolean(location.barangay || location.municipality);
+
+  if (!hasCoordinates) {
+    return {
+      ...base,
+      source: "unmapped",
+      level: "unmapped",
+      accuracy: "unmapped",
+      reason: "No reliable coordinates were produced during scraping.",
+    };
+  }
+
+  if (hasLandmark && ["exact", "landmark", "intersection"].includes(precision)) {
+    return {
+      ...base,
+      source: location.landmark ? "landmark" : "intersection",
+      level: "high",
+      accuracy: "near_exact",
+      reason: "Identifiable location was extracted and coordinates were assigned during ingestion.",
+    };
+  }
+
+  if (hasRoadLevel || precision === "road") {
+    return {
+      ...base,
+      source: location.road ? "road" : "purok_sitio",
+      level: "medium",
+      accuracy: "road_level",
+      reason: "Road, highway, purok, or sitio was identified, but the exact accident point is unknown.",
+    };
+  }
+
+  if (hasBarangayOnly || ["barangay", "barangay_master"].includes(precision)) {
+    return {
+      ...base,
+      source: precision === "barangay_master" ? "barangay_centroid" : "barangay_boundary",
+      level: "low",
+      accuracy: "barangay_only",
+      reason: "Only barangay or municipality-level location was available.",
+    };
+  }
+
+  return {
+    ...base,
+    source: "unknown",
+    level: "low",
+    accuracy: "approximate",
+    reason: "Location precision could not be classified deterministically.",
   };
 }
 

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
-  RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio
+  RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio,
+  MapPin, Wrench, X, ExternalLink
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, supabase } from '../services/supabase';
+import { listAdvisories, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, supabase } from '../services/supabase';
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea, isWithinIsabelaMapArea } from '../utils/mapData';
@@ -13,7 +14,6 @@ import { formatDateAndTime } from '../utils/dateFormat';
 import { ISABELA_MUNICIPALITIES } from '../data/isabelaMunicipalities';
 import {
   calculateAccidentProneAreas,
-  formatRiskLevel,
   riskStyles,
 } from '../utils/accidentProneAreas';
 
@@ -46,14 +46,20 @@ const typeIcons = {
 };
 
 const sourceFilters = [
-  { key: 'all', label: 'All sources', icon: Database },
+  { key: 'all', label: 'All', icon: Database },
   { key: 'official', label: 'Official', icon: Shield },
-  { key: 'pcr_report', label: 'PCR', icon: FileText },
-  { key: 'scraper', label: 'Scraper', icon: Radio },
+  { key: 'scraper', label: 'Scraped', icon: Radio },
+];
+
+const accuracyLegend = [
+  { label: 'Verified / Exact', color: '#dc2626', icon: Shield },
+  { label: 'Landmark Matched', color: '#2563eb', icon: MapPin },
+  { label: 'Road-level (Medium)', color: '#f97316', icon: Car },
+  { label: 'Barangay-level (Low)', color: '#eab308', icon: MapPin },
+  { label: 'Unmapped / Review', color: '#64748b', icon: AlertTriangle },
 ];
 
 function getSourceGroup(incident) {
-  if (incident.sourceKind === 'pcr_report') return 'pcr_report';
   if (String(incident.sourceKind || '').includes('scraped')) return 'scraper';
   return 'official';
 }
@@ -86,6 +92,41 @@ function isPromotableScrapedRecord(record = {}) {
   return getSourceGroup(record) === 'scraper' && record.recordId && (!record.relatedIncidentId || record.sourceKind !== 'promoted_scraped');
 }
 
+function riskBadgeClass(level = '') {
+  if (level === 'Critical') return 'bg-red-600 text-white';
+  if (level === 'High') return 'bg-orange-500 text-white';
+  if (level === 'Moderate') return 'bg-amber-500 text-slate-950';
+  return 'bg-green-500 text-white';
+}
+
+function mapRecordRank(record = {}) {
+  if (record.sourceKind === 'pcr_report') return 2;
+  const group = getSourceGroup(record);
+  if (group === 'official') return 3;
+  if (record.sourceKind === 'promoted_scraped') return 1;
+  return 0;
+}
+
+function mapRecordKey(record = {}) {
+  if (record.relatedIncidentId) return `incident:${record.relatedIncidentId}`;
+  if (record.sourceKind === 'official' && record.id) return `incident:${record.id}`;
+  if (record.responseId) return `response:${record.responseId}`;
+  if (record.scraperRecordId || record.recordId) return `record:${record.scraperRecordId || record.recordId}`;
+  return `id:${record.id}`;
+}
+
+function dedupeMapRecords(records = []) {
+  const byKey = new Map();
+  records.forEach(record => {
+    const key = mapRecordKey(record);
+    const current = byKey.get(key);
+    if (!current || mapRecordRank(record) > mapRecordRank(current)) {
+      byKey.set(key, record);
+    }
+  });
+  return [...byKey.values()];
+}
+
 export default function MapMonitoring() {
   const navigate = useNavigate();
 
@@ -94,6 +135,7 @@ export default function MapMonitoring() {
   const [activeSource, setActiveSource] = useState('all');
   const [mapScope, setMapScope] = useState('isabela');
   const [selectedMunicipality, setSelectedMunicipality] = useState('all');
+  const [intelTab, setIntelTab] = useState('incidents');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(true);
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
@@ -101,20 +143,18 @@ export default function MapMonitoring() {
   const [mapLayers, setMapLayers] = useState({
     incidents: true,
     verifiedMdrrmo: true,
-    pcrReports: true,
     verifiedScraped: true,
     unverifiedScraped: false,
     advisories: false,
     accidentProneAreas: true,
     criticalZones: true,
     heatmap: true,
-    dangerZones: true,
     barangayBoundaries: true,
-    routes: true,
   });
   const [incidents, setIncidents] = useState([]);
   const [pcrIncidents, setPcrIncidents] = useState([]);
   const [scrapedIncidents, setScrapedIncidents] = useState([]);
+  const [advisories, setAdvisories] = useState([]);
   const [mapError, setMapError] = useState('');
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const [linkingRecordId, setLinkingRecordId] = useState(null);
@@ -132,22 +172,26 @@ export default function MapMonitoring() {
     async function loadMapData() {
       setLoading(true);
       try {
-        const [officialResult, scrapedResult, pcrResult] = await Promise.allSettled([
+        const [officialResult, scrapedResult, pcrResult, advisoryResult] = await Promise.allSettled([
           listIncidents({ limit: 500 }),
           listOfficerScrapedMapIncidents({ includeUnverified: true }),
           listPCRMapIncidents({ limit: 200 }),
+          listAdvisories({ activeOnly: true, limit: 100 }),
         ]);
         if (mounted) {
           const officialRecords = settledValue(officialResult, []);
           const scrapedRecords = settledValue(scrapedResult, []);
           const pcrRecords = settledValue(pcrResult, []);
+          const advisoryRecords = settledValue(advisoryResult, []);
           setIncidents(officialRecords);
           setScrapedIncidents(scrapedRecords);
           setPcrIncidents(pcrRecords);
+          setAdvisories(advisoryRecords);
           setMapError(failedLayerMessage([
             ['Official incidents', officialResult],
             ['Scraper records', scrapedResult],
             ['PCR records', pcrResult],
+            ['Advisories', advisoryResult],
           ]));
         }
       } catch (error) {
@@ -181,6 +225,11 @@ export default function MapMonitoring() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'pcr_reports' },
+        () => setReloadKey(key => key + 1),
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'public_advisories' },
         () => setReloadKey(key => key + 1),
       )
       .subscribe();
@@ -238,8 +287,13 @@ export default function MapMonitoring() {
     municipality: mapScope === 'isabela' ? selectedMunicipality : 'all',
   }), [mapScope, selectedMunicipality]);
 
+  const allMapRecords = useMemo(
+    () => dedupeMapRecords([...incidents, ...pcrIncidents, ...scrapedIncidents]),
+    [incidents, pcrIncidents, scrapedIncidents]
+  );
+
   const mapIncidents = useMemo(
-    () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
+    () => allMapRecords
       .filter(hasValidLatLng)
       .filter(item => {
         if (mapScope === 'echague') return isWithinEchagueMapArea(item);
@@ -251,14 +305,13 @@ export default function MapMonitoring() {
       .filter(item => {
         const group = getSourceGroup(item);
         if (group === 'scraper') return item.sourceKind === 'scraped' ? mapLayers.unverifiedScraped : mapLayers.verifiedScraped;
-        if (group === 'pcr_report') return mapLayers.pcrReports;
         if (group === 'official') return mapLayers.verifiedMdrrmo;
         return true;
       }),
-    [activeSource, incidents, mapLayers.pcrReports, mapLayers.unverifiedScraped, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, mapScope, pcrIncidents, scrapedIncidents, selectedMunicipality]
+    [activeSource, allMapRecords, mapLayers.unverifiedScraped, mapLayers.verifiedMdrrmo, mapLayers.verifiedScraped, mapScope, selectedMunicipality]
   );
   const riskSourceRecords = useMemo(
-    () => [...incidents, ...pcrIncidents, ...scrapedIncidents]
+    () => allMapRecords
       .filter(hasValidLatLng)
       .filter(item => {
         if (mapScope === 'echague') return isWithinEchagueMapArea(item);
@@ -267,36 +320,40 @@ export default function MapMonitoring() {
       })
       .filter(item => mapScope !== 'isabela' || selectedMunicipality === 'all' || getRecordMunicipality(item) === selectedMunicipality)
       .filter(item => getSourceGroup(item) !== 'scraper' || item.sourceKind !== 'scraped'),
-    [incidents, mapScope, pcrIncidents, scrapedIncidents, selectedMunicipality]
+    [allMapRecords, mapScope, selectedMunicipality]
   );
   const accidentProneAreas = useMemo(
     () => calculateAccidentProneAreas(riskSourceRecords, {
       publicOnly: false,
       filters: riskFilters,
-      groupBy: mapScope === 'isabela' ? 'municipality' : 'barangay',
+      groupBy: 'barangay',
     }),
-    [mapScope, riskFilters, riskSourceRecords]
+    [riskFilters, riskSourceRecords]
   );
   const highRiskAreas = accidentProneAreas.filter(area => ['High', 'Critical'].includes(area.risk_level));
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
+  const recentIncidents = useMemo(
+    () => [...mapIncidents]
+      .sort((left, right) => new Date(`${right.date || ''}T${right.time || '00:00'}`) - new Date(`${left.date || ''}T${left.time || '00:00'}`))
+      .slice(0, 8),
+    [mapIncidents]
+  );
   const sourceCounts = {
-    all: incidents.length + pcrIncidents.length + scrapedIncidents.length,
-    official: incidents.length,
-    pcr_report: pcrIncidents.length,
-    scraper: scrapedIncidents.length,
+    all: allMapRecords.length,
+    official: allMapRecords.filter(record => getSourceGroup(record) === 'official').length,
+    scraper: allMapRecords.filter(record => getSourceGroup(record) === 'scraper').length,
   };
   const municipalityOptions = useMemo(() => {
     const seen = new Set(ISABELA_MUNICIPALITIES);
-    [...incidents, ...pcrIncidents, ...scrapedIncidents].forEach(record => {
+    allMapRecords.forEach(record => {
       const municipality = getRecordMunicipality(record);
       if (municipality) seen.add(municipality);
     });
     return ['all', ...[...seen].sort((left, right) => left.localeCompare(right))];
-  }, [incidents, pcrIncidents, scrapedIncidents]);
+  }, [allMapRecords]);
   const layerOptions = [
-    { key: 'verifiedMdrrmo', label: 'Verified MDRRMO Incidents' },
-    { key: 'pcrReports', label: 'PCR Reports' },
+    { key: 'verifiedMdrrmo', label: 'Official Incidents' },
     { key: 'verifiedScraped', label: 'Verified Bombo Cauayan Accidents' },
     { key: 'unverifiedScraped', label: 'Unverified Bombo Cauayan Candidates' },
     { key: 'accidentProneAreas', label: 'Accident-Prone Areas' },
@@ -304,8 +361,6 @@ export default function MapMonitoring() {
     { key: 'advisories', label: 'Advisories' },
     { key: 'heatmap', label: 'Heatmap' },
     { key: 'barangayBoundaries', label: 'Barangay Boundaries' },
-    { key: 'dangerZones', label: 'Geofences' },
-    { key: 'routes', label: 'Routes' },
   ];
   const mapLayerOptions = [
     { key: 'hotspot', label: 'Accident Hotspot', color: 'text-red-400', icon: AlertTriangle },
@@ -315,16 +370,17 @@ export default function MapMonitoring() {
   ];
 
   return (
-    <div className="flex overflow-hidden" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
+    <div className="flex overflow-hidden bg-[#03111f] text-slate-100" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
       {/* Full-screen Map */}
-      <div className="flex-1 relative overflow-hidden">
+      <div className="relative flex-1 overflow-hidden p-0.5">
         <LeafletIncidentMap
           height="100%"
           incidents={mapIncidents}
+          advisoryMarkers={advisories}
           accidentProneAreas={accidentProneAreas}
           showControls={true}
           showHeatmap={true}
-          showDangerZones={true}
+          showDangerZones={false}
           externalLayers={mapLayers}
           onExternalLayersChange={setMapLayers}
           hideLayerControl
@@ -335,30 +391,22 @@ export default function MapMonitoring() {
           scope={mapScope}
         />
 
-        {/* Top overlay bar */}
-        <div className="absolute left-6 right-6 top-5 z-[500] flex items-start justify-between gap-4 pointer-events-none">
-          <div className="pointer-events-auto flex min-h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 py-2.5 text-slate-950 shadow-xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-white dark:ring-white/10">
-            <div className="h-2.5 w-2.5 rounded-full bg-red-500 shadow-[0_0_0_5px_rgba(239,68,68,0.12)]" />
-            <div>
-              <div className="text-xs font-bold uppercase leading-tight">Operations Map</div>
-              <div className="text-xs text-slate-500 dark:text-slate-300">{mapScope === 'isabela' ? 'Province-wide intelligence' : 'Echague, Isabela'}</div>
-            </div>
-          </div>
-
-          <div className="pointer-events-auto flex items-start gap-4">
-            <div className="flex h-12 overflow-hidden rounded-xl bg-white/95 text-xs font-bold text-slate-800 shadow-xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
-              {[
-                ['echague', 'Echague Ops'],
-                ['isabela', 'Isabela Intel'],
-              ].map(([value, label]) => (
-                <button
-                  key={value}
-                  onClick={() => setMapScope(value)}
-                  className={`px-3 transition-colors ${mapScope === value ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-                >
-                  {label}
-                </button>
-              ))}
+        <div className="absolute left-4 right-4 top-4 z-[500] flex flex-wrap items-start justify-between gap-3 pointer-events-none">
+          <div className="pointer-events-auto flex flex-wrap gap-2">
+            <div className="flex h-10 overflow-hidden rounded-lg border border-slate-800 bg-white/95 text-xs font-bold text-slate-700 shadow-xl">
+              <button
+                onClick={() => setMapScope('echague')}
+                className={`flex items-center gap-2 px-4 transition-colors ${mapScope === 'echague' ? 'bg-blue-600 text-white' : 'hover:bg-slate-100'}`}
+              >
+                <MapPin className="h-3.5 w-3.5" />
+                Echague
+              </button>
+              <button
+                onClick={() => setMapScope('isabela')}
+                className={`border-l border-slate-200 px-4 transition-colors ${mapScope === 'isabela' ? 'bg-blue-600 text-white' : 'hover:bg-slate-100'}`}
+              >
+                Isabela
+              </button>
             </div>
 
             <div className="relative">
@@ -368,21 +416,21 @@ export default function MapMonitoring() {
                   setScrapeMenuOpen(false);
                   setMapLayerMenuOpen(false);
                 }}
-                className="flex h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl ring-1 ring-slate-900/10 hover:bg-slate-100 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10 dark:hover:bg-slate-800"
+                className="flex h-10 items-center gap-2.5 rounded-lg border border-slate-800 bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl hover:bg-slate-100"
               >
-                <Layers className="h-4 w-4 text-blue-400" />
+                <Layers className="h-4 w-4 text-slate-700" />
                 Layers
                 <ChevronDown className={`h-4 w-4 transition-transform ${layerMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {layerMenuOpen && (
-                <div className="absolute left-0 top-14 w-52 rounded-xl bg-white/95 p-4 text-slate-900 shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
-                  <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400">
+                <div className="absolute left-0 top-12 w-60 rounded-xl border border-slate-800 bg-[#071726]/95 p-4 text-slate-100 shadow-2xl">
+                  <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase text-slate-400">
                     <Layers className="h-3.5 w-3.5 text-blue-400" />
                     Layers
                   </div>
                   <div className="space-y-3">
                     {layerOptions.map(({ key, label }) => (
-                      <label key={key} className="flex cursor-pointer items-center gap-2.5 text-sm font-bold text-slate-700 hover:text-slate-950 dark:text-slate-300 dark:hover:text-white">
+                      <label key={key} className="flex cursor-pointer items-center gap-2.5 text-xs font-bold text-slate-300 hover:text-white">
                         <input
                           type="checkbox"
                           checked={Boolean(mapLayers[key])}
@@ -400,18 +448,50 @@ export default function MapMonitoring() {
             <div className="relative">
               <button
                 onClick={() => {
+                  setMapLayerMenuOpen(current => !current);
+                  setLayerMenuOpen(false);
+                  setScrapeMenuOpen(false);
+                }}
+                className="flex h-10 items-center gap-2.5 rounded-lg border border-slate-800 bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl hover:bg-slate-100"
+              >
+                <Wrench className="h-4 w-4 text-slate-700" />
+                Tools
+                <ChevronDown className={`h-4 w-4 transition-transform ${mapLayerMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {mapLayerMenuOpen && (
+                <div className="absolute left-0 top-12 w-56 rounded-xl border border-slate-800 bg-[#071726]/95 p-3 text-slate-100 shadow-2xl">
+                  {mapLayerOptions.map(({ key, label, color, icon: Icon }) => (
+                    <button
+                      key={key}
+                      onClick={() => setActiveLayer(activeLayer === key ? null : key)}
+                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-xs font-bold transition-all ${
+                        activeLayer === key ? 'bg-blue-600/20 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+                      }`}
+                    >
+                      <SafeIcon icon={Icon} className={`h-4 w-4 ${color}`} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="relative">
+              <button
+                onClick={() => {
                   setReloadKey(key => key + 1);
                   setScrapeMenuOpen(false);
                   setLayerMenuOpen(false);
                   setMapLayerMenuOpen(false);
                 }}
-                className="flex h-12 items-center gap-2.5 rounded-xl bg-blue-600 px-4 text-xs font-bold text-white shadow-xl hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-75"
+                className="flex h-10 items-center gap-2.5 rounded-lg border border-blue-500/50 bg-white/95 px-3 text-xs font-bold text-slate-800 shadow-xl hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-75"
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-                Refresh
               </button>
             </div>
+          </div>
 
+          <div className="pointer-events-auto flex items-start gap-3">
             <div className="relative">
               <button
                 onClick={() => {
@@ -420,7 +500,7 @@ export default function MapMonitoring() {
                   setMapLayerMenuOpen(false);
                 }}
                 disabled={scraperRefreshing}
-                className="flex h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl ring-1 ring-slate-900/10 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-75 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10 dark:hover:bg-slate-800"
+                className="flex h-10 items-center gap-2.5 rounded-lg border border-slate-800 bg-[#071726]/95 px-4 text-xs font-bold text-slate-100 shadow-xl hover:bg-[#0b2136] disabled:cursor-not-allowed disabled:opacity-75"
                 title="Scraping actions"
               >
                 <Database className={`h-4 w-4 text-purple-300 ${scraperRefreshing ? 'animate-pulse' : ''}`} />
@@ -453,43 +533,6 @@ export default function MapMonitoring() {
                       <span className="mt-0.5 block text-[10px] font-semibold text-slate-500 dark:text-slate-500">Deeper configured page batches</span>
                     </span>
                   </button>
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                onClick={() => {
-                  setMapLayerMenuOpen(current => !current);
-                  setLayerMenuOpen(false);
-                  setScrapeMenuOpen(false);
-                }}
-                className="flex h-12 items-center gap-2.5 rounded-xl bg-white/95 px-4 text-xs font-bold uppercase text-slate-700 shadow-xl ring-1 ring-slate-900/10 hover:bg-slate-100 hover:text-slate-950 dark:bg-slate-900/95 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-slate-800 dark:hover:text-white"
-              >
-                <Layers className="h-4 w-4 text-blue-400" />
-                Map Layers
-                <ChevronDown className={`h-4 w-4 transition-transform ${mapLayerMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {mapLayerMenuOpen && (
-                <div className="absolute right-0 top-14 w-56 rounded-xl bg-white/95 p-4 text-slate-900 shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900/95 dark:text-slate-100 dark:ring-white/10">
-                  <div className="mb-4 flex items-center gap-2 text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400">
-                    <Layers className="h-3.5 w-3.5 text-blue-400" />
-                    Map Layers
-                  </div>
-                  <div className="space-y-3">
-                    {mapLayerOptions.map(({ key, label, color, icon: Icon }) => (
-                      <button
-                        key={key}
-                        onClick={() => setActiveLayer(activeLayer === key ? null : key)}
-                        className={`flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left text-base font-bold transition-all ${
-                          activeLayer === key ? 'text-slate-950 dark:text-white' : 'text-slate-500 hover:text-slate-800 dark:text-slate-500 dark:hover:text-slate-200'
-                        }`}
-                      >
-                        <SafeIcon icon={Icon} className={`h-4 w-4 ${color}`} />
-                        <span>{label}</span>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               )}
             </div>
@@ -542,38 +585,48 @@ export default function MapMonitoring() {
           </div>
         )}
 
-        <div className="absolute bottom-4 left-6 z-[500] max-w-xl rounded-xl border border-border bg-card/95 p-3 text-xs shadow-xl backdrop-blur">
-          <div className="mb-2 font-semibold text-foreground">Risk Legend</div>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(riskStyles).map(([level, style]) => (
-              <span key={level} className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background/80 px-2 py-1 text-muted-foreground">
-                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: style.color }} />
-                {formatRiskLevel(level)}
-              </span>
+        <div className="absolute bottom-4 left-5 z-[500] w-56 rounded-xl border border-slate-800/80 bg-[#071726]/95 p-3 text-xs text-slate-200 shadow-2xl backdrop-blur">
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-wide text-slate-400">Map Legend</div>
+          <div className="space-y-2">
+            {accuracyLegend.map(({ label, color, icon }) => (
+              <div key={label} className="flex items-center gap-2">
+                <span className="grid h-4 w-4 place-items-center rounded-full text-white" style={{ backgroundColor: color }}>
+                  <SafeIcon icon={icon} className="h-2.5 w-2.5" />
+                </span>
+                <span className="text-[11px] text-slate-300">{label}</span>
+              </div>
             ))}
           </div>
-          <p className="mt-2 max-w-lg text-[10px] leading-relaxed text-muted-foreground">
-            Accident-prone areas are identified using a weighted threshold based on incident frequency, severity, recency, and source reliability. MDRRMO verified incidents carry higher weight, while verified web-scraped accident reports are used as supporting external data.
-          </p>
+          <div className="my-3 h-px bg-slate-800" />
+          <div className="space-y-2">
+            {Object.entries(riskStyles)
+              .filter(([level]) => ['High', 'Critical'].includes(level))
+              .map(([level, style]) => (
+                <div key={level} className="flex items-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 bg-transparent" style={{ borderColor: style.color }} />
+                  <span className="text-[11px] text-slate-300">Accident-Prone ({level})</span>
+                </div>
+              ))}
+          </div>
         </div>
 
         {/* Selected Incident Popup */}
         {selectedInc && (
-          <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-1001 w-96">
-            <div className={`bg-card/98 border rounded-xl p-4 shadow-2xl ${
+          <div className="absolute bottom-20 left-1/2 z-[1001] w-[420px] -translate-x-1/2">
+            <div className={`rounded-xl border bg-[#071726]/96 p-4 text-slate-100 shadow-2xl backdrop-blur ${
               selectedInc.severity === 'critical' ? 'border-red-500/50' :
               selectedInc.severity === 'warning' ? 'border-orange-500/50' :
-              'border-border'
+              'border-slate-700'
             }`}>
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-mono text-blue-400 text-sm font-bold">{selectedInc.id}</span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${severityBadge[selectedInc.severity]}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${severityBadge[selectedInc.severity]}`}>
                       {selectedInc.severity.toUpperCase()}
                     </span>
                   </div>
-                  <p className="text-xs text-foreground/80">{selectedInc.location}</p>
+                  <p className="text-xs text-slate-300">{selectedInc.location}</p>
                   {selectedInc.sourceKind && (
                     <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-blue-400">
                       {getSourceGroup(selectedInc) === 'scraper' ? 'External Isabela intelligence' : selectedInc.sourceKind.replaceAll('_', ' ')} / {selectedInc.sourceLabel}
@@ -646,32 +699,32 @@ export default function MapMonitoring() {
 
       {/* Right Incidents Panel */}
       <div
-        className={`min-h-0 shrink-0 bg-card border-l border-border flex flex-col transition-all duration-300 overflow-hidden ${
+        className={`min-h-0 shrink-0 border-l border-slate-800 bg-[#071726] text-slate-100 shadow-2xl transition-all duration-300 overflow-hidden ${
           incidentPanelOpen ? 'w-[420px]' : 'w-10'
         }`}
       >
         <button
           onClick={() => setIncidentPanelOpen(!incidentPanelOpen)}
-          className="w-full h-10 flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary transition-all shrink-0"
+          className="flex h-10 w-full shrink-0 items-center justify-center text-slate-500 transition-all hover:bg-slate-800 hover:text-slate-100"
         >
           {incidentPanelOpen ? <ChevronRight className="w-4 h-4" /> : <ChevronRight className="w-4 h-4 rotate-180" />}
         </button>
 
         {incidentPanelOpen && (
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="px-4 py-3 border-b border-border shrink-0">
+            <div className="shrink-0 border-b border-slate-800 px-4 py-3">
               <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-sm font-semibold text-foreground">{mapScope === 'isabela' ? 'Isabela Accident Intelligence' : 'Operational Records'}</span>
+                <div className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_0_4px_rgba(239,68,68,0.12)]" />
+                <span className="text-sm font-bold uppercase tracking-wide text-slate-100">{mapScope === 'isabela' ? 'Isabela Accident Intelligence' : 'Operational Records'}</span>
               </div>
-              <p className="text-[10px] text-muted-foreground">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
+              <p className="text-[10px] text-slate-400">{activeIncidents.length} active / {mapIncidents.length} mapped records</p>
               {mapScope === 'isabela' && (
                 <label className="mt-3 block">
-                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Location</span>
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wide text-slate-500">Location Filter</span>
                   <select
                     value={selectedMunicipality}
                     onChange={(event) => setSelectedMunicipality(event.target.value)}
-                    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-xs font-semibold text-foreground outline-none focus:border-blue-500"
+                    className="h-9 w-full rounded-lg border border-slate-700 bg-[#0b1d31] px-3 text-xs font-semibold text-slate-100 outline-none focus:border-blue-500"
                   >
                     {municipalityOptions.map(value => (
                       <option key={value} value={value}>{value === 'all' ? 'All Isabela municipalities' : value}</option>
@@ -679,15 +732,16 @@ export default function MapMonitoring() {
                   </select>
                 </label>
               )}
-              <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+              <div className="mt-3 text-[10px] font-bold uppercase tracking-wide text-slate-500">Sources</div>
+              <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
                 {sourceFilters.map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}
                     onClick={() => setActiveSource(key)}
-                    className={`flex min-h-9 shrink-0 items-center justify-between gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold transition-all ${
+                    className={`flex min-h-8 shrink-0 items-center justify-between gap-2 rounded-lg border px-3 py-1 text-[11px] font-bold transition-all ${
                       activeSource === key
-                        ? 'border-blue-500/50 bg-blue-500/15 text-blue-300'
-                        : 'border-border bg-background/40 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                        ? 'border-blue-500/50 bg-blue-600 text-white'
+                        : 'border-slate-700 bg-[#0b1d31] text-slate-400 hover:bg-slate-800 hover:text-slate-100'
                     }`}
                   >
                     <span className="flex min-w-0 items-center gap-1.5">
@@ -698,36 +752,53 @@ export default function MapMonitoring() {
                   </button>
                 ))}
               </div>
-              {loading && <p className="mt-1 text-[10px] text-muted-foreground">Loading map records...</p>}
+              <div className="mt-3 grid grid-cols-3 gap-1 rounded-lg bg-[#0b1d31] p-1">
+                {[
+                  ['incidents', 'Incidents'],
+                  ['risk', 'Risk Areas'],
+                  ['intelligence', 'Intelligence'],
+                ].map(([key, label]) => (
+                  <button
+                    key={key}
+                    onClick={() => setIntelTab(key)}
+                    className={`rounded-md px-2 py-2 text-[11px] font-bold transition ${
+                      intelTab === key ? 'bg-blue-600 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {loading && <p className="mt-1 text-[10px] text-slate-400">Loading map records...</p>}
               {scraperMessage && <p className="mt-1 text-[10px] text-green-400">{scraperMessage}</p>}
               {(mapError || scraperError) && <p className="mt-1 text-[10px] text-orange-400">{scraperError || mapError}</p>}
             </div>
 
-            <div className="max-h-[38vh] shrink-0 overflow-y-auto border-b border-border p-4">
+            {intelTab === 'risk' && <div className="min-h-0 flex-1 overflow-y-auto border-b border-slate-800 p-4">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Accident-Prone Areas</div>
-                  <div className="text-[10px] text-muted-foreground">{highRiskAreas.length} high or critical / {accidentProneAreas.length} scored areas</div>
+                  <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Accident-Prone Areas</div>
+                  <div className="text-[10px] text-slate-500">{highRiskAreas.length} high or critical / {accidentProneAreas.length} scored areas</div>
                 </div>
               </div>
               <div className="space-y-2">
-                {accidentProneAreas.slice(0, 5).map(area => (
-                  <div key={area.area_id} className="rounded-lg border border-border bg-background/50 p-3">
+                {accidentProneAreas.slice(0, 8).map(area => (
+                  <div key={area.area_id} className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="truncate text-xs font-bold text-foreground">{area.barangay}</div>
-                        <div className="mt-1 text-[10px] text-muted-foreground">{area.most_common_incident_type} / peak {area.peak_time}</div>
+                        <div className="truncate text-xs font-bold text-slate-100">{area.barangay}</div>
+                        <div className="mt-1 text-[10px] text-slate-500">{area.most_common_incident_type} / peak {area.peak_time}</div>
                       </div>
-                      <span className="rounded-md px-2 py-1 text-[10px] font-bold text-white" style={{ backgroundColor: riskStyles[area.risk_level]?.color }}>
+                      <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${riskBadgeClass(area.risk_level)}`}>
                         {area.risk_level}
                       </span>
                     </div>
-                    <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
-                      <span>Score <strong className="text-foreground">{area.total_risk_score}</strong></span>
-                      <span>MDRRMO <strong className="text-foreground">{area.mdrrmo_incident_count}</strong></span>
-                      <span>Web <strong className="text-foreground">{area.web_scraped_verified_count}</strong></span>
+                    <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+                      <span>Score <strong className="text-slate-100">{area.total_risk_score}</strong></span>
+                      <span>MDRRMO <strong className="text-slate-100">{area.mdrrmo_incident_count}</strong></span>
+                      <span>Web <strong className="text-slate-100">{area.web_scraped_verified_count}</strong></span>
                     </div>
-                    <div className="mt-2 max-h-20 overflow-y-auto border-t border-border/60 pt-2">
+                    <div className="mt-2 max-h-20 overflow-y-auto border-t border-slate-800 pt-2">
                       {area.records.slice(0, 4).map(record => (
                         <button
                           key={record.id || record.recordId}
@@ -740,19 +811,23 @@ export default function MapMonitoring() {
                     </div>
                   </div>
                 ))}
-                {!accidentProneAreas.length && <div className="rounded-lg border border-border bg-background/50 p-3 text-xs text-muted-foreground">No accident-prone areas match the filters.</div>}
+                {!accidentProneAreas.length && <div className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3 text-xs text-slate-400">No accident-prone areas match the filters.</div>}
               </div>
-            </div>
+            </div>}
 
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-              {activeIncidents.map((inc) => {
+            {intelTab === 'incidents' && <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+              <div className="flex items-center justify-between px-4 py-3">
+                <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Recent Incidents</div>
+                <button className="text-[10px] font-bold text-blue-300 hover:text-blue-200">View all</button>
+              </div>
+              {recentIncidents.map((inc) => {
                 const TypeIcon = typeIcons[inc.type] || AlertTriangle;
                 return (
                   <button
                     key={inc.id}
                     onClick={() => setSelectedIncident(inc.id === selectedIncident ? null : inc.id)}
-                    className={`w-full text-left px-4 py-3 border-b border-border/50 hover:bg-secondary/50 transition-all ${
-                      selectedIncident === inc.id ? 'bg-blue-500/10 border-l-2 border-l-blue-500' : ''
+                    className={`w-full border-b border-slate-800 px-4 py-3 text-left transition-all hover:bg-slate-800/60 ${
+                      selectedIncident === inc.id ? 'border-l-2 border-l-blue-500 bg-blue-500/10' : ''
                     }`}
                   >
                     <div className="flex items-start gap-2">
@@ -772,21 +847,21 @@ export default function MapMonitoring() {
                             {inc.severity.toUpperCase()}
                           </span>
                         </div>
-                        <p className="text-xs text-foreground truncate capitalize">{inc.type} Incident</p>
-                        <p className="text-[10px] text-muted-foreground truncate">{inc.location}</p>
+                        <p className="truncate text-xs font-bold text-slate-100">{inc.title || `${inc.type} incident`}</p>
+                        <p className="truncate text-[10px] text-slate-400">{inc.location}</p>
                         {inc.sourceKind && (
-                          <p className="text-[9px] font-semibold uppercase tracking-wide text-blue-400 truncate">
+                          <p className="truncate text-[9px] font-bold uppercase tracking-wide text-blue-400">
                           {inc.sourceKind.replaceAll('_', ' ')}
                           {getSourceGroup(inc) === 'scraper' && mapScope === 'isabela' ? ' / Isabela intelligence' : ''}
                         </p>
                         )}
                         <div className="flex items-center gap-1 mt-1">
-                          <Clock className="w-2.5 h-2.5 text-muted-foreground" />
-                          <span className="text-[9px] text-muted-foreground">{formatDateAndTime(inc.date, inc.time)}</span>
+                          <Clock className="h-2.5 w-2.5 text-slate-500" />
+                          <span className="text-[9px] text-slate-500">{formatDateAndTime(inc.date, inc.time)}</span>
                         </div>
                         <div className="flex items-center gap-1 mt-1">
-                          <Shield className="w-2.5 h-2.5 text-muted-foreground" />
-                          <span className="text-[9px] text-muted-foreground">{inc.assignedTeam}</span>
+                          <Shield className="h-2.5 w-2.5 text-slate-500" />
+                          <span className="text-[9px] text-slate-500">{inc.assignedTeam}</span>
                         </div>
                       </div>
                     </div>
@@ -794,11 +869,46 @@ export default function MapMonitoring() {
                 );
               })}
               {!loading && !activeIncidents.length && (
-                <div className="px-4 py-8 text-center text-xs text-muted-foreground">
+                <div className="px-4 py-8 text-center text-xs text-slate-500">
                   No mapped records are available for the selected scope.
                 </div>
               )}
-            </div>
+            </div>}
+
+            {intelTab === 'intelligence' && <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Mapped Records</div>
+                  <div className="mt-2 text-2xl font-bold text-white">{mapIncidents.length}</div>
+                  <div className="text-[10px] text-slate-500">{activeIncidents.length} active responses</div>
+                </div>
+                <div className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Risk Areas</div>
+                  <div className="mt-2 text-2xl font-bold text-white">{accidentProneAreas.length}</div>
+                  <div className="text-[10px] text-slate-500">{highRiskAreas.length} high or critical</div>
+                </div>
+              </div>
+              <div className="mt-4 rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
+                <div className="mb-3 text-xs font-bold uppercase tracking-wide text-slate-400">Source Breakdown</div>
+                {sourceFilters.map(({ key, label }) => (
+                  <div key={key} className="mb-2 last:mb-0">
+                    <div className="mb-1 flex items-center justify-between text-[11px] text-slate-400">
+                      <span>{label}</span>
+                      <span>{sourceCounts[key] || 0}</span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                      <div
+                        className="h-full rounded-full bg-blue-500"
+                        style={{ width: `${Math.min(100, ((sourceCounts[key] || 0) / Math.max(sourceCounts.all || 1, 1)) * 100)}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 rounded-lg border border-amber-500/20 bg-amber-500/10 p-3 text-[11px] leading-relaxed text-amber-100">
+                Low-confidence barangay-only scraped and PCR centroid records are not used as exact hotspot points. They still support barangay-level intelligence.
+              </div>
+            </div>}
           </div>
         )}
       </div>

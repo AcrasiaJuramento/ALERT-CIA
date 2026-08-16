@@ -70,13 +70,15 @@ function incidentToApp(row = {}) {
   const team = response.responding_team?.name || response.responding_teams?.name || "";
   const lat = row.latitude ?? row.lat ?? null;
   const lng = row.longitude ?? row.lon ?? null;
-  const barangayName = row.barangay?.name || row.barangays?.name || descriptionParts.extended.barangay || "";
+  const rawBarangayName = row.barangay?.name || row.barangays?.name || descriptionParts.extended.barangay || "";
+  const barangayName = looksLikeCoordinates(rawBarangayName) ? "" : rawBarangayName;
   const location = displayLocationText(
-    barangayName,
     descriptionParts.extended.locationText,
     descriptionParts.extended.placeOfIncident,
     row.location_text,
+    barangayName,
     descriptionParts.extended.address,
+    rawBarangayName,
   );
 
   return {
@@ -109,6 +111,9 @@ function incidentToApp(row = {}) {
     status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    locationPrecision: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "official_incident_pin" : "unknown",
+    coordinateSource: "official_incident_record",
+    mappingStatus: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "exact_geocode" : "needs_review",
   };
 }
 

@@ -306,11 +306,15 @@ export function LeafletIncidentMap({
     () => incidents.filter((incident) => !isIncidentCompleted(incident.status)),
     [incidents]
   );
-  const riskHeatPoints = useMemo(() => accidentProneAreas.map(area => ({
+  const pointAccidentProneAreas = useMemo(
+    () => accidentProneAreas.filter(area => area.point_hotspot_eligible !== false),
+    [accidentProneAreas]
+  );
+  const riskHeatPoints = useMemo(() => pointAccidentProneAreas.map(area => ({
     lat: Number(area.latitude),
     lng: Number(area.longitude),
     intensity: Math.min(Math.max(Number(area.total_risk_score || 1) / 12, 0.25), 1),
-  })), [accidentProneAreas]);
+  })), [pointAccidentProneAreas]);
 
   return (
     <div className="relative w-full overflow-hidden border border-border bg-slate-950" style={{ height }}>
@@ -343,13 +347,13 @@ export function LeafletIncidentMap({
         )}
         <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} enabled={effectiveLayers.barangayBoundaries !== false} />
         <AccidentProneAreasLayer
-          areas={accidentProneAreas}
+          areas={pointAccidentProneAreas}
           enabled={Boolean(effectiveLayers.accidentProneAreas)}
           publicSafe={publicSafeRiskPopups}
-          excludeCritical={Boolean(effectiveLayers.criticalZones)}
+          excludeCritical
         />
         <AccidentProneAreasLayer
-          areas={accidentProneAreas}
+          areas={pointAccidentProneAreas}
           enabled={Boolean(effectiveLayers.criticalZones)}
           publicSafe={publicSafeRiskPopups}
           criticalOnly
@@ -361,15 +365,6 @@ export function LeafletIncidentMap({
           enabled={clusterMarkers}
           spreadOverlapping={spreadOverlappingMarkers}
         />
-        {!clusterMarkers && effectiveLayers.incidents && (
-          <ClusteredIncidentMarkers
-            incidents={incidents}
-            selectedIncidentId={selectedIncidentId}
-            onMarkerClick={onMarkerClick}
-            enabled={false}
-            spreadOverlapping={spreadOverlappingMarkers}
-          />
-        )}
         <AdvisoryMarkersLayer
           advisories={effectiveLayers.advisories ? advisoryMarkers : []}
           selectedAdvisoryId={selectedAdvisoryId}

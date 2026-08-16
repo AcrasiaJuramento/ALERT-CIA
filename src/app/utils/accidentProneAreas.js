@@ -1,4 +1,5 @@
 import { ECHAGUE_CENTER, getIncidentLatLng, hasValidLatLng } from './mapData';
+import { canUseForPointHotspot } from './locationAccuracy';
 
 const VERIFIED_INCIDENT_STATUSES = new Set([
   'verified',
@@ -86,6 +87,15 @@ function readSeverity(record = {}) {
   if (value === 'warning') return 'high';
   if (value === 'medium') return 'moderate';
   return value || 'moderate';
+}
+
+function recordRiskSort(left = {}, right = {}) {
+  const leftSeverity = severityRank[readSeverity(left)] ?? 1;
+  const rightSeverity = severityRank[readSeverity(right)] ?? 1;
+  if (leftSeverity !== rightSeverity) return rightSeverity - leftSeverity;
+  const leftDate = readDate(left)?.getTime() || 0;
+  const rightDate = readDate(right)?.getTime() || 0;
+  return rightDate - leftDate;
 }
 
 function readIncidentType(record = {}) {
@@ -201,6 +211,11 @@ export function calculateAccidentProneAreas(records = [], { publicOnly = false, 
       records: [],
       latSum: 0,
       lngSum: 0,
+      pointLatSum: 0,
+      pointLngSum: 0,
+      pointEligibleCount: 0,
+      pointEligibleRecords: [],
+      barangayOnlyScrapedCount: 0,
       sourceReliabilityScore: 0,
       mdrrmoIncidentCount: 0,
       webScrapedVerifiedCount: 0,
@@ -210,6 +225,14 @@ export function calculateAccidentProneAreas(records = [], { publicOnly = false, 
     group.records.push({ ...record, sourceType, reliability });
     group.latSum += Number(lat);
     group.lngSum += Number(lng);
+    if (canUseForPointHotspot(record)) {
+      group.pointLatSum += Number(lat);
+      group.pointLngSum += Number(lng);
+      group.pointEligibleCount += 1;
+      group.pointEligibleRecords.push(record);
+    } else if (sourceType === 'scraped') {
+      group.barangayOnlyScrapedCount += 1;
+    }
     group.sourceReliabilityScore += reliability;
     if (sourceType === 'mdrrmo') group.mdrrmoIncidentCount += 1;
     if (sourceType === 'scraped' && reliability >= 1) group.webScrapedVerifiedCount += 1;
@@ -247,15 +270,20 @@ export function calculateAccidentProneAreas(records = [], { publicOnly = false, 
     };
     const totalRiskScore = scores.frequencyScore + scores.severityScore + scores.recencyScore + scores.sourceReliabilityScore;
     const riskLevel = classifyRisk(totalRiskScore);
-    const isPublicVisible = ['High', 'Critical'].includes(riskLevel) && group.records.every(record => record.reliability >= 1);
+    const pointHotspotEligible = group.pointEligibleCount > 0;
+    const representativePointRecord = [...group.pointEligibleRecords].sort(recordRiskSort)[0];
+    const representativePoint = representativePointRecord ? getIncidentLatLng(representativePointRecord) : null;
+    const isPublicVisible = pointHotspotEligible && ['High', 'Critical'].includes(riskLevel) && group.records.every(record => record.reliability >= 1);
 
     return {
       area_id: `APA-${index + 1}-${group.barangay.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       barangay: group.barangay,
       municipality: group.municipality,
-      latitude: count ? group.latSum / count : ECHAGUE_CENTER[0],
-      longitude: count ? group.lngSum / count : ECHAGUE_CENTER[1],
+      latitude: representativePoint ? representativePoint[0] : count ? group.latSum / count : ECHAGUE_CENTER[0],
+      longitude: representativePoint ? representativePoint[1] : count ? group.lngSum / count : ECHAGUE_CENTER[1],
       total_incidents: count,
+      point_hotspot_eligible: pointHotspotEligible,
+      barangay_only_scraped_count: group.barangayOnlyScrapedCount,
       mdrrmo_incident_count: group.mdrrmoIncidentCount,
       web_scraped_verified_count: group.webScrapedVerifiedCount,
       web_scraped_pending_count: group.webScrapedPendingCount,

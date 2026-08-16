@@ -6,6 +6,7 @@ import {
 import { toast } from "sonner";
 import {
   analyzeScraperArticle,
+  addOfficerVerifiedLandmarkFromCorrection,
   approveScraperRecordForPublicMap,
   correctScraperRecordLocation,
   listRejectedScraperCandidates,
@@ -18,6 +19,7 @@ import {
 } from "../services/supabase";
 import { ISABELA_MUNICIPALITIES } from "../data/isabelaMunicipalities";
 import { formatLongDateTime } from "../utils/dateFormat";
+import { locationAssessment } from "../utils/locationAccuracy";
 
 const REVIEW_STATUSES = [
   { value: "", label: "All" },
@@ -78,13 +80,6 @@ function settledValue(result, fallback) {
   return result.status === "fulfilled" ? result.value : fallback;
 }
 
-function locationLabel(item = {}) {
-  return [
-    item.verifiedBarangay || item.extractedBarangay,
-    item.verifiedMunicipality || item.extractedMunicipality,
-  ].filter(Boolean).join(", ");
-}
-
 function municipalityLabel(item = {}) {
   const normalized = String(item.verifiedMunicipality || item.extractedMunicipality || "")
     .replace(/\b(?:city|municipality)\b/ig, "")
@@ -126,8 +121,21 @@ function CorrectionPanel({ record, onCancel, onSave }) {
     barangay: record.verifiedBarangay || record.extractedBarangay || "",
     purokSitio: record.verifiedPurokSitio || record.extractedPurokSitio || "",
     road: record.verifiedRoadPlace || record.rawPayload?.location?.road || "",
+    latitude: Number.isFinite(Number(record.lat)) ? String(record.lat) : "",
+    longitude: Number.isFinite(Number(record.lon)) ? String(record.lon) : "",
+    accuracy: record.locationConfidence?.accuracy || "barangay_only",
+    source: record.locationConfidence?.source || "barangay_centroid",
+    reason: record.locationConfidence?.reason || "",
+    saveLandmark: false,
+    landmarkName: record.rawPayload?.location?.landmark || "",
+    landmarkCategory: "other",
+    aliases: "",
   });
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  const updateAccuracy = (value) => {
+    const source = value === "near_exact" ? "manual_exact" : value === "road_level" ? "road" : value === "unmapped" ? "unmapped" : "barangay_centroid";
+    setForm(current => ({ ...current, accuracy: value, source }));
+  };
   return (
     <div className="mt-3 grid gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 md:grid-cols-4">
       {["municipality", "barangay", "purokSitio", "road"].map(key => (
@@ -139,6 +147,30 @@ function CorrectionPanel({ record, onCancel, onSave }) {
           className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs"
         />
       ))}
+      <input value={form.latitude} onChange={event => update("latitude", event.target.value)} placeholder="Latitude (optional)" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
+      <input value={form.longitude} onChange={event => update("longitude", event.target.value)} placeholder="Longitude (optional)" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
+      <select value={form.accuracy} onChange={event => updateAccuracy(event.target.value)} className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs">
+        <option value="near_exact">Exact / landmark-based</option>
+        <option value="road_level">Road / purok / sitio level</option>
+        <option value="barangay_only">Approximate barangay only</option>
+        <option value="unmapped">Unmapped / conflicting</option>
+      </select>
+      <input value={form.reason} onChange={event => update("reason", event.target.value)} placeholder="Correction note (optional)" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
+      <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-input-background px-3 text-xs md:col-span-4">
+        <input type="checkbox" checked={form.saveLandmark} onChange={event => update("saveLandmark", event.target.checked)} className="accent-blue-600" />
+        Add to Local Verified Landmark Registry
+      </label>
+      {form.saveLandmark && (
+        <>
+          <input value={form.landmarkName} onChange={event => update("landmarkName", event.target.value)} placeholder="Landmark name" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
+          <select value={form.landmarkCategory} onChange={event => update("landmarkCategory", event.target.value)} className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs">
+            {["school", "church", "hospital", "clinic", "barangay hall", "government office", "police station", "fire station", "fuel station", "market", "bridge", "terminal", "commercial establishment", "intersection", "other"].map(category => (
+              <option key={category} value={category}>{category}</option>
+            ))}
+          </select>
+          <input value={form.aliases} onChange={event => update("aliases", event.target.value)} placeholder="Aliases, comma separated" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs md:col-span-2" />
+        </>
+      )}
       <div className="flex gap-2 md:col-span-4">
         <button onClick={() => onSave(form)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Save Correction</button>
         <button onClick={onCancel} className="rounded-lg bg-secondary px-3 py-2 text-xs font-semibold">Cancel</button>
@@ -150,6 +182,12 @@ function CorrectionPanel({ record, onCancel, onSave }) {
 function RecordCard({ record, records, onRefresh }) {
   const [correcting, setCorrecting] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
+  const assessment = locationAssessment({
+    ...record,
+    locationPrecision: record.geocodePrecision,
+    mappingStatus: record.mappingStatus,
+    sourceKind: "scraped",
+  });
 
   const verify = async () => {
     await approveScraperRecordForPublicMap(record.id);
@@ -165,6 +203,9 @@ function RecordCard({ record, records, onRefresh }) {
   };
   const saveCorrection = async (form) => {
     await correctScraperRecordLocation(record.id, form);
+    if (form.saveLandmark) {
+      await addOfficerVerifiedLandmarkFromCorrection(record, form);
+    }
     toast.success("Location correction saved.");
     setCorrecting(false);
     onRefresh();
@@ -200,8 +241,11 @@ function RecordCard({ record, records, onRefresh }) {
       <div className="mt-3 grid gap-2 text-xs md:grid-cols-4">
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">{record.verifiedBarangay || record.verifiedMunicipality ? "Verified Location" : "Extracted Location"}</span>{record.verifiedBarangay || record.extractedBarangay || "-"}, {record.verifiedMunicipality || record.extractedMunicipality || "Isabela"}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Raw Location</span>{record.rawLocationText || record.location || "-"}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Classification</span>{record.classificationReason || "Legacy record needs review."}</div>
+        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Location Accuracy</span>{assessment.label}</div>
         <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Scraped</span>{fmt(record.scrapedAt)}</div>
+      </div>
+      <div className="mt-2 rounded-lg bg-secondary/40 p-2 text-xs text-muted-foreground">
+        {record.classificationReason || "Legacy record needs review."}
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/40 p-2">
         <GitMerge className="h-4 w-4 text-muted-foreground" />
