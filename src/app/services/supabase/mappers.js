@@ -142,7 +142,7 @@ const DISPATCH_EXTENDED_FIELDS = [
   "incidentNature", "assaultDetails", "animalBiteDetails", "ingestionItem", "ingestionQuantity",
   "ifIngestion", "ingestionDetails", "quantity", "ifFall", "fallDetails", "selfAccident",
   "collision", "vehicleInvolved", "vehicleInvolve", "crash", "assistanceNeeded",
-  "patients",
+  "patients", "dispatcher", "dispatchers", "date", "dispatchDate",
 ];
 
 const PCR_EXTENDED_FIELDS = [
