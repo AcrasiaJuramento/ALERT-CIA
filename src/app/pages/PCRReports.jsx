@@ -23,6 +23,7 @@ const formatDate = value => {
 
 const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher Review', 'Accepted by Dispatcher', 'Pending Admin Verification', 'Returned to Field Officer', 'Returned for Correction', 'Submitted', 'Verified', 'Rejected', 'Completed'];
 const displayStatus = record => record?.status || 'Draft';
+const isEditable = record => ['Draft', 'In Progress', 'Returned to Field Officer', 'Returned for Correction'].includes(displayStatus(record));
 const isReviewable = record => displayStatus(record) === 'Submitted';
 const isReverseWorkflowRecord = record => record?.workflowOrigin === 'reverse'
   || (!record?.dispatchId && ['Pending Dispatcher Review', 'Accepted by Dispatcher'].includes(displayStatus(record)));
@@ -239,7 +240,7 @@ export default function PCRReports() {
               <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
               <td className="px-4 py-3"><div className="flex min-w-max items-center gap-2" onClick={event => event.stopPropagation()}>
                 <button onClick={() => setSelected(record)} title="View PCR" aria-label="View PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><Eye size={15} /><span className="hidden xl:inline">View</span></button>
-                {canCreate && <button onClick={() => edit(record)} title="Edit PCR" aria-label="Edit PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"><Edit3 size={15} /><span className="hidden xl:inline">Edit</span></button>}
+                {canCreate && isEditable(record) && <button onClick={() => edit(record)} title="Edit PCR" aria-label="Edit PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"><Edit3 size={15} /><span className="hidden xl:inline">Edit</span></button>}
                 <button onClick={() => doPdf(record)} title="Download PCR PDF" aria-label="Download PCR PDF" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"><Download size={15} /><span className="hidden xl:inline">PDF</span></button>
                 {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
@@ -272,7 +273,7 @@ export default function PCRReports() {
                 {isReverseWorkflowRecord(selected) && ((user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review') || (user?.role === 'administrator' && selected.status === 'Pending Admin Verification')) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
                 {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
                 {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
-                {canCreate && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
+                {canCreate && isEditable(selected) && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
                 <button onClick={() => doPdf(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Download size={14} />PDF</button>
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
               </div>
