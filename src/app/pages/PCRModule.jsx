@@ -425,16 +425,54 @@ export default function PCRModule() {
     const next = prompts.find(([key]) => !valueFor(key));
     return next ? { key: next[0], label: next[1], value: valueFor(next[0]) } : null;
   }, [form, needsHospital]);
+  const missingRequiredForStep = (stepIndex, submitting = false) => {
+    const firstVital = form.vitals?.[0] || {};
+    const firstGcs = gcsRows?.[0] || {};
+    const required = stepIndex === 0 ? [
+      ['Responding Team', form.respondingTeam || form.team], ['Vehicle', form.vehicle], ['Driver', form.driver], ['Main Aider', form.mainAider],
+      ['Patient Name', form.patientName], ['Age', form.age], ['Birthday', form.birthday], ['Gender', form.gender], ['Civil Status', form.civilStatus],
+      ['Address', form.address], ['Contact Person', form.contactPerson], ['Contact Number', form.contactNumber], ['Nature of Call', form.natureOfCall],
+      ['Date of Incident', form.dateOfIncident], ['Time of Incident', form.timeOfIncident], ['Place of Incident', form.placeOfIncident],
+      ['Barangay', form.barangay], ['Dispatch Time', form.dispatchTime]
+    ] : stepIndex === 1 ? [
+      ['Arrival at Scene', form.arrivalScene], ...(submitting ? [['Departure at Scene', form.departureScene]] : []), ['Triage', form.triage],
+      ['Type of Emergency', [...(form.emergencyTypes || []), ...(form.traumaTypes || [])].length], ['BOW', form.obstetric?.bow],
+      ['Chief Complaint', form.chiefComplaint], ['Vital Sign Time', firstVital.time], ['Blood Pressure', firstVital.bp], ['Pulse Rate', firstVital.pulse],
+      ['Respiratory Rate', firstVital.respiratory], ['Temperature', firstVital.temperature], ['Oxygen Saturation', firstVital.oxygen],
+      ['GCS Eye', firstGcs.eye], ['GCS Verbal', firstGcs.verbal], ['GCS Motor', firstGcs.motor]
+    ] : stepIndex === 2 ? [
+      ['Airway', form.airway?.length], ['Breathing', form.breathing?.length], ['Pulse', form.pulseFindings?.length], ['Pupils', form.pupils?.length],
+      ['Skin', form.skin?.length], ['Allergy Status', form.allergies?.status], ['Suspected Spinal Injury', form.suspectedSpinal], ['Pain Assessment', form.painPositive]
+    ] : stepIndex === 3 ? [
+      ['Hospitalization Decision', form.hospitalization?.status], ...INTERVENTIONS.map(item => [`Intervention: ${item}`, form.interventions?.[item]])
+    ] : [];
+    return required.filter(([, value]) => value === undefined || value === null || value === '' || value === 0).map(([label]) => label);
+  };
+  const validateRequiredStep = (stepIndex, submitting = false) => {
+    const missing = missingRequiredForStep(stepIndex, submitting);
+    if (!missing.length) return true;
+    const messageText = `Complete required fields: ${missing.slice(0, 6).join(', ')}${missing.length > 6 ? ` and ${missing.length - 6} more` : ''}.`;
+    setMessage(messageText);
+    toast.error(messageText);
+    return false;
+  };
   const goNext = () => {
-    if (step === 3 && needsHospital && (!(form.timeline?.arrivalHospital || form.arrivalHospital) || !(form.timeline?.departureHospital || form.departureHospital))) {
-      setMessage("Arrival and departure hospital times are required when the patient needs hospitalization.");
-      toast.error("Fill Arrival at Hospital and Departure at Hospital before continuing.");
-      return;
-    }
+    if (!validateRequiredStep(step)) return;
     setStep(s => s + 1);
   };
   const store = async status => {
     if (savingStatus) return;
+    if (status !== "Draft") {
+      for (let index = 0; index < 4; index += 1) {
+        if (!validateRequiredStep(index, true)) { setStep(index); return; }
+      }
+      if (needsHospital && (!(form.timeline?.arrivalHospital || form.arrivalHospital) || !(form.timeline?.departureHospital || form.departureHospital))) {
+        setStep(3);
+        setMessage("Arrival and departure hospital times are required before submitting.");
+        toast.error("Fill Arrival at Hospital and Departure at Hospital before submitting.");
+        return;
+      }
+    }
     if (chronologyError) { setMessage(chronologyError); return; }
     if (!isValidIncidentCoordinate(form.latitude, form.longitude)) {
       setMessage(PIN_REQUIRED_MESSAGE);
@@ -490,10 +528,10 @@ export default function PCRModule() {
   return <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
     {loading && <div className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">Loading PCR report...</div>}
     <div className="flex flex-wrap items-center justify-between gap-3 mb-5"><div><button onClick={() => navigate("/admin/pcr")} className="text-xs text-blue-400 mb-2 flex items-center gap-1"><ArrowLeft size={13}/>Patient Care Records</button><h1 className="text-xl font-bold flex items-center gap-2"><FileText className="text-blue-500"/>Create PCR Report</h1><p className="text-xs text-muted-foreground">Create and submit a new Patient Care Report.</p></div><div className="flex gap-2"><button onClick={() => store("Draft")} disabled={Boolean(savingStatus)} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center disabled:opacity-60"><Save size={15}/>{savingStatus === "Draft" ? "Saving..." : "Save Draft"}</button><button onClick={downloadPdf} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center"><Download size={15}/>Download PDF</button></div></div>
-    {linkedDispatch && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm"><div><div className="font-semibold text-blue-300">Linked Dispatch Form</div><div className="text-xs text-muted-foreground">{linkedDispatch.responseNumber || linkedDispatch.id} · {linkedDispatch.placeOfIncident || "No location entered"}</div></div><button onClick={() => { sessionStorage.setItem(DISPATCH_EDIT_KEY, linkedDispatch.id); navigate(`/admin/dispatch/new?edit=${linkedDispatch.id}`); }} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Open Dispatch</button></div>}
+    {linkedDispatch && <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-sm"><div><div className="font-semibold text-blue-300">Linked Dispatch Form</div><div className="text-xs text-muted-foreground">{linkedDispatch.responseNumber || linkedDispatch.id} · {linkedDispatch.placeOfIncident || "No location entered"}</div></div><button onClick={() => { sessionStorage.setItem('alert-cia-navigation-dispatch', JSON.stringify(linkedDispatch)); const navigationId = linkedDispatch.dispatchId || linkedDispatch.id; navigate(navigationId ? `/admin/dispatch/navigation/${navigationId}` : '/admin/dispatch/navigation'); }} className="rounded-lg border border-blue-400/40 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-300">View linked dispatch route</button></div>}
     {message && <div className={`mb-4 px-4 py-3 rounded-lg border text-sm ${chronologyError || message === PIN_REQUIRED_MESSAGE || message.startsWith("Unable") ? "bg-red-500/10 border-red-500/30 text-red-500" : "bg-green-500/10 border-green-500/30 text-green-500"}`}>{message}</div>}
     {chronologyError && <div className="mb-4 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-500 text-sm">{chronologyError}</div>}
-    <div className="grid grid-cols-5 gap-1 mb-5">{steps.map(([name,icon],i)=><button key={name} onClick={()=>setStep(i)} className={`p-2 md:p-3 rounded-lg border text-center ${step===i?"bg-blue-600 border-blue-600 text-white":"bg-card border-border text-muted-foreground"}`}><span className="block w-4 h-4 mx-auto mb-1">{icon}</span><span className="text-[10px] md:text-xs font-semibold">{name}</span></button>)}</div>
+    <div className="grid grid-cols-5 gap-1 mb-5">{steps.map(([name,icon],i)=><button key={name} onClick={()=>{ if (i > step) { for (let index = step; index < i; index += 1) { if (!validateRequiredStep(index)) { setStep(index); return; } } } setStep(i); }} className={`p-2 md:p-3 rounded-lg border text-center ${step===i?"bg-blue-600 border-blue-600 text-white":"bg-card border-border text-muted-foreground"}`}><span className="block w-4 h-4 mx-auto mb-1">{icon}</span><span className="text-[10px] md:text-xs font-semibold">{name}</span></button>)}</div>
     <div className="space-y-4">
       <FloatingTimelinePrompt item={activeTimelinePrompt} onChange={updateTimeline} />
       {step === 0 && <>
@@ -537,7 +575,7 @@ export default function PCRModule() {
         </Section>
         <Section title="Obstetric and Motor Vehicle Data">
           <div className="grid lg:grid-cols-[1fr_1.4fr] gap-4">
-            <div className="grid grid-cols-3 gap-2">{Object.keys(form.obstetric).map(k=><Field key={k} label={k.toUpperCase()}><input className={input} value={form.obstetric[k]} onChange={e=>nested("obstetric",k,e.target.value)}/></Field>)}</div>
+            <div className="grid grid-cols-3 gap-2">{Object.keys(form.obstetric).map(k=><Field key={k} label={k.toUpperCase()}>{k === 'bow' ? <select className={input} value={form.obstetric.bow} onChange={e=>nested("obstetric","bow",e.target.value)} required><option value="">Select</option><option value="Positive">+</option><option value="Negative">-</option></select> : <input className={input} value={form.obstetric[k]} onChange={e=>nested("obstetric",k,e.target.value)}/>}</Field>)}</div>
             <div className="border border-border rounded-xl overflow-hidden">
               <div className="grid grid-cols-2 border-b border-border">
                 <label className="p-2 text-xs font-bold flex items-center gap-2 border-r border-border"><input type="checkbox" checked={form.crash.selfAccident} onChange={e=>nested("crash","selfAccident",e.target.checked)} className="accent-blue-600"/>SELF-ACCIDENT</label>
