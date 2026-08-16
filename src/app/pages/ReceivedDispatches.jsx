@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, FileText, Filter, MapPin, Radio, Search } from "lucide-react";
+import { CheckCircle2, FileText, Filter, MapPin, Navigation, Radio, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
   DISPATCH_STATUSES,
@@ -112,6 +112,12 @@ function linkedPcrLabel(record = {}, pcr = null) {
   if (record.linkedPcrId) return record.linkedPcrId;
   if (isResolvedDispatch(record, pcr)) return record.responseNumber ? `${record.responseNumber} PCR` : "Created";
   return "Not created";
+}
+
+function dispatchCoordinates(record = {}) {
+  const latitude = Number(record.latitude ?? record.lat ?? record.location?.lat ?? record.location?.latitude);
+  const longitude = Number(record.longitude ?? record.lng ?? record.lon ?? record.location?.lng ?? record.location?.longitude);
+  return Number.isFinite(latitude) && Number.isFinite(longitude) ? { latitude, longitude } : null;
 }
 
 export default function ReceivedDispatches() {
@@ -294,6 +300,16 @@ export default function ReceivedDispatches() {
       toast.error(error.message || "Unable to mark this dispatch as resolved.");
     }
   };
+  const openNavigation = record => {
+    const coordinates = dispatchCoordinates(record);
+    if (!coordinates) {
+      toast.error("This dispatch does not have valid incident coordinates.");
+      return;
+    }
+    sessionStorage.setItem('alert-cia-navigation-dispatch', JSON.stringify(record));
+    const navigationId = record.dispatchId || record.id;
+    navigate(navigationId ? `/admin/dispatch/navigation/${navigationId}` : '/admin/dispatch/navigation');
+  };
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
@@ -358,6 +374,9 @@ export default function ReceivedDispatches() {
                   <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground"><MapPin size={14} />{record.placeOfIncident || record.callerAddress || "No location entered"}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {!isResolved && <button onClick={() => openNavigation(record)} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">
+                    <Navigation size={15} />Navigate
+                  </button>}
                   {hasPcrLink || isResolved ? (
                     <>
                       <button onClick={() => openPCR(record)} className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500">

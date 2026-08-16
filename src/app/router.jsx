@@ -10,6 +10,7 @@ import PCRModule from './pages/PCRModule'
 import DispatchModule from './pages/DispatchModule'
 import DispatchRecords from './pages/DispatchRecords'
 import ReceivedDispatches from './pages/ReceivedDispatches'
+import DispatchNavigation from './pages/DispatchNavigation'
 import PCRReports from './pages/PCRReports'
 import IncidentList from './pages/IncidentList'
 import IncidentDetails from './pages/IncidentDetails'
@@ -59,6 +60,8 @@ export const router = createBrowserRouter([
       { path: 'dispatch', element: protect(PERMISSIONS.VIEW_DISPATCH, <DispatchRecords />) },
       { path: 'dispatch/new', element: protect(PERMISSIONS.CREATE_DISPATCH, <DispatchModule />) },
       { path: 'dispatch/received', element: protect(PERMISSIONS.VIEW_RECEIVED_DISPATCHES, <ReceivedDispatches />) },
+      { path: 'dispatch/navigation', element: protect(PERMISSIONS.VIEW_RECEIVED_DISPATCHES, <DispatchNavigation />) },
+      { path: 'dispatch/navigation/:dispatchId', element: protect(PERMISSIONS.VIEW_RECEIVED_DISPATCHES, <DispatchNavigation />) },
     ],
   },
   {
