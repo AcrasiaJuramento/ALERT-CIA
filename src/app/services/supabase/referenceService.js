@@ -15,10 +15,15 @@ const TEAM_SELECT = "id, name, status, active, station_id, created_at, updated_a
 const AMBULANCE_SELECT = "id, call_sign, plate_number, description, status, active, responding_team_id, updated_at, responding_team:responding_teams(id, name)";
 const CREW_SELECT = "id, name, role, contact_number, responding_team_id, active, updated_at";
 
-export async function listBarangays({ activeOnly = true } = {}) {
-  return runCachedSupabaseRequest(`reference:barangays:${activeOnly}`, client => {
+export async function listBarangays({ activeOnly = true, municipality = "" } = {}) {
+  const municipalitySearch = String(municipality || "")
+    .replace(/\b(?:city|municipality)\b/gi, "")
+    .replace(/[,%]/g, " ")
+    .trim();
+  return runCachedSupabaseRequest(`reference:barangays:${activeOnly}:${municipalitySearch.toLowerCase()}`, client => {
     let query = client.from("barangays").select(BARANGAY_SELECT).order("name", { ascending: true });
     if (activeOnly) query = query.eq("active", true);
+    if (municipalitySearch) query = query.ilike("municipality", `%${municipalitySearch}%`);
     return query;
   }, "Unable to load barangays.", { ttlMs: REFERENCE_TTL_MS });
 }

@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { Circle, Popup } from 'react-leaflet';
 import { formatRiskLevel, riskStyles } from '../../utils/accidentProneAreas';
 import { getAccidentProneAreaRadiusMeters } from '../../utils/accidentProneWarningZones';
@@ -50,31 +51,56 @@ function PublicPopup({ area }) {
   );
 }
 
-export function AccidentProneAreasLayer({ areas = [], enabled = true, publicSafe = false, criticalOnly = false, excludeCritical = false }) {
+function AccidentProneAreaCircle({ area, publicSafe, selected, onAreaClick }) {
+  const circleRef = useRef(null);
+  const style = riskStyles[area.risk_level] || riskStyles.Low;
+
+  useEffect(() => {
+    if (selected) circleRef.current?.openPopup();
+  }, [selected]);
+
+  return (
+    <Circle
+      ref={circleRef}
+      center={[Number(area.latitude), Number(area.longitude)]}
+      radius={getAccidentProneAreaRadiusMeters(area)}
+      eventHandlers={{ click: () => onAreaClick?.(area) }}
+      pathOptions={{
+        color: selected ? '#f8fafc' : style.color,
+        fillColor: style.color,
+        fillOpacity: selected ? 0.34 : area.risk_level === 'Critical' ? 0.22 : 0.16,
+        weight: selected ? 5 : area.risk_level === 'Critical' ? 3 : 2,
+        dashArray: selected || area.risk_level === 'Critical' ? undefined : '8 6',
+      }}
+    >
+      <Popup>{publicSafe ? <PublicPopup area={area} /> : <AdminPopup area={area} />}</Popup>
+    </Circle>
+  );
+}
+
+export function AccidentProneAreasLayer({
+  areas = [],
+  enabled = true,
+  publicSafe = false,
+  criticalOnly = false,
+  excludeCritical = false,
+  selectedAreaId,
+  onAreaClick,
+}) {
   if (!enabled) return null;
 
   return areas
     .filter(area => !criticalOnly || area.risk_level === 'Critical')
     .filter(area => !excludeCritical || area.risk_level !== 'Critical')
-    .map(area => {
-      const style = riskStyles[area.risk_level] || riskStyles.Low;
-      return (
-        <Circle
-          key={area.area_id}
-          center={[Number(area.latitude), Number(area.longitude)]}
-          radius={getAccidentProneAreaRadiusMeters(area)}
-          pathOptions={{
-            color: style.color,
-            fillColor: style.color,
-            fillOpacity: area.risk_level === 'Critical' ? 0.22 : 0.16,
-            weight: area.risk_level === 'Critical' ? 3 : 2,
-            dashArray: area.risk_level === 'Critical' ? undefined : '8 6',
-          }}
-        >
-          <Popup>{publicSafe ? <PublicPopup area={area} /> : <AdminPopup area={area} />}</Popup>
-        </Circle>
-      );
-    });
+    .map(area => (
+      <AccidentProneAreaCircle
+        key={area.area_id}
+        area={area}
+        publicSafe={publicSafe}
+        selected={selectedAreaId === area.area_id}
+        onAreaClick={onAreaClick}
+      />
+    ));
 }
 
 export default AccidentProneAreasLayer;

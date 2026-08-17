@@ -3,6 +3,7 @@ import isabelaGeoJsonUrl from './Isabela.geojson?url';
 
 let boundaryIndexPromise;
 let boundaryCollectionPromise;
+let municipalityIndexPromise;
 
 function normalizeName(value = '') {
   return String(value)
@@ -74,6 +75,39 @@ export async function resolveIsabelaBarangayGeometry({ barangay, municipality } 
     municipality: feature.properties?.NAME_2 || municipality,
     gid: feature.properties?.GID_3 || `${municipality}-${barangay}`,
     precision: 'barangay_boundary',
+    source: 'Isabela.geojson',
+  };
+}
+
+async function loadMunicipalityIndex() {
+  if (!municipalityIndexPromise) {
+    municipalityIndexPromise = loadIsabelaBoundaryCollection().then((collection) => {
+      const index = new Map();
+      for (const feature of collection?.features || []) {
+        const municipality = feature.properties?.NAME_2 || feature.properties?.MUNICIPALITY || '';
+        if (!municipality || !feature.geometry) continue;
+        const key = normalizeName(municipality);
+        if (!index.has(key)) index.set(key, []);
+        index.get(key).push(feature);
+      }
+      return index;
+    });
+  }
+  return municipalityIndexPromise;
+}
+
+export async function resolveIsabelaMunicipalityGeometry({ municipality } = {}) {
+  if (!municipality) return null;
+  const index = await loadMunicipalityIndex();
+  const features = index.get(normalizeName(municipality)) || [];
+  if (!features.length) return null;
+  const point = pointOnFeature({ type: 'FeatureCollection', features });
+  const [lng, lat] = point.geometry.coordinates;
+  return {
+    lat: Number(lat),
+    lng: Number(lng),
+    municipality: features[0]?.properties?.NAME_2 || municipality,
+    precision: 'municipality_center',
     source: 'Isabela.geojson',
   };
 }

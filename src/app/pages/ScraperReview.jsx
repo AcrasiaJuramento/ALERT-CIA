@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
-  CheckCircle2, Database, ExternalLink, Filter, GitMerge, MapPin, RefreshCw,
-  Search, ShieldCheck, SlidersHorizontal, XCircle,
+  AlertTriangle, CheckCircle2, ChevronDown, Clock, Database, ExternalLink, Filter,
+  GitMerge, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -10,6 +11,8 @@ import {
   approveScraperRecordForPublicMap,
   correctScraperRecordLocation,
   listRejectedScraperCandidates,
+  listBarangays,
+  listLandmarks,
   listScraperRecords,
   listScraperRuns,
   listScraperSourceHealth,
@@ -20,12 +23,15 @@ import {
 import { ISABELA_MUNICIPALITIES } from "../data/isabelaMunicipalities";
 import { formatLongDateTime } from "../utils/dateFormat";
 import { locationAssessment } from "../utils/locationAccuracy";
+import { getScraperJobState, startScraperJob, subscribeScraperJob } from "../services/scraperJobService";
+import IncidentLocationPicker from "../components/IncidentLocationPicker";
+import { resolveIsabelaBarangayGeometry, resolveIsabelaMunicipalityGeometry } from "../data/isabelaBarangayGeometry";
+import { resolveNewsCorrectionLocation } from "../utils/newsLocationResolution";
 
 const REVIEW_STATUSES = [
   { value: "", label: "All" },
   { value: "pending_review", label: "Needs Review" },
-  { value: "new", label: "New" },
-  { value: "approved", label: "Verified" },
+  { value: "verified_group", label: "Verified" },
   { value: "ignored", label: "Rejected" },
   { value: "promoted", label: "Promoted" },
 ];
@@ -46,8 +52,8 @@ const REJECTION_REASONS = [
   { value: "low_confidence", label: "Low Confidence" },
   { value: "insufficient_information", label: "Insufficient Info" },
   { value: "outside_date_range", label: "Outside Date Range" },
-  { value: "fetch_failed", label: "Fetch Failed" },
-  { value: "extract_failed", label: "Extract Failed" },
+  { value: "fetch_failed", label: "Source Unavailable" },
+  { value: "extract_failed", label: "Article Could Not Be Read" },
 ];
 
 function healthClass(status = "") {
@@ -76,6 +82,17 @@ function fmt(value) {
   return value ? formatLongDateTime(value) : "-";
 }
 
+function publicationLabel(value) {
+  return value ? fmt(value) : "Publication date unavailable";
+}
+
+function timeLabel(value) {
+  if (!value) return "Not checked yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not checked yet";
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
 function settledValue(result, fallback) {
   return result.status === "fulfilled" ? result.value : fallback;
 }
@@ -98,13 +115,19 @@ function SourceLink({ href }) {
   );
 }
 
-function Metric({ label, value }) {
+function StatItem({ label, value }) {
   return (
-    <div className="rounded-lg border border-border bg-card p-3">
+    <div className="min-w-0 flex-1 px-3 py-2.5 text-center sm:text-left">
       <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-xl font-bold text-foreground">{value}</div>
+      <div className="mt-0.5 truncate text-lg font-bold text-foreground">{value}</div>
     </div>
   );
+}
+
+function severityClass(value = "") {
+  if (value === "critical" || value === "high") return "border-red-500/30 bg-red-500/10 text-red-300";
+  if (value === "warning" || value === "medium") return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  return "border-border bg-secondary text-muted-foreground";
 }
 
 function Select({ value, onChange, children }) {
@@ -115,14 +138,22 @@ function Select({ value, onChange, children }) {
   );
 }
 
+function coordinateInput(value) {
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? String(value) : '';
+}
+
+function municipalityLookup(value) {
+  return String(value || '').replace(/\b(?:city|municipality)\b/gi, '').trim();
+}
+
 function CorrectionPanel({ record, onCancel, onSave }) {
   const [form, setForm] = useState({
     municipality: record.verifiedMunicipality || record.extractedMunicipality || "",
     barangay: record.verifiedBarangay || record.extractedBarangay || "",
     purokSitio: record.verifiedPurokSitio || record.extractedPurokSitio || "",
     road: record.verifiedRoadPlace || record.rawPayload?.location?.road || "",
-    latitude: Number.isFinite(Number(record.lat)) ? String(record.lat) : "",
-    longitude: Number.isFinite(Number(record.lon)) ? String(record.lon) : "",
+    latitude: coordinateInput(record.lat),
+    longitude: coordinateInput(record.lon),
     accuracy: record.locationConfidence?.accuracy || "barangay_only",
     source: record.locationConfidence?.source || "barangay_centroid",
     reason: record.locationConfidence?.reason || "",
@@ -131,11 +162,81 @@ function CorrectionPanel({ record, onCancel, onSave }) {
     landmarkCategory: "other",
     aliases: "",
   });
+  const [resolution, setResolution] = useState(null);
+  const [resolving, setResolving] = useState(true);
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
   const updateAccuracy = (value) => {
     const source = value === "near_exact" ? "manual_exact" : value === "road_level" ? "road" : value === "unmapped" ? "unmapped" : "barangay_centroid";
     setForm(current => ({ ...current, accuracy: value, source }));
   };
+
+  useEffect(() => {
+    let active = true;
+    async function resolveStartingLocation() {
+      setResolving(true);
+      const municipality = municipalityLookup(record.verifiedMunicipality || record.extractedMunicipality);
+      const [landmarkResult, barangayResult] = await Promise.allSettled([
+        listLandmarks({ municipality, limit: 500 }),
+        listBarangays({
+          activeOnly: false,
+          municipality,
+        }),
+      ]);
+      const next = await resolveNewsCorrectionLocation(record, {
+        landmarks: settledValue(landmarkResult, []),
+        barangays: settledValue(barangayResult, []),
+        resolveBarangay: resolveIsabelaBarangayGeometry,
+        resolveMunicipality: resolveIsabelaMunicipalityGeometry,
+      });
+      if (!active) return;
+      setResolution(next);
+      setForm(current => ({
+        ...current,
+        municipality: current.municipality || next.municipality || "",
+        barangay: current.barangay || next.barangay || "",
+        purokSitio: current.purokSitio || next.purokSitio || "",
+        road: current.road || next.road || "",
+        latitude: coordinateInput(next.latitude),
+        longitude: coordinateInput(next.longitude),
+        accuracy: next.accuracy,
+        source: next.source,
+        reason: next.label,
+        landmarkName: current.landmarkName || next.matchedRecord?.name || "",
+      }));
+      setResolving(false);
+    }
+    resolveStartingLocation().catch(() => {
+      if (active) setResolving(false);
+    });
+    return () => { active = false; };
+  }, [record]);
+
+  const updatePin = location => {
+    const manuallyAdjusted = Boolean(location.pinAdjusted);
+    setForm(current => ({
+      ...current,
+      municipality: location.municipality || current.municipality,
+      barangay: location.barangay || current.barangay,
+      latitude: coordinateInput(location.latitude),
+      longitude: coordinateInput(location.longitude),
+      accuracy: manuallyAdjusted ? "near_exact" : current.accuracy,
+      source: manuallyAdjusted ? "manual_exact" : current.source,
+      reason: manuallyAdjusted ? "Officer selected the incident pin manually." : current.reason,
+    }));
+    if (manuallyAdjusted) {
+      setResolution(current => ({
+        ...(current || {}),
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: "near_exact",
+        source: "manual_exact",
+        label: "Officer-selected exact incident location",
+        approximate: false,
+      }));
+    }
+  };
+
+  const pickerLocationText = [form.road, form.purokSitio, form.barangay, form.municipality, "Isabela"].filter(Boolean).join(", ") || record.rawLocationText || record.location;
   return (
     <div className="mt-3 grid gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 md:grid-cols-4">
       {["municipality", "barangay", "purokSitio", "road"].map(key => (
@@ -147,6 +248,23 @@ function CorrectionPanel({ record, onCancel, onSave }) {
           className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs"
         />
       ))}
+      <div className="md:col-span-4">
+        {resolving ? (
+          <div className="flex min-h-40 items-center justify-center rounded-xl border border-border bg-card text-xs text-muted-foreground">
+            <RefreshCw className="mr-2 h-4 w-4 animate-spin text-blue-400" />Resolving the best available article location...
+          </div>
+        ) : (
+          <IncidentLocationPicker
+            scope="isabela"
+            value={form}
+            locationText={pickerLocationText}
+            locationNotice={resolution?.label || "Location needs manual confirmation"}
+            approximate={resolution?.approximate !== false}
+            onChange={updatePin}
+            height={320}
+          />
+        )}
+      </div>
       <input value={form.latitude} onChange={event => update("latitude", event.target.value)} placeholder="Latitude (optional)" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
       <input value={form.longitude} onChange={event => update("longitude", event.target.value)} placeholder="Longitude (optional)" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
       <select value={form.accuracy} onChange={event => updateAccuracy(event.target.value)} className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs">
@@ -158,7 +276,7 @@ function CorrectionPanel({ record, onCancel, onSave }) {
       <input value={form.reason} onChange={event => update("reason", event.target.value)} placeholder="Correction note (optional)" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
       <label className="flex h-9 items-center gap-2 rounded-lg border border-border bg-input-background px-3 text-xs md:col-span-4">
         <input type="checkbox" checked={form.saveLandmark} onChange={event => update("saveLandmark", event.target.checked)} className="accent-blue-600" />
-        Add to Local Verified Landmark Registry
+        Add to the verified Location Matching registry
       </label>
       {form.saveLandmark && (
         <>
@@ -172,7 +290,7 @@ function CorrectionPanel({ record, onCancel, onSave }) {
         </>
       )}
       <div className="flex gap-2 md:col-span-4">
-        <button onClick={() => onSave(form)} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white">Save Correction</button>
+        <button onClick={() => onSave(form)} disabled={resolving} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">Save Correction</button>
         <button onClick={onCancel} className="rounded-lg bg-secondary px-3 py-2 text-xs font-semibold">Cancel</button>
       </div>
     </div>
@@ -180,7 +298,9 @@ function CorrectionPanel({ record, onCancel, onSave }) {
 }
 
 function RecordCard({ record, records, onRefresh }) {
+  const [reviewing, setReviewing] = useState(false);
   const [correcting, setCorrecting] = useState(false);
+  const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
   const assessment = locationAssessment({
     ...record,
@@ -191,14 +311,14 @@ function RecordCard({ record, records, onRefresh }) {
 
   const verify = async () => {
     await approveScraperRecordForPublicMap(record.id);
-    toast.success("Scraped incident verified for external intelligence.");
+    toast.success("Article verified for map intelligence.");
     onRefresh();
   };
   const reject = async () => {
     const reason = window.prompt("Reason for rejection", record.rejectedReason || "Not a reliable vehicular accident record.");
     if (!reason) return;
     await rejectScraperRecord(record.id, reason);
-    toast.success("Scraper record rejected.");
+    toast.success("Article rejected.");
     onRefresh();
   };
   const saveCorrection = async (form) => {
@@ -218,46 +338,98 @@ function RecordCard({ record, records, onRefresh }) {
   };
 
   return (
-    <article className="rounded-lg border border-border bg-card p-4">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="rounded-md border border-border bg-secondary px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground">{statusLabel(record.status)}</span>
-            <span className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${confidenceClass(record.classificationConfidence)}`}>
-              {record.classificationConfidence || "Unscored"}
-            </span>
-            <span className="text-[10px] text-muted-foreground">{record.sourceSite}</span>
-            <SourceLink href={record.sourceUrl} />
+    <article className={`overflow-hidden rounded-lg border bg-card transition ${reviewing ? "border-blue-500/40 shadow-lg" : "border-border hover:border-blue-500/30"}`}>
+      <div className="p-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {record.severity && <span className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${severityClass(record.severity)}`}>{record.severity}</span>}
+              <span className="rounded-md border border-border bg-secondary px-2 py-1 text-[10px] font-bold uppercase text-muted-foreground">{statusLabel(record.status)}</span>
+              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"><Clock className="h-3 w-3" />{publicationLabel(record.publishedAt)}</span>
+            </div>
+            <h3 className="mt-2 break-words text-sm font-bold leading-snug text-foreground">{record.title || "Untitled news report"}</h3>
+            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{record.snippet || "No article preview is available."}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="font-semibold text-foreground/80">{record.sourceSite || "Unknown news source"}</span>
+              <span className="inline-flex min-w-0 items-center gap-1"><MapPin className="h-3 w-3 shrink-0 text-blue-400" /><span className="truncate">{record.verifiedBarangay || record.extractedBarangay || record.rawLocationText || "Location needs confirmation"}{(record.verifiedMunicipality || record.extractedMunicipality) ? `, ${record.verifiedMunicipality || record.extractedMunicipality}` : ""}</span></span>
+            </div>
           </div>
-          <h3 className="mt-2 text-sm font-bold text-foreground">{record.title || "Untitled scraped accident"}</h3>
-          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">{record.snippet || "No article snippet extracted."}</p>
+          <button
+            onClick={() => setReviewing(current => !current)}
+            aria-expanded={reviewing}
+            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+          >
+            {reviewing ? "Close Review" : "Review"}<ChevronDown className={`h-4 w-4 transition-transform ${reviewing ? "rotate-180" : ""}`} />
+          </button>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <button onClick={verify} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"><CheckCircle2 className="h-4 w-4" />Verify</button>
-          <button onClick={reject} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-red-500/20 bg-red-500/10 px-2 text-xs font-semibold text-red-300 hover:bg-red-500/20"><XCircle className="h-4 w-4" />Reject</button>
-          <button onClick={() => setCorrecting(current => !current)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><MapPin className="h-4 w-4" />Correct</button>
+      </div>
+
+      {reviewing && (
+        <div className="border-t border-border bg-background/25 p-4">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Article Summary</div>
+              <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-foreground/90">{record.snippet || "No article summary is available."}</p>
+              {record.sourceUrl ? (
+                <a href={record.sourceUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex min-h-10 items-center gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 text-xs font-semibold text-blue-300 hover:bg-blue-500/20">
+                  View Original Article <ExternalLink className="h-4 w-4" />
+                </a>
+              ) : (
+                <div className="mt-3 text-xs text-muted-foreground">Original article link unavailable.</div>
+              )}
+            </div>
+            <aside className="rounded-lg border border-border bg-card p-3">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">Location</div>
+              <div className="mt-1 break-words text-sm font-semibold text-foreground">
+                {[record.verifiedRoadPlace, record.verifiedBarangay || record.extractedBarangay, record.verifiedMunicipality || record.extractedMunicipality].filter(Boolean).join(", ") || record.rawLocationText || "Not confirmed"}
+              </div>
+              {assessment.approximate && <div className="mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-300"><AlertTriangle className="h-3.5 w-3.5" />Location needs confirmation</div>}
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Link to={`/admin/map?record=${encodeURIComponent(record.id)}`} className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-semibold hover:bg-secondary/80"><MapPin className="h-3.5 w-3.5" />View on Map</Link>
+                <button onClick={() => setCorrecting(current => !current)} className="inline-flex min-h-9 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-3 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><MapPin className="h-3.5 w-3.5" />Correct Location</button>
+              </div>
+            </aside>
+          </div>
+
+          {correcting && <CorrectionPanel record={record} onCancel={() => setCorrecting(false)} onSave={saveCorrection} />}
+
+          <details className="group mt-4 rounded-lg border border-border bg-card">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
+              See More
+              <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+            </summary>
+            <div className="grid gap-2 border-t border-border p-3 text-xs sm:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Detected Location</span>{record.extractedBarangay || "-"}, {record.extractedMunicipality || "Isabela"}</div>
+              <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Location Mentioned in Article</span>{record.rawLocationText || record.location || "-"}</div>
+              <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Location Match</span>{assessment.label}</div>
+              <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Detection Confidence</span>{record.classificationConfidence || "Unscored"}{Number.isFinite(record.classificationScore) && record.classificationScore > 0 ? ` / ${Math.round(record.classificationScore * 100)}%` : ""}</div>
+              <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Article Retrieved</span>{fmt(record.scrapedAt)}</div>
+              <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Detection Information</span>{record.classificationReason || "Legacy record needs review."}</div>
+            </div>
+          </details>
+
+          <div className="mt-4 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <button onClick={verify} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-green-600 px-3 text-xs font-semibold text-white hover:bg-green-700"><CheckCircle2 className="h-4 w-4" />Verify Article</button>
+              <button onClick={() => setCheckingDuplicates(current => !current)} className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-secondary px-3 text-xs font-semibold hover:bg-secondary/80"><GitMerge className="h-4 w-4" />Check Duplicates</button>
+            </div>
+            <button onClick={reject} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 text-xs font-semibold text-red-300 hover:bg-red-500/20"><XCircle className="h-4 w-4" />Reject</button>
+          </div>
+
+          {checkingDuplicates && (
+            <div className="mt-3 flex flex-col gap-2 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-center">
+              <GitMerge className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
+              <select value={mergeTarget} onChange={event => setMergeTarget(event.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-border bg-input-background px-2 text-xs">
+                <option value="">Select a possible duplicate...</option>
+                {records.filter(item => item.id !== record.id).slice(0, 30).map(item => (
+                  <option key={item.id} value={item.id}>{item.title || item.id}</option>
+                ))}
+              </select>
+              <button onClick={merge} disabled={!mergeTarget} className="h-10 rounded-md bg-secondary px-3 text-xs font-semibold disabled:opacity-50">Merge Selected</button>
+            </div>
+          )}
         </div>
-      </div>
-      <div className="mt-3 grid gap-2 text-xs md:grid-cols-4">
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">{record.verifiedBarangay || record.verifiedMunicipality ? "Verified Location" : "Extracted Location"}</span>{record.verifiedBarangay || record.extractedBarangay || "-"}, {record.verifiedMunicipality || record.extractedMunicipality || "Isabela"}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Raw Location</span>{record.rawLocationText || record.location || "-"}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Location Accuracy</span>{assessment.label}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Scraped</span>{fmt(record.scrapedAt)}</div>
-      </div>
-      <div className="mt-2 rounded-lg bg-secondary/40 p-2 text-xs text-muted-foreground">
-        {record.classificationReason || "Legacy record needs review."}
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/40 p-2">
-        <GitMerge className="h-4 w-4 text-muted-foreground" />
-        <select value={mergeTarget} onChange={event => setMergeTarget(event.target.value)} className="h-8 min-w-64 rounded-md border border-border bg-input-background px-2 text-xs">
-          <option value="">Merge this as duplicate into...</option>
-          {records.filter(item => item.id !== record.id).slice(0, 30).map(item => (
-            <option key={item.id} value={item.id}>{item.title || item.id}</option>
-          ))}
-        </select>
-        <button onClick={merge} disabled={!mergeTarget} className="h-8 rounded-md bg-secondary px-3 text-xs font-semibold disabled:opacity-50">Merge</button>
-      </div>
-      {correcting && <CorrectionPanel record={record} onCancel={() => setCorrecting(false)} onSave={saveCorrection} />}
+      )}
     </article>
   );
 }
@@ -265,37 +437,43 @@ function RecordCard({ record, records, onRefresh }) {
 function CandidateCard({ candidate }) {
   return (
     <article className="rounded-lg border border-border bg-card p-4">
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
         <span className="rounded-md border border-red-500/20 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase text-red-300">{candidate.rejectionReason}</span>
-        <span className={`rounded-md border px-2 py-1 text-[10px] font-bold uppercase ${confidenceClass(candidate.classificationConfidence)}`}>{candidate.classificationConfidence || "No confidence"}</span>
         <span className="text-[10px] text-muted-foreground">{candidate.sourceSite}</span>
+        </div>
+        <span className="text-[10px] text-muted-foreground">{publicationLabel(candidate.publishedAt)}</span>
+      </div>
+      <h3 className="mt-2 break-words text-sm font-bold text-foreground">{candidate.title}</h3>
+      <p className="mt-1 text-xs text-muted-foreground">{candidate.rejectionDetails || candidate.classificationReason || "No rejection details recorded."}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1"><MapPin className="h-3 w-3" />{candidate.extractedBarangay || "Unknown location"}{candidate.extractedMunicipality ? `, ${candidate.extractedMunicipality}` : ""}</span>
         <SourceLink href={candidate.sourceUrl} />
       </div>
-      <h3 className="mt-2 text-sm font-bold text-foreground">{candidate.title}</h3>
-      <p className="mt-1 text-xs text-muted-foreground">{candidate.rejectionDetails || candidate.classificationReason || "No rejection details recorded."}</p>
-      <div className="mt-3 grid gap-2 text-xs md:grid-cols-3">
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Detected</span>{candidate.detectedIncidentType || "-"}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Location</span>{candidate.extractedBarangay || "-"}, {candidate.extractedMunicipality || "-"}</div>
-        <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Logged</span>{fmt(candidate.createdAt)}</div>
-      </div>
+      <details className="group mt-3 rounded-lg border border-border bg-background/40">
+        <summary className="flex min-h-10 cursor-pointer list-none items-center justify-between px-3 text-xs font-semibold">See More <ChevronDown className="h-4 w-4 transition-transform group-open:rotate-180" /></summary>
+        <div className="grid gap-2 border-t border-border p-3 text-xs sm:grid-cols-3">
+          <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Detection Information</span>{candidate.detectedIncidentType || "-"}</div>
+          <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Detection Confidence</span>{candidate.classificationConfidence || "Unscored"}</div>
+          <div className="rounded-lg bg-secondary/60 p-2"><span className="block text-[10px] uppercase text-muted-foreground">Processed</span>{fmt(candidate.createdAt)}</div>
+        </div>
+      </details>
     </article>
   );
 }
 
 function SourceHealthPanel({ healthRows }) {
   return (
-    <section className="mb-5 rounded-lg border border-border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-bold text-foreground">Source Health</h2>
-          <p className="text-xs text-muted-foreground">Latest per-source scraper diagnostics from the last run touching each publisher.</p>
-        </div>
-      </div>
+    <details className="group mt-3 rounded-lg border border-border bg-background/30">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
+        News source details
+        <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="text-muted-foreground">
             <tr>
-              {["Source", "Status", "Links", "Articles", "Detected", "Rejected", "Failed", "Retries", "Last Scraped", "Last Error"].map(item => (
+              {["Source", "Status", "Links", "Articles", "Matched", "Rejected", "Errors", "Retries", "Last Checked", "Details"].map(item => (
                 <th key={item} className="border-b border-border px-3 py-2 text-left font-semibold">{item}</th>
               ))}
             </tr>
@@ -317,39 +495,49 @@ function SourceHealthPanel({ healthRows }) {
             ))}
           </tbody>
         </table>
-        {!healthRows.length && <div className="py-6 text-center text-xs text-muted-foreground">No source health rows yet. Run the scraper once after migration 66 is deployed.</div>}
+        {!healthRows.length && <div className="py-6 text-center text-xs text-muted-foreground">No source check details are available yet.</div>}
       </div>
-    </section>
+    </details>
   );
 }
 
-function RunDiagnostics({ runs }) {
+function NewsSourceCheck({ runs, healthRows, running, onCheck }) {
   const latest = runs[0];
   const metadata = latest?.metadata || {};
-  const health = Array.isArray(metadata.source_health) ? metadata.source_health : [];
+  const metadataHealth = Array.isArray(metadata.source_health) ? metadata.source_health : [];
+  const health = metadataHealth.length ? metadataHealth : healthRows;
   const partialErrors = Array.isArray(metadata.partial_errors) ? metadata.partial_errors : [];
   const failedSources = health.filter(item => item.status === "failed").length;
   const warningSources = health.filter(item => item.status === "warning").length;
   const showRunError = latest?.status === "failed" && latest?.error_message;
   return (
     <section className="mb-5 rounded-lg border border-border bg-card p-4">
-      <div className="mb-3">
-        <h2 className="text-sm font-bold text-foreground">Run Diagnostics</h2>
-        <p className="text-xs text-muted-foreground">Last scraper run summary, including rejected article and source health counts.</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className={`h-4 w-4 ${latest?.status === "failed" ? "text-red-400" : "text-green-400"}`} />
+            <h2 className="text-sm font-bold text-foreground">{running ? "Checking News Sources" : latest ? "Check Complete" : "Check News Sources"}</h2>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Operational summary from the latest news source check.</p>
+        </div>
+        <button onClick={onCheck} disabled={running} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
+          <RefreshCw className={`h-4 w-4 ${running ? "animate-spin" : ""}`} />{running ? "Checking..." : latest ? "Check Again" : "Check News Sources"}
+        </button>
       </div>
-      <div className="grid gap-3 md:grid-cols-5">
-        <Metric label="Fetched" value={latest?.fetched_count ?? "-"} />
-        <Metric label="Inserted" value={latest?.inserted_count ?? "-"} />
-        <Metric label="Matched" value={latest?.matched_count ?? "-"} />
-        <Metric label="Rejected" value={metadata.rejected_count ?? "-"} />
-        <Metric label="Failed Sources" value={failedSources || warningSources ? `${failedSources}/${warningSources}` : "0"} />
+      <div className="mt-4 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/30 sm:grid-cols-4 sm:divide-y-0">
+        <StatItem label="Articles Found" value={latest?.fetched_count ?? "-"} />
+        <StatItem label="Matched" value={latest?.matched_count ?? "-"} />
+        <StatItem label="Rejected" value={metadata.rejected_count ?? "-"} />
+        <StatItem label="Last Checked" value={timeLabel(latest?.completed_at || latest?.started_at)} />
       </div>
+      {(failedSources > 0 || warningSources > 0) && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">{failedSources + warningSources} news source{failedSources + warningSources === 1 ? "" : "s"} could not be fully checked. Open details below for technical information.</div>}
       {showRunError && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{latest.error_message}</div>}
       {!showRunError && partialErrors.length > 0 && (
         <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
           {partialErrors.length} article save issue{partialErrors.length === 1 ? "" : "s"} were skipped after the run completed.
         </div>
       )}
+      <SourceHealthPanel healthRows={healthRows} />
     </section>
   );
 }
@@ -378,12 +566,14 @@ function AnalyzerPanel() {
   };
 
   return (
-    <section className="mb-5 rounded-lg border border-border bg-card p-4">
-      <div className="mb-3">
-        <h2 className="text-sm font-bold text-foreground">Article QA Analyzer</h2>
-        <p className="text-xs text-muted-foreground">Paste a URL or article text to preview scraper classification, location extraction, and accept/reject decision without saving anything.</p>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+    <details className="group mb-5 rounded-lg border border-border bg-card">
+      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 text-xs font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
+        Article analysis tools
+        <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform group-open:rotate-180" />
+      </summary>
+      <div className="border-t border-border p-4">
+        <p className="mb-3 text-xs text-muted-foreground">Preview classification and location detection without saving the article.</p>
+        <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
         <input
           value={url}
           onChange={event => setUrl(event.target.value)}
@@ -393,14 +583,14 @@ function AnalyzerPanel() {
         <button onClick={analyze} disabled={loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white disabled:opacity-60">
           <Search className="h-4 w-4" />{loading ? "Analyzing..." : "Analyze"}
         </button>
-      </div>
-      <textarea
+        </div>
+        <textarea
         value={body}
         onChange={event => setBody(event.target.value)}
         placeholder="Or paste article text here..."
         className="mt-3 min-h-24 w-full rounded-lg border border-border bg-input-background px-3 py-2 text-xs"
       />
-      {result && (
+        {result && (
         <div className={`mt-4 rounded-lg border p-4 ${result.accepted ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"}`}>
           <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-md px-2 py-1 text-[10px] font-bold uppercase ${result.accepted ? "bg-green-500/20 text-green-300" : "bg-red-500/20 text-red-300"}`}>
@@ -425,8 +615,9 @@ function AnalyzerPanel() {
           </div>
           <p className="mt-3 text-[10px] text-muted-foreground">Matched terms: {result.classification?.matchedTerms?.join(", ") || "none"}</p>
         </div>
-      )}
-    </section>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -438,6 +629,7 @@ export default function ScraperReview() {
   const [runs, setRuns] = useState([]);
   const [sourceHealth, setSourceHealth] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const [filters, setFilters] = useState({
     status: "pending_review",
     sourceId: "",
@@ -455,7 +647,6 @@ export default function ScraperReview() {
     try {
       const [recordResult, candidateResult, sourceResult, runResult, healthResult] = await Promise.allSettled([
         listScraperRecords({
-          status: filters.status,
           sourceId: filters.sourceId,
           municipality: filters.municipality,
           confidence: filters.confidence,
@@ -491,12 +682,12 @@ export default function ScraperReview() {
       const requiredFailure = [recordResult, candidateResult, sourceResult].find(result => result.status === "rejected");
       const diagnosticsFailure = [runResult, healthResult].find(result => result.status === "rejected");
       if (requiredFailure) {
-        toast.error(requiredFailure.reason?.message || "Some scraper review records could not be loaded.");
+        toast.error(requiredFailure.reason?.message || "Some news review records could not be loaded.");
       } else if (diagnosticsFailure) {
-        toast.warning("Scraper records loaded, but run diagnostics are temporarily unavailable.");
+        toast.warning("News records loaded, but source check details are temporarily unavailable.");
       }
     } catch (error) {
-      toast.error(error.message || "Unable to load scraper review queue.");
+      toast.error(error.message || "Unable to load the news review queue.");
     } finally {
       setLoading(false);
     }
@@ -507,12 +698,28 @@ export default function ScraperReview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.status, filters.sourceId, filters.municipality, filters.confidence, filters.reason, filters.dateFrom, filters.dateTo]);
 
+  useEffect(() => subscribeScraperJob(setScraperJob), []);
+
+  const checkNewsSources = async () => {
+    try {
+      await startScraperJob("update", { pageFrom: 1, pageTo: 1 });
+      await load();
+    } catch (error) {
+      toast.error(error.message || "Unable to check news sources.");
+    }
+  };
+
   const visibleRecords = useMemo(() => records.filter(record => {
     const needle = query.toLowerCase();
     const matchesQuery = !needle || [record.title, record.snippet, record.extractedMunicipality, record.extractedBarangay, record.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
     const matchesMunicipality = !filters.municipality || municipalityLabel(record) === filters.municipality;
-    return matchesQuery && matchesMunicipality;
-  }), [filters.municipality, query, records]);
+    const matchesStatus = !filters.status ||
+      (filters.status === "pending_review" && ["pending_review", "new"].includes(record.status)) ||
+      (filters.status === "verified_group" && ["verified", "approved", "matched"].includes(record.status)) ||
+      (filters.status === "promoted" && ["promoted", "imported"].includes(record.status)) ||
+      record.status === filters.status;
+    return matchesQuery && matchesMunicipality && matchesStatus;
+  }), [filters.municipality, filters.status, query, records]);
   const visibleCandidates = useMemo(() => candidates.filter(candidate => {
     const needle = query.toLowerCase();
     const matchesQuery = !needle || [candidate.title, candidate.snippet, candidate.extractedMunicipality, candidate.extractedBarangay, candidate.rejectionReason, candidate.sourceSite].some(value => String(value || "").toLowerCase().includes(needle));
@@ -522,29 +729,29 @@ export default function ScraperReview() {
   const latestRun = runs[0];
 
   return (
-    <div className="min-h-full bg-background p-5" style={{ fontFamily: "Inter, sans-serif" }}>
+    <div className="min-h-full bg-background p-3 sm:p-5" style={{ fontFamily: "Inter, sans-serif" }}>
       <div className="mb-5 flex flex-col justify-between gap-4 rounded-lg border border-border bg-card px-5 py-4 lg:flex-row lg:items-center">
         <div>
           <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-purple-500/20 bg-purple-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-purple-300">
             <Database className="h-3 w-3" /> External Accident Intelligence
           </div>
-          <h1 className="text-2xl font-bold text-foreground">Scraper Review</h1>
-          <p className="mt-1 max-w-3xl text-xs text-muted-foreground">Verify external accident reports before they contribute to map and analytics intelligence. This does not create official MDRRMO incidents.</p>
+          <h1 className="text-2xl font-bold text-foreground">News Review</h1>
+          <p className="mt-1 max-w-3xl text-xs text-muted-foreground">Review external accident reports before they contribute to map and analytics intelligence. Verification does not create an official MDRRMO incident.</p>
         </div>
         <button onClick={load} disabled={loading} className="inline-flex h-10 items-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white disabled:opacity-60">
           <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh
         </button>
       </div>
 
-      <div className="mb-5 grid gap-3 md:grid-cols-4">
-        <Metric label="Review Queue" value={records.filter(item => ["pending_review", "new"].includes(item.status)).length} />
-        <Metric label="Verified Loaded" value={records.filter(item => ["verified", "approved", "matched", "promoted", "imported"].includes(item.status)).length} />
-        <Metric label="Rejected Articles" value={candidates.length} />
-        <Metric label="Last Run Articles" value={latestRun?.fetched_count ?? "-"} />
+      <div className="mb-5 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-card sm:grid-cols-3 lg:grid-cols-5 lg:divide-y-0">
+        <StatItem label="Review Queue" value={records.filter(item => ["pending_review", "new"].includes(item.status)).length} />
+        <StatItem label="Verified" value={records.filter(item => ["verified", "approved", "matched", "promoted", "imported"].includes(item.status)).length} />
+        <StatItem label="Rejected" value={candidates.length + records.filter(item => item.status === "ignored").length} />
+        <StatItem label="Articles Found" value={latestRun?.fetched_count ?? "-"} />
+        <StatItem label="Last Checked" value={timeLabel(latestRun?.completed_at || latestRun?.started_at)} />
       </div>
 
-      <RunDiagnostics runs={runs} />
-      <SourceHealthPanel healthRows={sourceHealth} />
+      <NewsSourceCheck runs={runs} healthRows={sourceHealth} running={scraperJob.running} onCheck={checkNewsSources} />
       <AnalyzerPanel />
 
       <div className="mb-5 rounded-lg border border-border bg-card p-4">
@@ -568,8 +775,8 @@ export default function ScraperReview() {
         </div>
       </div>
 
-      <div className="mb-4 flex gap-2">
-        <button onClick={() => setTab("records")} className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${tab === "records" ? "bg-blue-600 text-white" : "bg-secondary text-muted-foreground"}`}><ShieldCheck className="h-4 w-4" />Scraped Incidents</button>
+      <div className="mb-4 flex flex-wrap gap-2">
+        <button onClick={() => setTab("records")} className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${tab === "records" ? "bg-blue-600 text-white" : "bg-secondary text-muted-foreground"}`}><ShieldCheck className="h-4 w-4" />Review Queue</button>
         <button onClick={() => setTab("rejected")} className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold ${tab === "rejected" ? "bg-blue-600 text-white" : "bg-secondary text-muted-foreground"}`}><SlidersHorizontal className="h-4 w-4" />Rejected Articles</button>
         {tab === "rejected" && <Select value={filters.reason} onChange={value => updateFilter("reason", value)}>{REJECTION_REASONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</Select>}
       </div>
@@ -578,7 +785,7 @@ export default function ScraperReview() {
         {tab === "records"
           ? visibleRecords.map(record => <RecordCard key={record.id} record={record} records={records} onRefresh={load} />)
           : visibleCandidates.map(candidate => <CandidateCard key={candidate.id} candidate={candidate} />)}
-        {!loading && tab === "records" && !visibleRecords.length && <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No scraper records match the filters.</div>}
+        {!loading && tab === "records" && !visibleRecords.length && <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No news reports match the filters.</div>}
         {!loading && tab === "rejected" && !visibleCandidates.length && <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No rejected article candidates match the filters.</div>}
       </div>
     </div>

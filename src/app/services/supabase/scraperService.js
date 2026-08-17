@@ -162,6 +162,7 @@ function scraperRecordToApp(row = {}) {
     verifiedBarangay: row.verified_barangay || "",
     verifiedPurokSitio: row.verified_purok_sitio || "",
     verifiedRoadPlace: row.verified_road_place || "",
+    publishedAt: row.published_at || null,
     scrapedAt: row.scraped_at,
     processedAt: row.processed_at,
     errorMessage: row.error_message || "",
@@ -764,7 +765,9 @@ export async function correctScraperRecordLocation(recordId, location = {}) {
   const accuracy = location.accuracy || "barangay_only";
   const lat = Number(location.latitude);
   const lng = Number(location.longitude);
-  const hasCoordinates = Number.isFinite(lat) && Number.isFinite(lng);
+  const hasCoordinates = location.latitude !== "" && location.latitude !== null && location.latitude !== undefined
+    && location.longitude !== "" && location.longitude !== null && location.longitude !== undefined
+    && Number.isFinite(lat) && Number.isFinite(lng);
   const level = accuracy === "unmapped" ? "unmapped" : accuracy === "near_exact" && hasCoordinates ? "high" : accuracy === "road_level" && hasCoordinates ? "medium" : "low";
   const effectiveAccuracy = level === "low" && accuracy !== "unmapped" ? "barangay_only" : accuracy;
   const source = effectiveAccuracy === "near_exact"
@@ -849,16 +852,48 @@ export async function addOfficerVerifiedLandmarkFromCorrection(record = {}, loca
     .split(",")
     .map(value => value.trim())
     .filter(Boolean);
+  const municipality = location.municipality || record.verifiedMunicipality || record.extractedMunicipality || "Echague";
+  const barangay = location.barangay || record.verifiedBarangay || record.extractedBarangay || null;
+  const category = location.landmarkCategory || "other";
+  const normalizedName = name.toLowerCase().replace(/[^a-z0-9]+/g, "");
 
-  return runSupabaseRequest(client =>
-    client
+  return runSupabaseRequest(async client => {
+    let existingQuery = client
+      .from("landmarks")
+      .select("*")
+      .eq("normalized_name", normalizedName)
+      .ilike("municipality", municipality)
+      .eq("category", category)
+      .is("deleted_at", null)
+      .limit(1);
+    existingQuery = barangay ? existingQuery.ilike("barangay", barangay) : existingQuery.is("barangay", null);
+    const existing = await existingQuery.maybeSingle();
+    if (existing.error) return existing;
+    if (existing.data) {
+      return client
+        .from("landmarks")
+        .update({
+          aliases: [...new Set([...(existing.data.aliases || []), ...aliases])],
+          latitude: lat,
+          longitude: lng,
+          verification_status: "officer_verified",
+          officer_verified: true,
+          verified_by: verifiedBy,
+          verified_at: new Date().toISOString(),
+        })
+        .eq("id", existing.data.id)
+        .select("*")
+        .single();
+    }
+
+    const inserted = await client
       .from("landmarks")
       .upsert({
         name,
         aliases,
-        category: location.landmarkCategory || "other",
-        barangay: location.barangay || record.verifiedBarangay || record.extractedBarangay || null,
-        municipality: location.municipality || record.verifiedMunicipality || record.extractedMunicipality || "Echague",
+        category,
+        barangay,
+        municipality,
         province: "Isabela",
         latitude: lat,
         longitude: lng,
@@ -876,7 +911,20 @@ export async function addOfficerVerifiedLandmarkFromCorrection(record = {}, loca
         },
       }, { onConflict: "source,source_id" })
       .select("*")
-      .single(),
+      .single();
+    if (inserted.error?.code !== "23505") return inserted;
+
+    let duplicateQuery = client
+      .from("landmarks")
+      .select("*")
+      .eq("normalized_name", normalizedName)
+      .ilike("municipality", municipality)
+      .eq("category", category)
+      .is("deleted_at", null)
+      .limit(1);
+    duplicateQuery = barangay ? duplicateQuery.ilike("barangay", barangay) : duplicateQuery.is("barangay", null);
+    return duplicateQuery.maybeSingle();
+  },
   "Unable to add verified landmark.");
 }
 

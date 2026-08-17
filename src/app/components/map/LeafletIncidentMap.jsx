@@ -261,6 +261,8 @@ export function LeafletIncidentMap({
   routes = [],
   hazardZones = [],
   accidentProneAreas = [],
+  selectedAccidentProneAreaId,
+  onAccidentProneAreaClick,
   publicSafeRiskPopups = false,
   plannerPoints = {},
   focusedLocation = null,
@@ -345,12 +347,16 @@ export function LeafletIncidentMap({
           enabled={Boolean(effectiveLayers.accidentProneAreas)}
           publicSafe={publicSafeRiskPopups}
           excludeCritical
+          selectedAreaId={selectedAccidentProneAreaId}
+          onAreaClick={onAccidentProneAreaClick}
         />
         <AccidentProneAreasLayer
           areas={pointAccidentProneAreas}
           enabled={Boolean(effectiveLayers.criticalZones)}
           publicSafe={publicSafeRiskPopups}
           criticalOnly
+          selectedAreaId={selectedAccidentProneAreaId}
+          onAreaClick={onAccidentProneAreaClick}
         />
         <ClusteredIncidentMarkers
           incidents={effectiveLayers.incidents ? incidents : []}

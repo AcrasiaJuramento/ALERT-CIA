@@ -148,12 +148,12 @@ export default function LandmarkMapping() {
     setSaving(true);
     try {
       const saved = await saveLandmark(form);
-      toast.success(form.id ? "Landmark updated." : "Landmark added.");
+      toast.success(form.id ? "Location updated." : "Location added.");
       setSelectedId(saved.id);
       setForm(toForm(saved));
       await loadLandmarks(filters);
     } catch (error) {
-      toast.error(error.message || "Unable to save landmark.");
+      toast.error(error.message || "Unable to save location.");
     } finally {
       setSaving(false);
     }
@@ -164,7 +164,7 @@ export default function LandmarkMapping() {
     if (!confirmed) return;
     try {
       await deleteLandmark(landmark.id);
-      toast.success("Landmark removed.");
+      toast.success("Location removed.");
       if (selectedId === landmark.id) startCreate();
       await loadLandmarks(filters);
     } catch (error) {
@@ -176,9 +176,9 @@ export default function LandmarkMapping() {
     <div className="flex h-full min-h-0 flex-col gap-4 bg-background p-4 text-foreground">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Landmark Mapping</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Location Matching</h1>
           <p className="text-sm text-muted-foreground">
-            Admin registry for validated local landmarks used by scraper location matching.
+            Manage validated local places used to match news reports to usable map locations.
           </p>
         </div>
         <button
@@ -187,7 +187,7 @@ export default function LandmarkMapping() {
           className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
         >
           <Plus className="h-4 w-4" />
-          New Landmark
+          Add Location
         </button>
       </div>
 
@@ -321,7 +321,7 @@ export default function LandmarkMapping() {
           <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-card p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
               <div>
-                <h2 className="text-base font-semibold">{form.id ? "Edit Landmark" : "Add Landmark"}</h2>
+                <h2 className="text-base font-semibold">{form.id ? "Edit Location" : "Add Location"}</h2>
                 {selectedLandmark?.validationStatus && (
                   <p className="text-xs text-muted-foreground">
                     Validation: {formatCategory(selectedLandmark.validationStatus)}
@@ -461,7 +461,7 @@ export default function LandmarkMapping() {
                 className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Save className="h-4 w-4" />
-                {saving ? "Saving..." : "Save Landmark"}
+                {saving ? "Saving..." : "Save Location"}
               </button>
             </div>
           </form>
