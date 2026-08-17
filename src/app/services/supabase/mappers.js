@@ -401,6 +401,9 @@ export function pcrToApp(row = {}) {
     submittedAt: row.submitted_at || "",
     createdAt: row.created_at || response.createdAt || "",
     updatedAt: row.updated_at || response.updatedAt || row.created_at || response.createdAt || "",
+    archived: Boolean(row.archived_at),
+    archivedAt: row.archived_at || "",
+    archivedBy: row.archived_by || null,
     vitals: vitalRows.length ? vitalRows : extended.vitals || [],
     medications: medicationRows.length ? medicationRows : extended.medications || [],
     interventions: Object.keys(extended.interventions || {}).length

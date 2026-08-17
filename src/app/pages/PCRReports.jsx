@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
-  Archive, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
+  Archive, ArchiveRestore, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
   FilePlus2, FileText, Filter, Search, X, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -11,7 +11,7 @@ import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
-import { archivePCRReport, createStandalonePCRShell, listPCRReports, listPCRWorkflowHistory, returnNormalPCRToFieldOfficer, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase } from '../services/supabase';
+import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, listPCRReports, listPCRWorkflowHistory, returnNormalPCRToFieldOfficer, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase, unarchivePCRReport } from '../services/supabase';
 
 const formatDate = value => {
   if (!value) return '-';
@@ -44,6 +44,7 @@ export default function PCRReports() {
   const [workflowHistory, setWorkflowHistory] = useState([]);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [statusCounts, setStatusCounts] = useState({ pendingAdminReview: 0, verified: 0, returnedRejected: 0 });
   const refreshTimer = useRef(null);
   const pageSize = 20;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
@@ -56,15 +57,17 @@ export default function PCRReports() {
         limit: pageSize,
         from: (page - 1) * pageSize,
         status: status === 'All' ? undefined : status,
+        archive: archiveView.toLowerCase(),
       });
-      setRecords(cloudRecords.map(record => ({ ...record, archived: false, recordSource: 'cloud', syncLabel: 'Cloud synced' })));
+      setRecords(cloudRecords.map(record => ({ ...record, recordSource: 'cloud', syncLabel: 'Cloud synced' })));
       setTotalCount(cloudRecords.totalCount ?? cloudRecords.length);
+      setStatusCounts(await getPCRDashboardCounts());
     } catch (error) {
       toast.error(error.message || 'Unable to load Patient Care Records.');
     } finally {
       setLoading(false);
     }
-  }, [page, status]);
+  }, [archiveView, page, status]);
 
   useEffect(() => {
     loadReports();
@@ -129,6 +132,16 @@ export default function PCRReports() {
       toast.error(error.message || 'Unable to archive Patient Care Record.');
     }
   };
+  const unarchive = async record => {
+    try {
+      await unarchivePCRReport(record.id);
+      await loadReports();
+      setSelected(null);
+      toast.success('Patient Care Record restored.');
+    } catch (error) {
+      toast.error(error.message || 'Unable to restore Patient Care Record.');
+    }
+  };
   const doPdf = async record => {
     setExportingRecord(record);
     try {
@@ -183,12 +196,6 @@ export default function PCRReports() {
     setRejectingRecord(null);
     setRejectionReason('');
   };
-  const statusCounts = {
-    submitted: records.filter(record => !record.archived && ['Submitted', 'Pending Dispatcher Review', 'Pending Admin Verification'].includes(record.status)).length,
-    verified: records.filter(record => !record.archived && record.status === 'Verified').length,
-    rejected: records.filter(record => !record.archived && record.status === 'Rejected').length,
-  };
-
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
       <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
@@ -205,7 +212,7 @@ export default function PCRReports() {
       <div className="mb-4 grid gap-3 md:grid-cols-3">
         <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">
           <div className="text-xs text-muted-foreground">Pending Admin Review</div>
-          <div className="mt-1 text-2xl font-bold text-blue-400">{statusCounts.submitted}</div>
+          <div className="mt-1 text-2xl font-bold text-blue-400">{statusCounts.pendingAdminReview}</div>
         </div>
         <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4">
           <div className="text-xs text-muted-foreground">Verified</div>
@@ -213,7 +220,7 @@ export default function PCRReports() {
         </div>
         <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-4">
           <div className="text-xs text-muted-foreground">Returned / Rejected</div>
-          <div className="mt-1 text-2xl font-bold text-red-400">{statusCounts.rejected}</div>
+          <div className="mt-1 text-2xl font-bold text-red-400">{statusCounts.returnedRejected}</div>
         </div>
       </div>
 
@@ -249,7 +256,9 @@ export default function PCRReports() {
                 {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {canCreate && <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>}
+                {canCreate && (record.archived
+                  ? <button onClick={() => unarchive(record)} title="Restore" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><ArchiveRestore size={15} /></button>
+                  : <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>)}
               </div></td>
             </tr>)}</tbody>
           </table></div>

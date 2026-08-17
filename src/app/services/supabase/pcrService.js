@@ -91,7 +91,9 @@ const PCR_LIGHT_SELECT = `
   completed_at,
   submitted_at,
   created_at,
-  updated_at
+  updated_at,
+  archived_at,
+  archived_by
 `;
 
 const PCR_LIST_SELECT = `
@@ -119,6 +121,8 @@ const PCR_LIST_SELECT = `
   submitted_at,
   created_at,
   updated_at,
+  archived_at,
+  archived_by,
   response:responses(
     id,
     client_generated_id,
@@ -160,7 +164,7 @@ function asRows(value) {
   return Array.isArray(value) ? value : [];
 }
 
-export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
+export async function listPCRReports({ status, limit = 100, from = 0, archive = "active" } = {}) {
   const { data, count } = await runSupabaseRequestWithMeta(client => {
     let query = client
       .from("pcr_reports")
@@ -169,12 +173,24 @@ export async function listPCRReports({ status, limit = 100, from = 0 } = {}) {
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
     if (status) query = query.eq("status", toDbPCRStatus(status));
+    if (archive === "active") query = query.is("archived_at", null);
+    if (archive === "archived") query = query.not("archived_at", "is", null);
     return query;
   }, "Unable to load PCR reports.");
 
   const rows = asRows(data).map(pcrToApp);
   rows.totalCount = count ?? rows.length;
   return rows;
+}
+
+export async function getPCRDashboardCounts() {
+  const rows = await runSupabaseRequest(client => client.rpc("get_pcr_dashboard_counts"), "Unable to load PCR dashboard counts.");
+  const counts = Array.isArray(rows) ? rows[0] : rows;
+  return {
+    pendingAdminReview: Number(counts?.pending_admin_review || 0),
+    verified: Number(counts?.verified || 0),
+    returnedRejected: Number(counts?.returned_rejected || 0),
+  };
 }
 
 function priorityToSeverity(priority = "medium") {
@@ -798,11 +814,12 @@ export async function replacePCRAttachments(pcrReportId, attachments = []) {
 
 export async function archivePCRReport(pcrId) {
   return runSupabaseRequest(client =>
-    client
-      .from("pcr_reports")
-      .update({ deleted_at: new Date().toISOString() })
-      .eq("id", pcrId)
-      .select("*")
-      .single(),
+    client.rpc("set_pcr_archived", { target_pcr_id: pcrId, should_archive: true }),
   "Unable to archive PCR report.");
+}
+
+export async function unarchivePCRReport(pcrId) {
+  return runSupabaseRequest(client =>
+    client.rpc("set_pcr_archived", { target_pcr_id: pcrId, should_archive: false }),
+  "Unable to restore PCR report.");
 }
