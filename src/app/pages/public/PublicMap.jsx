@@ -18,6 +18,8 @@ import {
   formatRiskLevel,
   riskStyles,
 } from '../../utils/accidentProneAreas';
+import { useGeolocation } from '../../contexts/GeolocationContext';
+import { getAccidentProneAreaRadiusMeters } from '../../utils/accidentProneWarningZones';
 
 const quickDestinations = [
   { label: 'Echague Municipal Hall', latLng: [16.705, 121.676] },
@@ -97,10 +99,7 @@ function formatDistance(km) {
 }
 
 function riskRadiusKm(area = {}) {
-  if (area.risk_level === 'Critical') return 0.52;
-  if (area.risk_level === 'High') return 0.42;
-  if (area.risk_level === 'Moderate') return 0.32;
-  return 0.24;
+  return getAccidentProneAreaRadiusMeters(area) / 1000;
 }
 
 function riskSeverity(area = {}) {
@@ -360,6 +359,7 @@ function isPracticalRoute(route, startPoint, destinationPoint, baseRoute) {
 }
 
 export default function PublicMap() {
+  const geolocation = useGeolocation();
   const [incidents, setIncidents] = useState([]);
   const [advisories, setAdvisories] = useState([]);
   const [hazardZones, setHazardZones] = useState([]);
@@ -431,14 +431,11 @@ export default function PublicMap() {
   }, [muted]);
 
   useEffect(() => {
-    if (!navigator.geolocation) return undefined;
-    const watchId = navigator.geolocation.watchPosition(
-      ({ coords }) => setCurrentLocation([coords.latitude, coords.longitude]),
-      () => {},
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 12000 },
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+    const { latitude, longitude } = geolocation.position?.coords || {};
+    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+      setCurrentLocation([latitude, longitude]);
+    }
+  }, [geolocation.position]);
 
   useEffect(() => {
     if (!navigationActive || !currentLocation || start?.label !== 'Current GPS location') return;

@@ -5,6 +5,7 @@ import { ExternalLink, FileText, Navigation, ShieldAlert, Volume2, VolumeX } fro
 import { toast } from 'sonner';
 import { getDispatchRecord, getPCRReportByResponse, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents } from '../services/supabase';
 import { PCR_EDIT_KEY } from '../utils/pcrStorage';
+import { useGeolocation } from '../contexts/GeolocationContext';
 
 const FALLBACK_START = [16.705, 121.676];
 const km = (a, b) => { const r = Math.PI / 180; const dLat = (b[0] - a[0]) * r; const dLng = (b[1] - a[1]) * r; const x = Math.sin(dLat / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLng / 2) ** 2; return 6371 * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x)); };
@@ -35,6 +36,7 @@ async function roadRoutes(start, destination) {
 export default function DispatchNavigation() {
   const { dispatchId } = useParams();
   const navigate = useNavigate();
+  const geolocation = useGeolocation();
   const [record, setRecord] = useState(() => { try { return JSON.parse(sessionStorage.getItem('alert-cia-navigation-dispatch') || 'null'); } catch { return null; } });
   const [current, setCurrent] = useState(FALLBACK_START);
   const [routeOptions, setRouteOptions] = useState([]);
@@ -43,15 +45,19 @@ export default function DispatchNavigation() {
   const [navigationActive, setNavigationActive] = useState(false);
   const [voice, setVoice] = useState(true);
   const [loading, setLoading] = useState(true);
-  const watchRef = useRef(null);
+  const hasInitialLocationRef = useRef(false);
   const destination = useMemo(() => coords(record), [record]);
   const route = routeOptions[routeIndex];
 
   useEffect(() => { if (!dispatchId || record?.id === dispatchId || record?.dispatchId === dispatchId) return; getDispatchRecord(dispatchId).then(setRecord).catch(error => toast.error(error.message)); }, [dispatchId, record]);
   useEffect(() => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(position => setCurrent([position.coords.latitude, position.coords.longitude]), () => setCurrent(FALLBACK_START), { enableHighAccuracy: true, timeout: 10000 });
-  }, []);
+    const { latitude, longitude } = geolocation.position?.coords || {};
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+    if (!hasInitialLocationRef.current || navigationActive) {
+      hasInitialLocationRef.current = true;
+      queueMicrotask(() => setCurrent([latitude, longitude]));
+    }
+  }, [geolocation.position, navigationActive]);
   useEffect(() => {
     if (!current || !destination) return;
     Promise.all([
@@ -64,14 +70,13 @@ export default function DispatchNavigation() {
       setAlerts(warnings);
     }).finally(() => setLoading(false));
   }, [current, destination]);
-  useEffect(() => () => { if (watchRef.current != null) navigator.geolocation?.clearWatch(watchRef.current); window.speechSynthesis?.cancel(); }, []);
+  useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
   const speak = useCallback(text => { if (!voice || !window.speechSynthesis) return; window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); }, [voice]);
   const toggleNavigation = () => {
-    if (navigationActive) { if (watchRef.current != null) navigator.geolocation.clearWatch(watchRef.current); watchRef.current = null; setNavigationActive(false); window.speechSynthesis?.cancel(); return; }
+    if (navigationActive) { setNavigationActive(false); window.speechSynthesis?.cancel(); return; }
     setNavigationActive(true);
     speak('Navigation started. Follow the displayed route to the exact dispatch pin.');
-    watchRef.current = navigator.geolocation?.watchPosition(position => setCurrent([position.coords.latitude, position.coords.longitude]), () => {}, { enableHighAccuracy: true, maximumAge: 3000 });
   };
   const continueToPCR = async () => {
     const pcr = await getPCRReportByResponse(record.responseId).catch(() => null);

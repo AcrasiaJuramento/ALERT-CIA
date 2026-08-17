@@ -159,7 +159,8 @@ export function NotificationProvider({ children }) {
       return persistNotifications([normalized, ...withoutDuplicate]);
     });
 
-    if (preferences.soundEnabled) playNotificationSound();
+    // Hazard proximity warnings use their own multi-tone alarm and autoplay fallback.
+    if (preferences.soundEnabled && normalized.type !== 'hazard_proximity') playNotificationSound();
     if (preferences.browserEnabled) showBrowserNotification(normalized);
     return normalized;
   }, [persistNotifications, preferences]);

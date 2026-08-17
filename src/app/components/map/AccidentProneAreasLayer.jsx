@@ -1,5 +1,6 @@
 import { Circle, Popup } from 'react-leaflet';
 import { formatRiskLevel, riskStyles } from '../../utils/accidentProneAreas';
+import { getAccidentProneAreaRadiusMeters } from '../../utils/accidentProneWarningZones';
 
 function advisoryFor(area) {
   if (area.risk_level === 'Critical') {
@@ -9,13 +10,6 @@ function advisoryFor(area) {
     return 'Please slow down and stay alert when passing through this area.';
   }
   return 'Stay alert and observe road safety reminders in this area.';
-}
-
-function radiusFor(area) {
-  if (area.risk_level === 'Critical') return 520;
-  if (area.risk_level === 'High') return 420;
-  if (area.risk_level === 'Moderate') return 320;
-  return 240;
 }
 
 function AdminPopup({ area }) {
@@ -68,7 +62,7 @@ export function AccidentProneAreasLayer({ areas = [], enabled = true, publicSafe
         <Circle
           key={area.area_id}
           center={[Number(area.latitude), Number(area.longitude)]}
-          radius={radiusFor(area)}
+          radius={getAccidentProneAreaRadiusMeters(area)}
           pathOptions={{
             color: style.color,
             fillColor: style.color,

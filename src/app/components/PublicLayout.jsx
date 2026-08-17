@@ -5,6 +5,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useAccessibility } from '../contexts/AccessibilityContext';
 import AccessibilityPanel, { AccessibilityButton } from './AccessibilityPanel';
 import HazardWarningMonitor from './HazardWarningMonitor';
+import { useGeolocation } from '../contexts/GeolocationContext';
 
 export default function PublicLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -13,6 +14,7 @@ export default function PublicLayout() {
   const { isDarkMode, toggleDarkMode } = useTheme();
   const { currentZoom, togglePanel } = useAccessibility();
   const isPublicMap = location.pathname === '/public/map';
+  const geolocation = useGeolocation();
 
   // Alt+A global keyboard shortcut
   useEffect(() => {
@@ -35,7 +37,7 @@ export default function PublicLayout() {
         transformOrigin: 'top left',
       }}
     >
-      <HazardWarningMonitor />
+      <HazardWarningMonitor position={geolocation.position} locationStatus={geolocation.status} />
       {/* Top Navigation */}
       <header className="sticky top-0 z-[1000] bg-card border-b border-border shadow-sm transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
