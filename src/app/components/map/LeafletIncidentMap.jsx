@@ -11,6 +11,7 @@ import { ClusteredIncidentMarkers } from './ClusteredIncidentMarkers';
 import { HazardZonesLayer } from './HazardZonesLayer';
 import { HeatmapLayer } from './HeatmapLayer';
 import { RouteLayer } from './RouteLayer';
+import { useGeolocation } from '../../contexts/GeolocationContext';
 
 function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvisoryId, scope }) {
   const map = useMap();
@@ -53,29 +54,22 @@ function MapClickHandler({ onMapClick }) {
 
 function UserLocationLayer({ enabled, followUser }) {
   const map = useMap();
-  const [position, setPosition] = useState(null);
-  const [error, setError] = useState('');
+  const geolocation = useGeolocation();
+  const { latitude, longitude } = geolocation.position?.coords || {};
+  const position = useMemo(() => (
+    Number.isFinite(latitude) && Number.isFinite(longitude)
+      ? [latitude, longitude]
+      : null
+  ), [latitude, longitude]);
+  const error = enabled && ['denied', 'timeout', 'unavailable', 'unsupported'].includes(geolocation.status)
+    ? 'Location is unavailable'
+    : '';
 
   useEffect(() => {
-    if (!enabled || !navigator.geolocation) {
-      return undefined;
+    if (enabled && followUser && position) {
+      map.flyTo(position, Math.max(map.getZoom(), 15), { duration: 0.5 });
     }
-
-    const watchId = navigator.geolocation.watchPosition(
-      ({ coords }) => {
-        const nextPosition = [coords.latitude, coords.longitude];
-        setPosition(nextPosition);
-        setError('');
-        if (followUser) {
-          map.flyTo(nextPosition, Math.max(map.getZoom(), 15), { duration: 0.5 });
-        }
-      },
-      () => setError('Location permission denied'),
-      { enableHighAccuracy: true, maximumAge: 10000, timeout: 12000 }
-    );
-
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, [enabled, followUser, map]);
+  }, [enabled, followUser, map, position]);
 
   useEffect(() => {
     if (!position) return;

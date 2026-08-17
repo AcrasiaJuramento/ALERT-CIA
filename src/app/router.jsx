@@ -30,6 +30,7 @@ import PublicMap from './pages/public/PublicMap'
 import AccessDenied from './pages/AccessDenied'
 import ProtectedRoute from './components/ProtectedRoute'
 import { PERMISSIONS } from './access/rbac'
+import { GeolocationProvider } from './contexts/GeolocationContext'
 
 const protect = (permission, element) => <ProtectedRoute permission={permission}>{element}</ProtectedRoute>
 
@@ -41,7 +42,7 @@ export const router = createBrowserRouter([
   { path: '/register', element: <Navigate to="/login" replace /> },
   {
     path: '/admin',
-    element: protect(null, <Layout />),
+    element: protect(null, <GeolocationProvider><Layout /></GeolocationProvider>),
     children: [
       { index: true, element: protect(PERMISSIONS.VIEW_DASHBOARD, <Dashboard />) },
       { path: 'incidents', element: protect(PERMISSIONS.VIEW_INCIDENTS, <IncidentList />) },
@@ -70,7 +71,7 @@ export const router = createBrowserRouter([
   },
   {
     path: '/public',
-    element: <PublicLayout />,
+    element: <GeolocationProvider><PublicLayout /></GeolocationProvider>,
     children: [
       { index: true, element: <PublicDashboard /> },
       { path: 'incidents', element: <PublicIncidentList /> },

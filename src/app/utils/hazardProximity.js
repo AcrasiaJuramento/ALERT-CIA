@@ -3,6 +3,20 @@ const EARTH_RADIUS_METERS = 6371008.8;
 export const APPROACH_WARNING_METERS = 500;
 export const CAUTION_WARNING_METERS = 200;
 export const RESET_BUFFER_METERS = 100;
+export const DEFAULT_ZONE_RADIUS_METERS = 250;
+export const EXIT_BUFFER_METERS = 50;
+
+export function getZoneRadiusMeters(zone = {}, defaultRadiusMeters = DEFAULT_ZONE_RADIUS_METERS) {
+  const configuredRadius = Number(zone.radiusMeters ?? zone.radius_meters);
+  return Number.isFinite(configuredRadius) && configuredRadius > 0
+    ? configuredRadius
+    : defaultRadiusMeters;
+}
+
+export function getZoneId(zone = {}) {
+  if (zone.id != null && String(zone.id).trim()) return String(zone.id);
+  return `${Number(zone.latitude)},${Number(zone.longitude)}`;
+}
 
 export function distanceMeters(first, second) {
   const toRadians = value => (Number(value) * Math.PI) / 180;
@@ -16,7 +30,7 @@ export function distanceMeters(first, second) {
 }
 
 export function warningForDistance(zone, centerDistanceMeters) {
-  const boundaryDistance = Math.round(centerDistanceMeters - Number(zone.radiusMeters || 250));
+  const boundaryDistance = Math.round(centerDistanceMeters - getZoneRadiusMeters(zone));
   if (boundaryDistance <= 0) {
     return { level: 'danger', priority: 3, distance: 0, message: 'Danger: You are currently inside an accident-prone area. Please slow down and drive carefully.' };
   }
@@ -27,6 +41,42 @@ export function warningForDistance(zone, centerDistanceMeters) {
     return { level: 'warning', priority: 1, distance: boundaryDistance, message: `Warning: You are approaching an accident-prone area in ${boundaryDistance} meters.` };
   }
   return null;
+}
+
+export function evaluateZoneTransitions(
+  location,
+  zones = [],
+  previousInsideZoneIds = new Set(),
+  {
+    defaultRadiusMeters = DEFAULT_ZONE_RADIUS_METERS,
+    exitBufferMeters = EXIT_BUFFER_METERS,
+  } = {},
+) {
+  const previousIds = previousInsideZoneIds instanceof Set
+    ? previousInsideZoneIds
+    : new Set(previousInsideZoneIds);
+  const nextInsideZoneIds = new Set();
+  const entered = [];
+  const exited = [];
+
+  for (const zone of zones) {
+    if (!Number.isFinite(Number(zone.latitude)) || !Number.isFinite(Number(zone.longitude))) continue;
+
+    const id = getZoneId(zone);
+    const wasInside = previousIds.has(id);
+    const radiusMeters = getZoneRadiusMeters(zone, defaultRadiusMeters);
+    const centerDistance = distanceMeters(location, zone);
+    const threshold = radiusMeters + (wasInside ? Math.max(0, exitBufferMeters) : 0);
+
+    if (centerDistance <= threshold) {
+      nextInsideZoneIds.add(id);
+      if (!wasInside) entered.push({ zone, centerDistance, radiusMeters });
+    } else if (wasInside) {
+      exited.push({ zone, centerDistance, radiusMeters });
+    }
+  }
+
+  return { entered, exited, insideZoneIds: nextInsideZoneIds };
 }
 
 export function evaluateHazards(location, zones = []) {

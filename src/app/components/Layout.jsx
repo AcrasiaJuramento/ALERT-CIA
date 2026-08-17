@@ -13,6 +13,8 @@ import { isIncidentCompleted } from '../utils/incidentStatus';
 import { formatLongDate } from '../utils/dateFormat';
 import ConnectionIndicator from './ConnectionIndicator';
 import PwaStatusPrompts from './PwaStatusPrompts';
+import HazardWarningMonitor from './HazardWarningMonitor';
+import { useGeolocation } from '../contexts/GeolocationContext';
 
 function HeaderClock() {
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -87,6 +89,7 @@ export default function Layout() {
   const { user, roleLabel, can, logout } = useAuth();
   const { isDarkMode, toggleDarkMode } = useTheme();
   const { notifications, unreadCount, markAsRead, markAllAsRead } = useNotifications();
+  const geolocation = useGeolocation();
   const navItems = getAuthorizedNavigation(user.role);
   const currentPage = getCurrentPage(location.pathname);
   const currentPageLabel = location.pathname === '/admin/profile' ? 'Profile Management' : currentPage?.label;
@@ -107,6 +110,7 @@ export default function Layout() {
 
   return (
     <div className="flex h-screen bg-background overflow-hidden transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
+      <HazardWarningMonitor position={geolocation.position} locationStatus={geolocation.status} />
       {mobileSidebarOpen && <button aria-label="Close sidebar" className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setMobileSidebarOpen(false)} />}
 
       <aside className={`fixed md:relative z-50 h-full shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 ${mobileSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full md:translate-x-0'} ${sidebarOpen ? 'md:w-64' : 'md:w-16'}`}>
