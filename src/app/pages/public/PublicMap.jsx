@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle, Car, Clock, Crosshair, LocateFixed, MapPin,
   Megaphone, Navigation, RefreshCw, Route, Search, ShieldAlert, X, Volume2, VolumeX
@@ -20,6 +20,11 @@ import {
 } from '../../utils/accidentProneAreas';
 import { useGeolocation } from '../../contexts/GeolocationContext';
 import { getAccidentProneAreaRadiusMeters } from '../../utils/accidentProneWarningZones';
+import {
+  canStartAutomaticReroute,
+  getNextOffRouteConfirmationCount,
+  normalizeBrowserPosition,
+} from '../../utils/routeNavigation';
 
 const quickDestinations = [
   { label: 'Echague Municipal Hall', latLng: [16.705, 121.676] },
@@ -192,39 +197,6 @@ function normalizeOsrmRoute(route, provider = 'OSRM road route') {
   };
 }
 
-function remainingRoutePlan(routePlan, currentLocation, active = true) {
-  const positions = routePlan?.positions || [];
-  if (!active || !currentLocation || positions.length < 2) return routePlan;
-
-  const latitudeScale = Math.cos((Number(currentLocation[0]) * Math.PI) / 180);
-  const nearest = positions.slice(0, -1).reduce((best, point, index) => {
-    const next = positions[index + 1];
-    const ax = Number(point[1]) * latitudeScale;
-    const ay = Number(point[0]);
-    const bx = Number(next[1]) * latitudeScale;
-    const by = Number(next[0]);
-    const px = Number(currentLocation[1]) * latitudeScale;
-    const py = Number(currentLocation[0]);
-    const dx = bx - ax;
-    const dy = by - ay;
-    const lengthSquared = dx * dx + dy * dy;
-    const ratio = lengthSquared
-      ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared))
-      : 0;
-    const projected = [
-      Number(point[0]) + (Number(next[0]) - Number(point[0])) * ratio,
-      Number(point[1]) + (Number(next[1]) - Number(point[1])) * ratio,
-    ];
-    const distance = distanceKm(currentLocation, projected);
-    return distance < best.distance ? { index, projected, distance } : best;
-  }, { index: 0, projected: positions[0], distance: Infinity });
-
-  return {
-    ...routePlan,
-    positions: [currentLocation, nearest.projected, ...positions.slice(nearest.index + 1)],
-  };
-}
-
 async function fetchRouteOptions(start, destination, provider = 'OSRM road route') {
   const waypoints = (start.waypoints || destination.waypoints || []);
   const coords = [
@@ -387,7 +359,85 @@ export default function PublicMap() {
   const [continuedAlertIds, setContinuedAlertIds] = useState([]);
   const [safetyRouteWaypoint, setSafetyRouteWaypoint] = useState(null);
   const [safetyRouteSourceId, setSafetyRouteSourceId] = useState('');
-  const lastRouteOriginRef = useRef(null);
+  const currentLocationRef = useRef(null);
+  const destinationRef = useRef(null);
+  const routePlanRef = useRef(null);
+  const navigationActiveRef = useRef(false);
+  const offRouteCountRef = useRef(0);
+  const isReroutingRef = useRef(false);
+  const lastRerouteAtRef = useRef(0);
+  const routeRequestSequenceRef = useRef(0);
+  const routeEndpointsKeyRef = useRef('');
+
+  destinationRef.current = destination;
+  routePlanRef.current = routePlan;
+  navigationActiveRef.current = navigationActive;
+
+  const recalculateRoute = useCallback(async (origin, selectedDestination, options = {}) => {
+    if (!origin?.latLng?.every(Number.isFinite) || !selectedDestination?.latLng?.every(Number.isFinite)) {
+      return false;
+    }
+
+    const {
+      automatic = false,
+      fallbackOnError = false,
+      provider = 'OSRM road route',
+      waypoints = [],
+    } = options;
+    const requestId = ++routeRequestSequenceRef.current;
+    const routedOrigin = waypoints.length ? { ...origin, waypoints } : origin;
+
+    if (automatic) {
+      isReroutingRef.current = true;
+      lastRerouteAtRef.current = Date.now();
+    }
+    setRouteLoading(true);
+    if (!automatic) setRouteError('');
+
+    try {
+      const nextRoute = await fetchRoute(routedOrigin, selectedDestination);
+      if (requestId !== routeRequestSequenceRef.current) return false;
+
+      const resolvedRoute = provider === 'OSRM road route'
+        ? nextRoute
+        : { ...nextRoute, provider };
+      routePlanRef.current = resolvedRoute;
+      routeEndpointsKeyRef.current = `${origin.latLng.join(',')}>${selectedDestination.latLng.join(',')}`;
+      offRouteCountRef.current = 0;
+      setRoutePlan(resolvedRoute);
+      setCurrentStepIndex(0);
+
+      if (automatic) {
+        setStart(origin);
+        setStartInput(origin.label);
+        setSafetyRouteWaypoint(null);
+        setSafetyRouteSourceId('');
+        setAvoidancePrompt(null);
+        setContinuedAlertIds([]);
+        lastRouteAlertIdsRef.current = [];
+        setRouteError('Route updated automatically from your latest GPS location.');
+      }
+      return true;
+    } catch (requestError) {
+      if (requestId !== routeRequestSequenceRef.current) return false;
+
+      if (fallbackOnError) {
+        const directRoute = fallbackRoute(origin, selectedDestination);
+        routePlanRef.current = directRoute;
+        routeEndpointsKeyRef.current = `${origin.latLng.join(',')}>${selectedDestination.latLng.join(',')}`;
+        setRoutePlan(directRoute);
+        setRouteError(`${requestError.message || 'Routing service unavailable.'} Showing direct safety route.`);
+      } else if (automatic) {
+        setRouteError(`${requestError.message || 'Automatic rerouting is temporarily unavailable.'} Keeping the last route and continuing GPS tracking.`);
+      } else {
+        setRouteError(requestError.message || 'Routing service unavailable. Keeping the last route.');
+      }
+      return false;
+    } finally {
+      if (requestId === routeRequestSequenceRef.current) setRouteLoading(false);
+      if (automatic) isReroutingRef.current = false;
+    }
+  }, []);
 
   const loadMap = async () => {
     setLoading(true);
@@ -431,55 +481,52 @@ export default function PublicMap() {
   }, [muted]);
 
   useEffect(() => {
-    const { latitude, longitude } = geolocation.position?.coords || {};
-    if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-      setCurrentLocation([latitude, longitude]);
-    }
-  }, [geolocation.position]);
+    const location = normalizeBrowserPosition(geolocation.position);
+    if (!location) return;
+
+    currentLocationRef.current = location;
+    setCurrentLocation(location.latLng);
+
+    if (!navigationActiveRef.current || !destinationRef.current) return;
+    const activeRoute = routePlanRef.current?.positions || [];
+    if (activeRoute.length < 2) return;
+
+    offRouteCountRef.current = getNextOffRouteConfirmationCount(
+      offRouteCountRef.current,
+      location,
+      activeRoute,
+    );
+    if (!canStartAutomaticReroute({
+      navigationActive: navigationActiveRef.current,
+      hasDestination: Boolean(destinationRef.current),
+      routeCoordinates: activeRoute,
+      offRouteCount: offRouteCountRef.current,
+      isRerouting: isReroutingRef.current,
+      lastRerouteAt: lastRerouteAtRef.current,
+    })) return;
+
+    offRouteCountRef.current = 0;
+    const latestDestination = destinationRef.current;
+    void recalculateRoute(
+      { label: 'Current GPS location', latLng: location.latLng },
+      latestDestination,
+      { automatic: true },
+    );
+  }, [geolocation.position, recalculateRoute]);
 
   useEffect(() => {
-    if (!navigationActive || !currentLocation || start?.label !== 'Current GPS location') return;
-    const previous = lastRouteOriginRef.current || start.latLng;
-    if (distanceKm(previous, currentLocation) < 0.03) return;
-    lastRouteOriginRef.current = currentLocation;
-    setStart(current => current ? { ...current, latLng: currentLocation } : current);
-  }, [currentLocation, navigationActive, start?.label, start?.latLng]);
+    if (navigationActive || !start?.latLng || !destination?.latLng) return;
+    const routeKey = `${start.latLng.join(',')}>${destination.latLng.join(',')}`;
+    if (routeEndpointsKeyRef.current === routeKey) return;
+    void recalculateRoute(start, destination, { fallbackOnError: true });
+  }, [destination, navigationActive, recalculateRoute, start]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function updateRoute() {
-      if (!start?.latLng || !destination?.latLng) {
-        setRoutePlan(null);
-        return;
-      }
-      if (!navigationActive && safetyRouteSourceId && ['Safer road route', 'Best available alternate route'].includes(routePlan?.provider)) {
-        return;
-      }
-      setRouteLoading(true);
-      setRouteError('');
-      try {
-        const safetyWaypoints = Array.isArray(safetyRouteWaypoint)
-          ? (Array.isArray(safetyRouteWaypoint[0]) ? safetyRouteWaypoint : [safetyRouteWaypoint])
-          : [];
-        const routedStart = safetyWaypoints.length ? { ...start, waypoints: safetyWaypoints } : start;
-        const nextRoute = await fetchRoute(routedStart, destination);
-        if (!cancelled) {
-          setRoutePlan(safetyRouteWaypoint ? { ...nextRoute, provider: 'Safer road route' } : nextRoute);
-        }
-      } catch (requestError) {
-        if (!cancelled) {
-          setRoutePlan(fallbackRoute(start, destination));
-          setRouteError(`${requestError.message || 'Routing service unavailable.'} Showing direct safety route.`);
-        }
-      } finally {
-        if (!cancelled) setRouteLoading(false);
-      }
-    }
-    updateRoute();
-    return () => {
-      cancelled = true;
-    };
-  }, [destination, navigationActive, routePlan?.provider, safetyRouteSourceId, safetyRouteWaypoint, start]);
+  useEffect(() => () => {
+    navigationActiveRef.current = false;
+    routeRequestSequenceRef.current += 1;
+    offRouteCountRef.current = 0;
+    isReroutingRef.current = false;
+  }, []);
 
 
 
@@ -623,16 +670,27 @@ export default function PublicMap() {
       .slice(0, 6),
     [activeIncidents, currentLocation]
   );
-  const visibleRoutePlan = remainingRoutePlan(routePlan, currentLocation, navigationActive);
-  const route = visibleRoutePlan
+  const route = routePlan
     ? [{
         id: 'planned-route',
         label: `${start?.label || 'Point A'} to ${destination?.label || 'Point B'}`,
-        positions: visibleRoutePlan.positions,
+        positions: routePlan.positions,
         color: routeAlerts.some(alert => alert.severity === 'critical') ? '#dc2626' : '#2563eb',
         weight: 6,
       }]
     : [];
+
+  const recalculateForDestinationChange = (nextDestination) => {
+    destinationRef.current = nextDestination;
+    const latestLocation = currentLocationRef.current;
+    if (!navigationActiveRef.current || !latestLocation) return;
+
+    const gpsStart = { label: 'Current GPS location', latLng: latestLocation.latLng };
+    offRouteCountRef.current = 0;
+    setStart(gpsStart);
+    setStartInput(gpsStart.label);
+    void recalculateRoute(gpsStart, nextDestination, { fallbackOnError: true });
+  };
 
   const setPointFromInput = async (kind) => {
     const inputValue = kind === 'start' ? startInput : destinationInput;
@@ -661,6 +719,7 @@ export default function PublicMap() {
     } else {
       setDestination(parsed);
       setDestinationInput(parsed.label);
+      recalculateForDestinationChange(parsed);
     }
     setSafetyRouteWaypoint(null);
     setSafetyRouteSourceId('');
@@ -679,6 +738,7 @@ export default function PublicMap() {
     } else {
       setDestination(point);
       setDestinationInput(point.label);
+      recalculateForDestinationChange(point);
     }
     setSafetyRouteWaypoint(null);
     setSafetyRouteSourceId('');
@@ -716,6 +776,7 @@ export default function PublicMap() {
     } else {
       setDestination(point);
       setDestinationInput(label);
+      recalculateForDestinationChange(point);
     }
     setFocusedLocation(point);
     setPinMode(null);
@@ -723,6 +784,16 @@ export default function PublicMap() {
   };
 
   const clearRoute = () => {
+    navigationActiveRef.current = false;
+    destinationRef.current = null;
+    routeRequestSequenceRef.current += 1;
+    routePlanRef.current = null;
+    routeEndpointsKeyRef.current = '';
+    offRouteCountRef.current = 0;
+    isReroutingRef.current = false;
+    lastRerouteAtRef.current = 0;
+    setNavigationActive(false);
+    setRouteLoading(false);
     setStart(null);
     setDestination(null);
     setRoutePlan(null);
@@ -737,6 +808,41 @@ export default function PublicMap() {
     setRouteError('');
   };
 
+  const toggleNavigation = () => {
+    if (navigationActiveRef.current) {
+      navigationActiveRef.current = false;
+      routeRequestSequenceRef.current += 1;
+      if (start?.latLng && destinationRef.current?.latLng) {
+        routeEndpointsKeyRef.current = `${start.latLng.join(',')}>${destinationRef.current.latLng.join(',')}`;
+      }
+      offRouteCountRef.current = 0;
+      isReroutingRef.current = false;
+      setNavigationActive(false);
+      setRouteLoading(false);
+      window.speechSynthesis?.cancel();
+      return;
+    }
+
+    const latestLocation = currentLocationRef.current;
+    if (!destinationRef.current) {
+      setRouteError('Select a destination before starting navigation.');
+      return;
+    }
+    if (!latestLocation) {
+      setRouteError('Allow location access and wait for a GPS fix before starting navigation.');
+      return;
+    }
+
+    const gpsStart = { label: 'Current GPS location', latLng: latestLocation.latLng };
+    navigationActiveRef.current = true;
+    offRouteCountRef.current = 0;
+    lastRerouteAtRef.current = 0;
+    setStart(gpsStart);
+    setStartInput(gpsStart.label);
+    setNavigationActive(true);
+    void recalculateRoute(gpsStart, destinationRef.current, { fallbackOnError: true });
+  };
+
   const continueRiskRoute = () => {
     if (!avoidancePrompt) return;
     const alertId = `${avoidancePrompt.type}:${avoidancePrompt.id}`;
@@ -747,6 +853,11 @@ export default function PublicMap() {
 
   const requestSaferRoute = async () => {
     if (!avoidancePrompt) return;
+    const latestLocation = currentLocationRef.current;
+    const routingStart = navigationActiveRef.current && latestLocation
+      ? { label: 'Current GPS location', latLng: latestLocation.latLng }
+      : start;
+    if (!routingStart?.latLng || !destination?.latLng) return;
     const detourCandidates = computeAvoidanceWaypointSets(routePoints, avoidancePrompt);
     if (!detourCandidates?.length) {
       setRouteError('Unable to build a safer route around this alert. You can continue carefully or choose a different destination.');
@@ -756,12 +867,13 @@ export default function PublicMap() {
     setRouteError('Finding a safer route around the selected risk area...');
     navVoice.speak('Finding a safer route around the safety warning.');
     setRouteLoading(true);
+    const requestId = ++routeRequestSequenceRef.current;
 
     try {
       const currentAlerts = routeAlerts;
-      const baseAlternatives = await fetchRouteOptions(start, destination, 'Alternative road route')
+      const baseAlternatives = await fetchRouteOptions(routingStart, destination, 'Alternative road route')
         .then(routes => routes.slice(1)
-          .filter(route => isPracticalRoute(route, start, destination, routePlan))
+          .filter(route => isPracticalRoute(route, routingStart, destination, routePlan))
           .map((route, index) => ({
             route,
             waypoints: [],
@@ -778,9 +890,9 @@ export default function PublicMap() {
 
       const detourRoutes = await Promise.all(detourCandidates.map(async candidate => {
         try {
-          const routeOptions = await fetchRouteOptions({ ...start, waypoints: candidate.waypoints }, destination, 'Barangay/local-road detour');
+          const routeOptions = await fetchRouteOptions({ ...routingStart, waypoints: candidate.waypoints }, destination, 'Barangay/local-road detour');
           return routeOptions
-            .filter(route => isPracticalRoute(route, start, destination, routePlan))
+            .filter(route => isPracticalRoute(route, routingStart, destination, routePlan))
             .map(route => ({
               ...candidate,
               route,
@@ -804,6 +916,8 @@ export default function PublicMap() {
           || first.route.distanceKm - second.route.distanceKm
         ))[0];
 
+      if (requestId !== routeRequestSequenceRef.current) return;
+
       if (!best) {
         setContinuedAlertIds(current => [...new Set([...current, alertId])]);
         setAvoidancePrompt(null);
@@ -817,7 +931,11 @@ export default function PublicMap() {
       setSafetyRouteSourceId(alertId);
       setAvoidancePrompt(null);
       lastRouteAlertIdsRef.current = best.alerts.map(alert => `${alert.type}:${alert.id}`);
-      setRoutePlan({ ...best.route, provider: improved ? 'Safer road route' : 'Best available alternate route' });
+      const saferRoute = { ...best.route, provider: improved ? 'Safer road route' : 'Best available alternate route' };
+      routePlanRef.current = saferRoute;
+      routeEndpointsKeyRef.current = `${routingStart.latLng.join(',')}>${destination.latLng.join(',')}`;
+      offRouteCountRef.current = 0;
+      setRoutePlan(saferRoute);
       setRouteError(
         improved
           ? `Safer route selected. ${best.alerts.length} safety alert${best.alerts.length === 1 ? '' : 's'} remain near this route.`
@@ -825,7 +943,7 @@ export default function PublicMap() {
       );
       navVoice.speak(improved ? 'Safer route selected.' : 'Best available alternate route selected. Please continue carefully.');
     } finally {
-      setRouteLoading(false);
+      if (requestId === routeRequestSequenceRef.current) setRouteLoading(false);
     }
   };
 
@@ -845,7 +963,7 @@ export default function PublicMap() {
             routes={route}
             plannerPoints={{
               current: currentLocation ? { label: 'Current GPS location', latLng: currentLocation } : null,
-              start,
+              start: start?.label === 'Current GPS location' ? null : start,
               destination,
             }}
             focusedLocation={focusedLocation}
@@ -941,7 +1059,7 @@ export default function PublicMap() {
             onRequestSaferRoute={requestSaferRoute}
             saferRouteActive={Boolean(safetyRouteWaypoint)}
             navigationActive={navigationActive}
-            onToggleNavigation={() => setNavigationActive(a => !a)}
+            onToggleNavigation={toggleNavigation}
             muted={muted}
             onToggleMute={() => setMuted(m => !m)}
           />

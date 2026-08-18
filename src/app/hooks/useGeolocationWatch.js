@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export function geolocationErrorStatus(error) {
   if (error?.code === 1) return 'denied';
@@ -8,6 +8,7 @@ export function geolocationErrorStatus(error) {
 
 export default function useGeolocationWatch() {
   const [position, setPosition] = useState(null);
+  const geolocationWatchIdRef = useRef(null);
   const [status, setStatus] = useState(() => (
     typeof navigator !== 'undefined' && navigator.geolocation ? 'starting' : 'unsupported'
   ));
@@ -17,9 +18,9 @@ export default function useGeolocationWatch() {
       return undefined;
     }
 
-    let watchId;
+    if (geolocationWatchIdRef.current !== null) return undefined;
     try {
-      watchId = navigator.geolocation.watchPosition(
+      geolocationWatchIdRef.current = navigator.geolocation.watchPosition(
         nextPosition => {
           const { latitude, longitude, accuracy } = nextPosition.coords || {};
           if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
@@ -32,14 +33,17 @@ export default function useGeolocationWatch() {
             : navigator.onLine ? 'active' : 'offline');
         },
         error => setStatus(geolocationErrorStatus(error)),
-        { enableHighAccuracy: true, maximumAge: 5000, timeout: 20000 },
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 },
       );
     } catch (error) {
       queueMicrotask(() => setStatus(geolocationErrorStatus(error)));
     }
 
     return () => {
-      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+      if (geolocationWatchIdRef.current !== null) {
+        navigator.geolocation.clearWatch(geolocationWatchIdRef.current);
+        geolocationWatchIdRef.current = null;
+      }
     };
   }, []);
 
