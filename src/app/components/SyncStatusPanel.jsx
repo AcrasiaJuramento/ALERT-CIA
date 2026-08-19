@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bug, ChevronDown, ChevronUp, RefreshCw, Wrench } from "lucide-react";
-import { getAllRecords, repairPoisonedSyncOperations, retryFailedSyncOperations } from "../db/indexed-db";
+import { AlertTriangle, Bug, ChevronDown, ChevronUp, GitMerge, RefreshCw, Wrench } from "lucide-react";
+import { getAllRecords, repairPoisonedSyncOperations, resolveSyncConflict, retryFailedSyncOperations } from "../db/indexed-db";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { runSyncNow } from "../sync/sync-engine";
 import { formatLongDateTime } from "../utils/dateFormat";
@@ -63,6 +63,7 @@ function diagnoseOperation(operation) {
 export default function SyncStatusPanel() {
   const [connection, setConnection] = useState(getConnectionState());
   const [operations, setOperations] = useState([]);
+  const [conflicts, setConflicts] = useState([]);
   const [syncing, setSyncing] = useState(false);
   const [checkerOpen, setCheckerOpen] = useState(false);
   const [repairing, setRepairing] = useState(false);
@@ -72,7 +73,13 @@ export default function SyncStatusPanel() {
     let mounted = true;
     const load = () => {
       if (document.visibilityState !== "visible") return Promise.resolve();
-      return getAllRecords("sync_queue").then(rows => mounted && setOperations(rows)).catch(() => undefined);
+      return Promise.all([getAllRecords("sync_queue"), getAllRecords("conflict_records")])
+        .then(([rows, conflictRows]) => {
+          if (!mounted) return;
+          setOperations(rows);
+          setConflicts(conflictRows.filter(row => row.conflict_status !== "resolved"));
+        })
+        .catch(() => undefined);
     };
     load();
     const interval = setInterval(load, QUEUE_REFRESH_MS);
@@ -85,7 +92,7 @@ export default function SyncStatusPanel() {
   const counts = {
     pending: operations.filter(row => ["pending", "uploading", "partially_synced", "retry_scheduled"].includes(row.sync_status)).length,
     waiting: operations.filter(row => row.sync_status === "waiting_dependency").length,
-    failed: operations.filter(row => ["failed", "authorization_required", "permanent_failure"].includes(row.sync_status)).length,
+    failed: operations.filter(row => ["failed", "authorization_required", "permanent_failure", "conflict"].includes(row.sync_status)).length + conflicts.length,
   };
   const failedOperations = operations
     .filter(row => ["failed", "waiting_dependency", "retry_scheduled", "authorization_required", "permanent_failure"].includes(row.sync_status))
@@ -96,6 +103,7 @@ export default function SyncStatusPanel() {
     try {
       await runSyncNow({ includeNotDue: true });
       setOperations(await getAllRecords("sync_queue"));
+      setConflicts((await getAllRecords("conflict_records")).filter(row => row.conflict_status !== "resolved"));
     } finally {
       setSyncing(false);
     }
@@ -107,6 +115,7 @@ export default function SyncStatusPanel() {
       await retryFailedSyncOperations();
       await runSyncNow({ includeNotDue: true });
       setOperations(await getAllRecords("sync_queue"));
+      setConflicts((await getAllRecords("conflict_records")).filter(row => row.conflict_status !== "resolved"));
     } finally {
       setRepairing(false);
     }
@@ -118,6 +127,19 @@ export default function SyncStatusPanel() {
       await repairPoisonedSyncOperations();
       await runSyncNow({ includeNotDue: true });
       setOperations(await getAllRecords("sync_queue"));
+      setConflicts((await getAllRecords("conflict_records")).filter(row => row.conflict_status !== "resolved"));
+    } finally {
+      setRepairing(false);
+    }
+  };
+
+  const onResolveConflict = async (conflictId, resolution) => {
+    setRepairing(true);
+    try {
+      await resolveSyncConflict(conflictId, resolution);
+      if (resolution === "local") await runSyncNow({ includeNotDue: true });
+      setOperations(await getAllRecords("sync_queue"));
+      setConflicts((await getAllRecords("conflict_records")).filter(row => row.conflict_status !== "resolved"));
     } finally {
       setRepairing(false);
     }
@@ -146,6 +168,43 @@ export default function SyncStatusPanel() {
         <div className="rounded-lg bg-secondary p-3"><div className="text-[10px] uppercase text-muted-foreground">Waiting dependencies</div><div className="text-lg font-bold">{counts.waiting}</div></div>
         <div className="rounded-lg bg-secondary p-3"><div className="text-[10px] uppercase text-muted-foreground">Needs attention</div><div className="text-lg font-bold">{counts.failed}</div></div>
       </div>
+      {conflicts.length > 0 && (
+        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3">
+          <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-amber-500">
+            <GitMerge className="h-3.5 w-3.5" /> Conflict Review
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">Cloud and local records both changed. Choose which version should be kept.</div>
+          <div className="mt-3 space-y-2">
+            {conflicts.slice(0, 5).map(conflict => (
+              <div key={conflict.id} className="rounded-lg border border-border bg-card p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-bold text-foreground">{conflict.entity_type} conflict / {conflict.severity}</div>
+                    <div className="mt-1 font-mono text-[10px] text-muted-foreground">{conflict.entity_id}</div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button disabled={repairing} onClick={() => onResolveConflict(conflict.id, "cloud")} className="rounded-lg bg-secondary px-3 py-1.5 text-[11px] font-semibold">
+                      Use Cloud
+                    </button>
+                    <button disabled={repairing} onClick={() => onResolveConflict(conflict.id, "local")} className="rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white">
+                      Keep Local
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground">
+                  {(conflict.changed_fields || []).slice(0, 4).map(change => (
+                    <div key={change.key} className="rounded-md bg-secondary/60 px-2 py-1">
+                      <span className="font-semibold text-foreground">{change.label}:</span> local "{String(change.localValue ?? "-").slice(0, 40)}" / cloud "{String(change.cloudValue ?? "-").slice(0, 40)}"
+                    </div>
+                  ))}
+                  {(conflict.changed_fields || []).length > 4 && <div>+{conflict.changed_fields.length - 4} more changed fields</div>}
+                </div>
+              </div>
+            ))}
+            {conflicts.length > 5 && <div className="text-xs text-muted-foreground">Showing 5 of {conflicts.length} conflicts.</div>}
+          </div>
+        </div>
+      )}
       {checkerOpen && (
         <div className="mt-4 rounded-xl border border-border bg-secondary/30 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">

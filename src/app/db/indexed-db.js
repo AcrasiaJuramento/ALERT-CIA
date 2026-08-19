@@ -328,3 +328,76 @@ export async function putDeviceSetting(key, value) {
 export async function getDeviceSetting(key) {
   return (await getRecord("device_settings", key))?.value;
 }
+
+function conflictStoreName(conflict = {}) {
+  if (conflict.store_name) return conflict.store_name;
+  if (conflict.entity_type === "dispatch") return "local_dispatches";
+  if (conflict.entity_type === "pcr") return "local_pcr_reports";
+  if (conflict.entity_type === "incident") return "local_incidents";
+  return null;
+}
+
+export async function resolveSyncConflict(conflictId, resolution) {
+  const conflict = await getRecord("conflict_records", conflictId);
+  if (!conflict) throw new Error("Conflict record was not found.");
+  const now = new Date().toISOString();
+  const rows = await getAllRecords("sync_queue");
+  const blockedOperations = rows.filter(row => row.conflict_id === conflictId || (
+    row.entity_type === conflict.entity_type
+    && row.entity_id === conflict.entity_id
+    && row.sync_status === "conflict"
+  ));
+
+  if (resolution === "cloud") {
+    const storeName = conflictStoreName(conflict);
+    if (storeName && conflict.cloud_record) {
+      await putRecord(storeName, {
+        ...conflict.local_record,
+        ...conflict.cloud_record,
+        id: conflict.local_record?.id || conflict.cloud_record?.id,
+        dispatchId: conflict.entity_type === "dispatch"
+          ? conflict.local_record?.dispatchId || conflict.cloud_record?.dispatchId || conflict.cloud_record?.id
+          : conflict.local_record?.dispatchId || conflict.cloud_record?.dispatchId,
+        pcrId: conflict.entity_type === "pcr"
+          ? conflict.local_record?.pcrId || conflict.cloud_record?.pcrId || conflict.cloud_record?.id
+          : conflict.local_record?.pcrId || conflict.cloud_record?.pcrId,
+        sync_status: "synced",
+        syncLabel: "Cloud synced",
+        localStatus: null,
+        synced_to_cloud: true,
+        cloud_synced_at: now,
+        updatedAt: conflict.cloud_record.updatedAt || conflict.cloud_record.updated_at || now,
+      });
+    }
+    await Promise.all(blockedOperations.map(row => putRecord("sync_queue", {
+      ...row,
+      sync_status: "cancelled",
+      blocked_reason: "Conflict resolved by accepting the cloud record.",
+      next_attempt_at: null,
+      updated_at_device: now,
+    })));
+  }
+
+  if (resolution === "local") {
+    await Promise.all(blockedOperations.map(row => putRecord("sync_queue", {
+      ...row,
+      attempts: 0,
+      sync_status: "pending",
+      error_category: null,
+      blocked_reason: null,
+      last_sync_error: null,
+      next_attempt_at: now,
+      updated_at_device: now,
+    })));
+  }
+
+  await putRecord("conflict_records", {
+    ...conflict,
+    conflict_status: "resolved",
+    resolution,
+    resolved_at: now,
+    updated_at: now,
+  });
+
+  return { ...conflict, conflict_status: "resolved", resolution, resolved_at: now };
+}

@@ -2,6 +2,7 @@ import { addSyncOperation, getAllRecords, getRecord, putRecord } from "../indexe
 import { getDeviceId } from "../../services/device-service";
 import { createSyncMetadata, RECORD_SOURCES, SYNC_STATUSES } from "../../types/hybrid";
 import { randomUuid } from "../../utils/uuid";
+import { changedSyncFields, conflictSeverity, hasMeaningfulSyncConflict } from "../../sync/sync-conflicts";
 
 function withLocalFields(record, entityType, source = RECORD_SOURCES.OFFLINE_DEVICE) {
   const id = record.id || record.dispatchId || record.pcrId || randomUuid();
@@ -197,6 +198,45 @@ async function markMatchingOperationsSynced(entityType, cloudRecord, syncedAt) {
     })));
 }
 
+async function markMatchingOperationsConflict(entityType, cloudRecord, conflictId, syncedAt) {
+  const rows = await getAllRecords("sync_queue");
+  await Promise.all(rows
+    .filter(row => sameOperationTarget(row, cloudRecord, entityType))
+    .filter(row => !["synced", "completed", "cancelled"].includes(row.sync_status))
+    .map(row => putRecord("sync_queue", {
+      ...row,
+      sync_status: "conflict",
+      error_category: "conflict",
+      blocked_reason: "Cloud and local records both changed. Review the conflict before syncing.",
+      conflict_id: conflictId,
+      next_attempt_at: null,
+      updated_at_device: syncedAt,
+    })));
+}
+
+async function createLocalConflict({ storeName, entityType, localRecord, cloudRecord, changes, syncedAt }) {
+  const entityId = localRecord.id || localRecord.dispatchId || localRecord.pcrId || cloudRecord.id || cloudRecord.dispatchId || cloudRecord.pcrId;
+  const conflictId = `${entityType}:${entityId}`;
+  const existing = await getRecord("conflict_records", conflictId);
+  const record = {
+    id: conflictId,
+    entity_type: entityType,
+    entity_id: entityId,
+    store_name: storeName,
+    local_record: localRecord,
+    cloud_record: cloudRecord,
+    changed_fields: changes,
+    conflict_reason: "Local unsynced changes differ from the latest cloud record.",
+    conflict_status: existing?.conflict_status || "open",
+    severity: existing?.severity || conflictSeverity(changes),
+    created_at: existing?.created_at || syncedAt,
+    updated_at: syncedAt,
+  };
+  await putRecord("conflict_records", record);
+  await markMatchingOperationsConflict(entityType, cloudRecord, conflictId, syncedAt);
+  return record;
+}
+
 async function reconcileStoreWithCloud(storeName, entityType, cloudRecords, matcher) {
   if (!cloudRecords?.length) return 0;
   const localRows = await getAllRecords(storeName);
@@ -207,6 +247,15 @@ async function reconcileStoreWithCloud(storeName, entityType, cloudRecords, matc
     const matches = localRows.filter(local => matcher(local, cloudRecord));
     for (const local of matches) {
       if (local.synced_to_cloud && local.syncLabel === "Cloud synced") continue;
+      const pendingOperation = (await getAllRecords("sync_queue")).some(row =>
+        sameOperationTarget(row, cloudRecord, entityType)
+        && !["synced", "completed", "cancelled"].includes(row.sync_status)
+      );
+      const changes = pendingOperation ? changedSyncFields(local, cloudRecord) : [];
+      if (pendingOperation && hasMeaningfulSyncConflict(local, cloudRecord)) {
+        await createLocalConflict({ storeName, entityType, localRecord: local, cloudRecord, changes, syncedAt });
+        continue;
+      }
       await putRecord(storeName, {
         ...local,
         ...cloudRecord,

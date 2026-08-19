@@ -1,7 +1,7 @@
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, CheckCircle2, Clock, FilePlus2, FileText, HeartPulse, Layers3, MapPinned, Radio, ShieldCheck, TrendingDown, TrendingUp,
+  Activity, AlertTriangle, CheckCircle2, Clock, FilePlus2, FileText, HeartPulse, Layers3, MapPinned, ShieldCheck, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -10,7 +10,7 @@ import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import {
   filterIncidentsByRange, filterOptions, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
-import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRReports, listVerifiedScrapedAnalyticsIncidents } from '../services/supabase';
+import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRReports } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
@@ -28,13 +28,10 @@ const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 const submittedStatuses = new Set(['Submitted', 'Verified', 'Completed']);
-const analyticsSourceModes = [
-  { value: 'official', label: 'Official MDRRMO', icon: ShieldCheck },
-  { value: 'external', label: 'Verified External', icon: Radio },
-  { value: 'combined', label: 'Combined Intelligence', icon: Layers3 },
-];
 const analyticsPageSize = 1000;
 const analyticsRpcMissingCodes = new Set(['PGRST202', '42883']);
+const verifiedRecordStatuses = new Set(['verified', 'completed', 'admin_verified', 'approved']);
+const verifiedDisplayStatuses = new Set(['Verified', 'Completed', 'Admin Verified', 'Approved']);
 
 const timeOfDayOptions = [
   { value: 'all', label: 'All' },
@@ -164,6 +161,85 @@ function isMvcIncident(record = {}) {
 
 function isAnalyticsRpcMissing(error) {
   return analyticsRpcMissingCodes.has(error?.code) || String(error?.message || '').includes('staff_all_records_analytics');
+}
+
+function isAdminVerifiedIncident(record = {}) {
+  return verifiedRecordStatuses.has(String(record.status || '').trim().toLowerCase());
+}
+
+function isVerifiedWorkflowRecord(record = {}) {
+  return verifiedDisplayStatuses.has(String(record.status || '').trim());
+}
+
+function priorityFromPcrTriage(report = {}) {
+  const triage = String(report.triage || report.priority || '').trim().toLowerCase();
+  if (['critical', 'red', 'emergent', 'immediate'].some(value => triage.includes(value))) return 'Critical';
+  if (['urgent', 'high', 'yellow'].some(value => triage.includes(value))) return 'High';
+  if (['minor', 'low', 'green', 'non-urgent'].some(value => triage.includes(value))) return 'Low';
+  return 'Medium';
+}
+
+function pcrClassification(report = {}) {
+  const incidentNature = String(report.incidentNature || report.typeOfIncident || '').trim().toLowerCase();
+  const traumaTypes = report.traumaTypes || [];
+  const emergencyTypes = report.emergencyTypes || [];
+  const traumaText = traumaTypes.map(type => String(type).toLowerCase()).join(' ');
+
+  if (hasCrashData(report) || ['mvc', 'motor', 'vehicle', 'vehicular', 'collision', 'crash'].some(value => `${incidentNature} ${traumaText}`.includes(value))) {
+    return 'MVC';
+  }
+  if (incidentNature.includes('medical') || emergencyTypes.length) return 'MEDICAL';
+  if (incidentNature.includes('trauma') || traumaTypes.length) return 'TRAUMA';
+  return normalizeAnalyticsLabel(report.incidentNature || report.typeOfIncident || 'Other').toUpperCase();
+}
+
+function pcrBarangay(report = {}) {
+  const value = report.barangay?.name || report.barangay || report.response?.barangay?.name || report.response?.barangay;
+  return String(value || '').trim() || 'Unspecified';
+}
+
+function pcrLocationText(report = {}) {
+  return report.locationText || report.placeOfIncident || report.address || pcrBarangay(report);
+}
+
+function pcrCoordinates(report = {}) {
+  const lat = Number(report.lat ?? report.latitude);
+  const lng = Number(report.lng ?? report.lon ?? report.longitude);
+  return {
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+  };
+}
+
+function pcrReportToAnalyticsIncident(report = {}) {
+  const date = pcrAnalyticsDate(report);
+  const time = pcrIncidentTime(report);
+  const { lat, lng } = pcrCoordinates(report);
+  const classification = pcrClassification(report);
+  return {
+    ...report,
+    id: `PCR-${report.id || report.pcrId || report.responseId || report.pcrClientId}`,
+    recordSource: 'verified_pcr',
+    sourceKind: 'mdrrmo',
+    classification,
+    type: classification === 'MVC' ? 'vehicular' : classification.toLowerCase(),
+    priority: priorityFromPcrTriage(report),
+    severity: priorityFromPcrTriage(report),
+    barangay: pcrBarangay(report),
+    date,
+    time,
+    timeOfDay: getTimeOfDay(time),
+    month: date ? new Date(date).getMonth() : 0,
+    location: pcrLocationText(report),
+    locationText: pcrLocationText(report),
+    lat,
+    lng,
+    latitude: lat,
+    longitude: lng,
+    status: 'verified',
+    pcrStatus: report.status,
+    title: report.responseNumber || report.chiefComplaint || `${classification} verified PCR`,
+  };
 }
 
 async function loadAllRows(loader, params = {}) {
@@ -731,10 +807,8 @@ export default function Analytics() {
   const [range, setRange] = useState('all');
   const [customRange, setCustomRange] = useState({ start: '', end: '' });
   const [incidents, setIncidents] = useState([]);
-  const [verifiedScrapedIncidents, setVerifiedScrapedIncidents] = useState([]);
   const [dispatches, setDispatches] = useState([]);
   const [pcrReports, setPcrReports] = useState([]);
-  const [sourceMode, setSourceMode] = useState('official');
   const [spatioFilters, setSpatioFilters] = useState({
     type: 'all',
     barangay: 'all',
@@ -767,11 +841,10 @@ export default function Analytics() {
             setDispatches(allRecords.dispatches);
             setPcrReports(allRecords.pcrReports);
           } else {
-            const [incidentResult, dispatchResult, pcrResult, scrapedResult] = await Promise.allSettled([
+            const [incidentResult, dispatchResult, pcrResult] = await Promise.allSettled([
               loadAllRows(listIncidents),
               loadAllRows(listDispatchRecords),
               loadAllRows(listPCRReports),
-              listVerifiedScrapedAnalyticsIncidents({ limit: 1000 }),
             ]);
             const incidentRows = settledValue(incidentResult, []);
             const dispatchRows = settledValue(dispatchResult, []);
@@ -779,7 +852,6 @@ export default function Analytics() {
             setIncidents(incidentRows);
             setDispatches(dispatchRows);
             setPcrReports(pcrRows);
-            setVerifiedScrapedIncidents(settledValue(scrapedResult, []));
             const failed = [incidentResult, dispatchResult, pcrResult].find(result => result.status === 'rejected');
             if (isAnalyticsRpcMissing(sourceError)) {
               setError('All-record analytics is not deployed in Supabase yet. Run migration 63_staff_all_records_analytics_rpc.sql, then refresh this page.');
@@ -800,23 +872,24 @@ export default function Analytics() {
     };
   }, []);
 
-  useEffect(() => {
-    let mounted = true;
-    listVerifiedScrapedAnalyticsIncidents({ limit: 1000 })
-      .then(rows => { if (mounted) setVerifiedScrapedIncidents(rows); })
-      .catch(() => { if (mounted) setVerifiedScrapedIncidents([]); });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  const officialVerifiedPcrReports = useMemo(() => pcrReports.filter(isVerifiedWorkflowRecord), [pcrReports]);
+  const verifiedPcrResponseIds = useMemo(() => new Set(
+    officialVerifiedPcrReports.map(report => report.responseId).filter(Boolean),
+  ), [officialVerifiedPcrReports]);
+  const officialVerifiedIncidents = useMemo(() => incidents.filter(isAdminVerifiedIncident), [incidents]);
+  const officialVerifiedDispatches = useMemo(
+    () => dispatches.filter(dispatch => isVerifiedWorkflowRecord(dispatch) || verifiedPcrResponseIds.has(dispatch.responseId)),
+    [dispatches, verifiedPcrResponseIds],
+  );
+  const officialAnalyticsIncidents = useMemo(() => {
+    const verifiedIncidentResponseIds = new Set(officialVerifiedIncidents.map(incident => incident.responseId).filter(Boolean));
+    const pcrDerivedIncidents = officialVerifiedPcrReports
+      .filter(report => !report.responseId || !verifiedIncidentResponseIds.has(report.responseId))
+      .map(pcrReportToAnalyticsIncident);
+    return [...officialVerifiedIncidents, ...pcrDerivedIncidents];
+  }, [officialVerifiedIncidents, officialVerifiedPcrReports]);
 
-  const sourceIncidents = useMemo(() => {
-    if (sourceMode === 'external') return verifiedScrapedIncidents;
-    if (sourceMode === 'combined') return [...incidents, ...verifiedScrapedIncidents];
-    return incidents;
-  }, [incidents, sourceMode, verifiedScrapedIncidents]);
-
-  const analyticsIncidents = useMemo(() => sourceIncidents.map(incident => ({
+  const analyticsIncidents = useMemo(() => officialAnalyticsIncidents.map(incident => ({
     ...incident,
     classification: String(incident.classification || incident.type || 'Other').toUpperCase(),
     priority: incident.priority ? `${incident.priority[0].toUpperCase()}${incident.priority.slice(1)}` : 'Medium',
@@ -825,8 +898,8 @@ export default function Analytics() {
     time: incident.time,
     timeOfDay: getTimeOfDay(incident.time),
     month: incident.date ? new Date(incident.date).getMonth() : 0,
-  })), [sourceIncidents]);
-  const analyticsPcrReports = useMemo(() => pcrReports.map(report => ({
+  })), [officialAnalyticsIncidents]);
+  const analyticsPcrReports = useMemo(() => officialVerifiedPcrReports.map(report => ({
     ...report,
     date: pcrAnalyticsDate(report),
     time: pcrIncidentTime(report),
@@ -834,14 +907,14 @@ export default function Analytics() {
     triage: normalizeAnalyticsLabel(report.triage, 'No Triage Recorded'),
     status: normalizeAnalyticsLabel(report.status, 'Draft'),
     receivingFacility: normalizeAnalyticsLabel(report.hospitalName || report.endorsedTo || report.receivedBy, 'No Facility Recorded'),
-  })), [pcrReports]);
+  })), [officialVerifiedPcrReports]);
   const filteredPcrReports = useMemo(() => filterIncidentsByRange(analyticsPcrReports, range, customRange), [analyticsPcrReports, range, customRange]);
-  const analyticsDispatches = useMemo(() => dispatches.map(dispatch => ({
+  const analyticsDispatches = useMemo(() => officialVerifiedDispatches.map(dispatch => ({
     ...dispatch,
     date: dispatch.dateOfIncident || String(dispatch.createdAt || '').slice(0, 10),
     time: dispatch.timeOfIncident || dispatch.dispatchedTime || '',
     month: dispatch.dateOfIncident ? new Date(dispatch.dateOfIncident).getMonth() : 0,
-  })), [dispatches]);
+  })), [officialVerifiedDispatches]);
   const filteredDispatches = useMemo(() => filterIncidentsByRange(analyticsDispatches, range, customRange), [analyticsDispatches, range, customRange]);
 
   const filtered = useMemo(() => filterIncidentsByRange(analyticsIncidents, range, customRange), [analyticsIncidents, range, customRange]);
@@ -1019,26 +1092,10 @@ export default function Analytics() {
               Analytics Command Center
             </h1>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-              Incident trends, barangay hotspots, medical classifications, and MVC risk indicators for official operations and verified Isabela external intelligence.
+              Incident trends, barangay hotspots, medical classifications, and MVC risk indicators based only on official admin-verified MDRRMO records.
             </p>
           </div>
           <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap gap-2">
-              {analyticsSourceModes.map(({ value, label, icon }) => (
-                <button
-                  key={value}
-                  onClick={() => setSourceMode(value)}
-                  className={`inline-flex h-9 items-center gap-2 rounded-lg border px-3 text-xs font-semibold transition-colors ${
-                    sourceMode === value
-                      ? 'border-blue-500/50 bg-blue-600 text-white'
-                      : 'border-border bg-secondary text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {createElement(icon, { className: 'h-4 w-4' })}
-                  {label}
-                </button>
-              ))}
-            </div>
             <DateFilters range={range} setRange={setRange} customRange={customRange} setCustomRange={setCustomRange} />
           </div>
         </div>
@@ -1047,9 +1104,7 @@ export default function Analytics() {
       {error && <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
       <SectionNav />
       <div className="mb-5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-xs text-blue-200">
-        Analytics source: <strong>{analyticsSourceModes.find(item => item.value === sourceMode)?.label}</strong>.
-        {sourceMode === 'external' && ' Dispatch and PCR workflow metrics remain official MDRRMO data; verified external records cover Isabela accident intelligence only.'}
-        {sourceMode === 'combined' && ' Verified scraped accidents across Isabela are combined with official records for accident intelligence. Unverified scraper records are excluded.'}
+        Analytics source: <strong>Official MDRRMO records only</strong>. Scraped or external records are excluded; incident, dispatch, and PCR analytics use admin-verified official data.
       </div>
       <DataCoverageBar incidents={filtered} dispatches={filteredDispatches} pcrReports={filteredPcrReports} mvcRecords={mvcAccidentRecords} mvcWithCrashDetails={mvcWithCrashDetails} />
 
@@ -1062,7 +1117,7 @@ export default function Analytics() {
       )}
 
       <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Total Incidents" value={filtered.length} helper={`${sourceMode === 'official' ? 'Official' : sourceMode === 'external' ? 'Verified external' : 'Combined'} filtered records`} icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
+        <MetricCard label="Total Incidents" value={filtered.length} helper="Official admin-verified records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
         <MetricCard label="Avg Response Time" value={formatMinutes(avgResponseMinutes)} helper={`${filteredDispatches.length} dispatch records`} icon={Clock} tone="border-blue-500/20 bg-blue-500/10 text-blue-400" />
         <MetricCard label="Submitted PCRs" value={submittedPcrCount} helper={`${filteredPcrReports.length} PCR records in range`} icon={CheckCircle2} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
         <MetricCard label="Medical / Trauma" value={`${medicalCount}/${traumaCount}`} helper={`Avg scene ${formatMinutes(avgSceneMinutes)}`} icon={HeartPulse} tone="border-orange-500/20 bg-orange-500/10 text-orange-400" />
