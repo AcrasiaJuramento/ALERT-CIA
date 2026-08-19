@@ -67,6 +67,24 @@ db.exec(`
     WHERE response_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_local_records_entity_updated
     ON local_records(entity_type, updated_at DESC);
+
+  CREATE TABLE IF NOT EXISTS local_sync_operations (
+    operation_id TEXT PRIMARY KEY,
+    idempotency_key TEXT UNIQUE,
+    entity_type TEXT,
+    entity_id TEXT,
+    operation_type TEXT,
+    destination TEXT,
+    sync_status TEXT NOT NULL DEFAULT 'accepted',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    payload_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_local_sync_operations_entity
+    ON local_sync_operations(entity_type, entity_id);
+  CREATE INDEX IF NOT EXISTS idx_local_sync_operations_status
+    ON local_sync_operations(sync_status, updated_at DESC);
 `);
 
 function parseRecord(row) {
@@ -319,6 +337,53 @@ function broadcastEvent(type, payload = {}) {
   }
 }
 
+function persistSyncOperation(operation = {}) {
+  const operationId = operation.operation_id || operation.id;
+  if (!operationId) throw new Error("Sync operation_id is required.");
+  const now = new Date().toISOString();
+  const existing = db.prepare(`
+    SELECT operation_id, sync_status
+    FROM local_sync_operations
+    WHERE operation_id = ?
+       OR (idempotency_key IS NOT NULL AND idempotency_key = ?)
+    LIMIT 1
+  `).get(operationId, operation.idempotency_key || null);
+  const normalized = {
+    ...operation,
+    operation_id: existing?.operation_id || operationId,
+    sync_status: existing?.sync_status || "accepted",
+    received_at_local: now,
+  };
+  db.prepare(`
+    INSERT INTO local_sync_operations (
+      operation_id, idempotency_key, entity_type, entity_id, operation_type,
+      destination, sync_status, attempts, created_at, updated_at, payload_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(operation_id) DO UPDATE SET
+      idempotency_key = coalesce(excluded.idempotency_key, local_sync_operations.idempotency_key),
+      entity_type = excluded.entity_type,
+      entity_id = excluded.entity_id,
+      operation_type = excluded.operation_type,
+      destination = excluded.destination,
+      updated_at = excluded.updated_at,
+      payload_json = excluded.payload_json
+  `).run(
+    normalized.operation_id,
+    normalized.idempotency_key || null,
+    normalized.entity_type || null,
+    normalized.entity_id || null,
+    normalized.operation_type || null,
+    normalized.destination || null,
+    normalized.sync_status,
+    Number(normalized.attempts || 0),
+    operation.created_at_device || now,
+    now,
+    JSON.stringify(normalized),
+  );
+  return normalized;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = "";
@@ -427,6 +492,7 @@ const server = http.createServer(async (req, res) => {
         databasePath,
         dispatches: dispatches.size,
         pcrReports: pcrReports.size,
+        stagedSyncOperations: db.prepare("SELECT count(*) AS count FROM local_sync_operations WHERE sync_status = 'accepted'").get().count,
         eventClients: eventClients.size,
       });
       return;
@@ -717,7 +783,19 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && url.pathname === "/api/sync/operations") {
-      json(res, 202, { accepted: true, operationId: (await readBody(req)).operation_id || null });
+      const operation = persistSyncOperation(await readBody(req));
+      broadcastEvent("sync_operation_staged", {
+        operationId: operation.operation_id,
+        entityType: operation.entity_type,
+        entityId: operation.entity_id,
+      });
+      json(res, 202, {
+        accepted: true,
+        operationId: operation.operation_id,
+        idempotencyKey: operation.idempotency_key || null,
+        status: operation.sync_status,
+        stagedAt: operation.received_at_local,
+      });
       return;
     }
 

@@ -3,12 +3,14 @@ import { cloudClient } from "../api/cloud-client";
 import { localServerClient } from "../api/local-server-client";
 import { getConnectionState, checkConnection } from "../network/connection-manager";
 import { SYNC_ENTITY_ORDER } from "../types/hybrid";
+import { selectDeliveryTarget } from "./sync-routing";
 
 let running = false;
 let lastAutoSyncAt = 0;
 const SYNC_CONCURRENCY = 2;
 const AUTO_SYNC_MIN_INTERVAL_MS = 20000;
 const AUTO_SYNC_INTERVAL_MS = 120000;
+const WAIT_FOR_CONNECTION_MS = 30000;
 
 function dependencyRank(operation) {
   const index = SYNC_ENTITY_ORDER.indexOf(operation.entity_type);
@@ -207,8 +209,34 @@ async function coalesceOperations(operations) {
   return operations.filter(operation => !cancelledIds.has(operation.id));
 }
 
-async function deliver(operation, mode) {
-  if (operation.destination === "local" || mode === "local") {
+function successState(operation, target, syncedAt) {
+  const syncedToCloud = target === "cloud" ? true : Boolean(operation.synced_to_cloud);
+  const syncedToLocal = target === "local" ? true : Boolean(operation.synced_to_local);
+  const complete = operation.destination === "local" ? syncedToLocal : syncedToCloud;
+  return {
+    sync_status: complete ? "synced" : "partially_synced",
+    synced_to_cloud: syncedToCloud,
+    synced_to_local: syncedToLocal,
+    cloud_synced_at: target === "cloud" ? syncedAt : operation.cloud_synced_at,
+    local_synced_at: target === "local" ? syncedAt : operation.local_synced_at,
+    next_attempt_at: complete ? null : new Date(Date.now() + WAIT_FOR_CONNECTION_MS).toISOString(),
+    blocked_reason: complete ? null : "Staged locally. Waiting for cloud connection to complete synchronization.",
+  };
+}
+
+async function markOperationWaiting(operation, route) {
+  await putRecord("sync_queue", {
+    ...operation,
+    sync_status: "partially_synced",
+    error_category: "connection",
+    blocked_reason: route.reason,
+    next_attempt_at: new Date(Date.now() + WAIT_FOR_CONNECTION_MS).toISOString(),
+    updated_at_device: new Date().toISOString(),
+  });
+}
+
+async function deliver(operation, target) {
+  if (target === "local") {
     try {
       return await localServerClient.syncOperation(operation);
     } catch (error) {
@@ -342,20 +370,37 @@ export async function runSyncNow({ includeNotDue = false } = {}) {
           return;
         }
 
+        const route = selectDeliveryTarget(operation, connection);
+        if (route.complete) {
+          const syncedAt = new Date().toISOString();
+          await putRecord("sync_queue", {
+            ...operation,
+            sync_status: "synced",
+            next_attempt_at: null,
+            blocked_reason: null,
+            updated_at_device: syncedAt,
+            last_sync_error: null,
+          });
+          summary.synced += 1;
+          return;
+        }
+        if (!route.target) {
+          await markOperationWaiting(operation, route);
+          summary.waiting += 1;
+          return;
+        }
+
         const attempts = Number(operation.attempts || 0) + 1;
         await putRecord("sync_queue", { ...operation, attempts, sync_status: "uploading", updated_at_device: new Date().toISOString() });
-        const result = await deliver(operation, connection.mode);
+        const result = await deliver(operation, route.target);
         await recordIdMappings(operation, result);
         const syncedAt = new Date().toISOString();
-        await markLocalRecordSynced(operation, result, syncedAt);
+        if (route.target === "cloud") await markLocalRecordSynced(operation, result, syncedAt);
+        const syncedState = successState(operation, route.target, syncedAt);
         await putRecord("sync_queue", {
           ...operation,
           attempts,
-          sync_status: connection.mode === "cloud" ? "synced" : "partially_synced",
-          synced_to_cloud: connection.mode === "cloud" ? true : operation.synced_to_cloud,
-          synced_to_local: connection.mode === "local" ? true : operation.synced_to_local,
-          cloud_synced_at: connection.mode === "cloud" ? syncedAt : operation.cloud_synced_at,
-          local_synced_at: connection.mode === "local" ? syncedAt : operation.local_synced_at,
+          ...syncedState,
           updated_at_device: syncedAt,
           last_sync_error: null,
         });
@@ -363,11 +408,11 @@ export async function runSyncNow({ includeNotDue = false } = {}) {
         const syncedOperation = {
           ...operation,
           attempts,
-          sync_status: connection.mode === "cloud" ? "synced" : "partially_synced",
+          ...syncedState,
         };
         if (operationIndex >= 0) allOperations[operationIndex] = syncedOperation;
         else allOperations.push(syncedOperation);
-        await logSyncEvent({ operation_id: operation.operation_id, status: "synced", destination: connection.mode });
+        await logSyncEvent({ operation_id: operation.operation_id, status: syncedState.sync_status, destination: route.target });
         summary.synced += 1;
       } catch (error) {
         const errorMessage = formatSyncError(error);
