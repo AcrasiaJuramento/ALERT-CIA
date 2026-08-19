@@ -1,36 +1,144 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ALERT-CIA Scraper
 
-## Getting Started
+The ALERT-CIA scraper is a separate Next.js service that discovers, extracts, classifies, geocodes, deduplicates, and stores accident-related public news reports for review inside the main ALERT-CIA system.
 
-First, run the development server:
+It is used by the **News Review** and **Location Matching** workflows in the main application. Scraped records are not automatically treated as verified emergency incidents; authorized users must review and confirm them.
+
+## Current Source Coverage
+
+The active source configuration is defined in `src/constants/sources.js`.
+
+Current enabled source:
+
+- Bombo Radyo Cauayan
+- Search terms include accident-related variants such as `accidents`, `aksidente`, `banggan`, `salpukan`, and `crash`
+
+## Main Features
+
+- Public source discovery with pagination/search support.
+- Article link extraction and article content extraction.
+- Vehicular/incident classification.
+- Location extraction and geocoding using Isabela/Echague-aware logic.
+- Landmark registry support for locally verified location matching.
+- Deduplication to reduce repeated reports.
+- Source health/progress tracking.
+- Supabase persistence for review in the main app.
+- CORS handling for use by the ALERT-CIA frontend.
+- User-authorized manual runs and secret-authorized cron update runs.
+
+## Tech Stack
+
+- Next.js
+- React
+- Supabase JS client
+- Cheerio
+- Node.js runtime for scraper API routes
+
+## Project Structure
+
+- `src/app/api/run/route.js` - run scraper endpoint
+- `src/app/api/status/route.js` - scraper status endpoint
+- `src/app/api/incidents/route.js` - scraped incidents endpoint
+- `src/app/api/vehicular/route.js` - vehicular accident endpoint
+- `src/app/api/analyze/route.js` - article analysis endpoint
+- `src/lib/runScraper.js` - scraper orchestration
+- `src/scrapers/scraper.js` - scraping implementation
+- `src/lib/discoverLinks.js` - source discovery
+- `src/lib/extractArticle.js` - article extraction
+- `src/lib/classify.js` - incident classification
+- `src/lib/geocode.js` - geocoding
+- `src/lib/deduplication.js` - duplicate detection
+- `src/lib/scraperStore.js` - persistence layer
+- `src/constants/sources.js` - source configuration
+- `src/cache` - local scraper cache files
+
+## Environment Variables
+
+Configure the scraper with Supabase and authorization values:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_project_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+CRON_SECRET=your_cron_secret
+SCRAPER_CRON_SECRET=optional_alternate_cron_secret
+ALERT_CIA_ALLOWED_ORIGINS=optional_comma_separated_origins
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Only server-side code should use the Supabase service-role key.
 
-You can start editing the page by modifying `app/page.js`. The page auto-updates as you edit the file.
+## Development
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+From the repository root:
 
-## Learn More
+```bash
+cmd /c npm run dev:scraper
+```
 
-To learn more about Next.js, take a look at the following resources:
+Or from this folder:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+cmd /c npm run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Default local URL:
 
-## Deploy on Vercel
+```text
+http://127.0.0.1:3000
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## API Routes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Run scraper manually:
+
+```text
+POST /api/run
+```
+
+Run scraper through authorized cron:
+
+```text
+GET /api/run
+Authorization: Bearer <CRON_SECRET>
+```
+
+Supported query parameters:
+
+- `type=all|incidents|vehicular`
+- `mode=update|full`
+- `source=bombo`
+- `pageFrom=1`
+- `pageTo=3`
+
+Other routes:
+
+- `GET /api/status`
+- `GET /api/incidents`
+- `GET /api/vehicular`
+- `POST /api/analyze`
+
+## Build and Lint
+
+```bash
+cmd /c npm run build
+cmd /c npm run lint
+```
+
+If `.next` output causes noise in parent-project linting, remove generated build output before running root-level lint.
+
+## Review Workflow
+
+1. Scraper discovers possible accident-related articles.
+2. Article content is extracted and classified.
+3. Location data is geocoded using known Isabela/Echague locations and landmark mappings.
+4. Duplicates are reduced through URL/content/location matching.
+5. Records are stored for review.
+6. Authorized ALERT-CIA users review, correct, approve, reject, or map locations in the main app.
+
+## Limitations
+
+- Public websites may change structure and break extraction.
+- Reports may be delayed, duplicated, incomplete, or inaccurate.
+- Location extraction depends on article wording and available landmark data.
+- Scraped records require human review before becoming official operational records.
+- Current enabled source coverage is narrow and should be expanded only with reliable, permitted sources.
