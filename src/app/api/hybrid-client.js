@@ -251,6 +251,7 @@ export const hybridRepository = {
   cacheCompletedDispatch: indexedDbRepository.cacheCompletedDispatch,
   getLocalPcrReport: indexedDbRepository.getLocalPcrReport,
   getLocalPcrReports: indexedDbRepository.getLocalPcrReports,
+  getLocalDispatchRecord: indexedDbRepository.getLocalDispatchRecord,
   getLocalDispatchRecords: indexedDbRepository.getLocalDispatchRecords,
   getPendingOperations: indexedDbRepository.getPendingOperations,
   reconcileCloudDispatches: indexedDbRepository.reconcileCloudDispatches,

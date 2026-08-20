@@ -307,20 +307,35 @@ export default function PCRModule() {
       try {
         if (editId) {
           const localMode = getConnectionState().mode === "local";
-          const record = localMode
+          let record = localMode
             ? await localServerClient.getPcr(editId)
-            : await getPCRReport(editId).catch(() => hybridRepository.getLocalPcrReport(editId));
+            : await getPCRReport(editId).catch(() => null);
+          if (!record) record = await hybridRepository.getLocalPcrReport(editId).catch(() => null);
+          if (!record && getConnectionState().localOnline) {
+            record = await localServerClient.getPcr(editId).catch(() => null);
+          }
           if (mounted && record) {
             setForm(synchronizePCR({ ...createPCR(), ...record, timeline: record.timeline || {} }));
             if (record.dispatchId) {
-              setLinkedDispatch(localMode
-                ? await localServerClient.getDispatch(record.dispatchId)
-                : await getDispatchRecord(record.dispatchId).catch(() => null));
+              let dispatch = localMode
+                ? await localServerClient.getDispatch(record.dispatchId).catch(() => null)
+                : await getDispatchRecord(record.dispatchId).catch(() => null);
+              if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(record.dispatchId).catch(() => null);
+              if (!dispatch && getConnectionState().localOnline) {
+                dispatch = await localServerClient.getDispatch(record.dispatchId).catch(() => null);
+              }
+              setLinkedDispatch(dispatch);
             }
           }
         } else if (dispatchId) {
           const localMode = getConnectionState().mode === "local";
-          const dispatch = localMode ? await localServerClient.getDispatch(dispatchId) : await getDispatchRecord(dispatchId);
+          let dispatch = localMode
+            ? await localServerClient.getDispatch(dispatchId)
+            : await getDispatchRecord(dispatchId).catch(() => null);
+          if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(dispatchId).catch(() => null);
+          if (!dispatch && getConnectionState().localOnline) {
+            dispatch = await localServerClient.getDispatch(dispatchId).catch(() => null);
+          }
           if (mounted && dispatch) {
             const pcrShell = dispatch.responseId
               ? localMode

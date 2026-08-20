@@ -6,9 +6,12 @@ import {
   FilePlus2, FileText, Filter, Search, X, XCircle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { PERMISSIONS } from '../access/rbac';
+import { PERMISSIONS, ROLES } from '../access/rbac';
+import { hybridRepository } from '../api/hybrid-client';
+import { localServerClient } from '../api/local-server-client';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
+import { getConnectionState, subscribeConnection } from '../network/connection-manager';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
 import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, listPCRReports, listPCRWorkflowHistory, returnNormalPCRToFieldOfficer, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase, unarchivePCRReport } from '../services/supabase';
@@ -25,9 +28,36 @@ const PCR_WORKFLOW_FILTERS = ['All', 'Draft', 'In Progress', 'Pending Dispatcher
 const displayStatus = record => record?.status || 'Draft';
 const isEditable = record => ['Draft', 'In Progress', 'Returned to Field Officer', 'Returned for Correction'].includes(displayStatus(record));
 const isReviewable = record => displayStatus(record) === 'Submitted';
+const isCloudBacked = record => record?.recordSource === 'cloud' || record?.synced_to_cloud;
 const isReverseWorkflowRecord = record => record?.workflowOrigin === 'reverse'
   || (!record?.dispatchId && ['Pending Dispatcher Review', 'Accepted by Dispatcher'].includes(displayStatus(record)));
-const logicalRecordKey = record => record?.pcrId || record?.id || record?.responseId || record?.responseNumber;
+const logicalRecordKey = record => record?.responseId || record?.response_id || record?.pcrId || record?.id || record?.responseNumber;
+
+function localRecord(record, recordSource) {
+  const cloudSynced = Boolean(
+    record.synced_to_cloud
+    || String(record.syncLabel || record.sync_status || '').toLowerCase().includes('cloud synced'),
+  );
+  return {
+    ...record,
+    recordSource: cloudSynced ? 'cloud' : recordSource,
+    syncLabel: cloudSynced ? 'Cloud synced' : record.syncLabel || 'Pending cloud synchronization',
+  };
+}
+
+function mergePCRRecords(localServerRecords, localDeviceRecords, cloudRecords) {
+  const byRecord = new Map();
+  [
+    ...localServerRecords.map(record => localRecord(record, 'local_server')),
+    ...localDeviceRecords.map(record => localRecord(record, 'device')),
+    ...cloudRecords.map(record => ({ ...record, recordSource: 'cloud', syncLabel: 'Cloud synced' })),
+  ].forEach(record => {
+    const key = logicalRecordKey(record);
+    if (!key) return;
+    byRecord.set(key, { ...(byRecord.get(key) || {}), ...record });
+  });
+  return [...byRecord.values()].sort((a, b) => String(b.updatedAt || b.updated_at || b.createdAt || '').localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || '')));
+}
 
 export default function PCRReports() {
   const { can, user } = useAuth();
@@ -53,29 +83,65 @@ export default function PCRReports() {
   const loadReports = useCallback(async () => {
     setLoading(true);
     try {
-      const cloudRecords = await listPCRReports({
-        limit: pageSize,
-        from: (page - 1) * pageSize,
-        status: status === 'All' ? undefined : status,
-        archive: archiveView.toLowerCase(),
-      });
-      setRecords(cloudRecords.map(record => ({ ...record, recordSource: 'cloud', syncLabel: 'Cloud synced' })));
-      setTotalCount(cloudRecords.totalCount ?? cloudRecords.length);
-      setStatusCounts(await getPCRDashboardCounts());
+      const connection = getConnectionState();
+      let cloudError = null;
+      const [cloudRecords, localDeviceRecords, localServerRecords] = await Promise.all([
+        connection.cloudOnline
+          ? listPCRReports({
+            limit: pageSize,
+            from: (page - 1) * pageSize,
+            status: status === 'All' ? undefined : status,
+            archive: archiveView.toLowerCase(),
+          }).catch(error => {
+            cloudError = error;
+            return [];
+          })
+          : Promise.resolve([]),
+        hybridRepository.getLocalPcrReports().catch(() => []),
+        connection.localOnline ? localServerClient.listPcrReports().catch(() => []) : Promise.resolve([]),
+      ]);
+      if (cloudRecords.length) {
+        await hybridRepository.reconcileCloudPcrReports(cloudRecords).catch(() => 0);
+      }
+      const reconciledDeviceRecords = cloudRecords.length
+        ? await hybridRepository.getLocalPcrReports().catch(() => localDeviceRecords)
+        : localDeviceRecords;
+      const localDeviceKeys = new Set(reconciledDeviceRecords.map(logicalRecordKey).filter(Boolean));
+      const visibleLocalServerRecords = user?.role === ROLES.FIELD_OFFICER
+        ? localServerRecords.filter(record => localDeviceKeys.has(logicalRecordKey(record)))
+        : localServerRecords;
+      const mergedRecords = mergePCRRecords(visibleLocalServerRecords, reconciledDeviceRecords, cloudRecords);
+      setRecords(mergedRecords);
+      const cloudKeys = new Set(cloudRecords.map(logicalRecordKey).filter(Boolean));
+      const unsyncedLocalCount = mergedRecords.filter(record => record.recordSource !== 'cloud' && !cloudKeys.has(logicalRecordKey(record))).length;
+      setTotalCount((cloudRecords.totalCount ?? cloudRecords.length) + unsyncedLocalCount);
+      if (connection.cloudOnline) {
+        const counts = await getPCRDashboardCounts().catch(() => null);
+        if (counts) setStatusCounts(counts);
+      }
+      if (cloudError && !mergedRecords.length) throw cloudError;
+      if (cloudError) toast.error('Cloud PCR records are temporarily unavailable. Showing locally saved records.');
     } catch (error) {
       toast.error(error.message || 'Unable to load Patient Care Records.');
     } finally {
       setLoading(false);
     }
-  }, [archiveView, page, status]);
+  }, [archiveView, page, status, user?.role]);
 
   useEffect(() => {
     loadReports();
+    let connectionKey = `${getConnectionState().mode}:${getConnectionState().cloudOnline}:${getConnectionState().localOnline}`;
     const refresh = () => {
       clearTimeout(refreshTimer.current);
       refreshTimer.current = window.setTimeout(() => loadReports(), 300);
     };
     const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    const unsubscribeConnection = subscribeConnection(next => {
+      const nextKey = `${next.mode}:${next.cloudOnline}:${next.localOnline}`;
+      if (nextKey === connectionKey) return;
+      connectionKey = nextKey;
+      refresh();
+    });
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     const channel = supabase?.channel('web-pcr-records-live').on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refresh).subscribe();
@@ -83,14 +149,16 @@ export default function PCRReports() {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       clearTimeout(refreshTimer.current);
+      unsubscribeConnection();
       if (channel) supabase.removeChannel(channel);
     };
   }, [loadReports]);
 
   const filtered = useMemo(() => records.filter(record =>
     (archiveView === 'Archived' ? record.archived : !record.archived)
+    && (status === 'All' || displayStatus(record) === status)
     && [record.responseNumber, record.patientName, record.placeOfIncident, record.hospitalName, record.respondingTeam].join(' ').toLowerCase().includes(query.toLowerCase())
-  ), [records, query, archiveView]);
+  ), [records, query, archiveView, status]);
   const pageCount = Math.max(1, Math.ceil((query ? filtered.length : totalCount) / pageSize));
   const visibleRecords = filtered;
 
@@ -234,7 +302,7 @@ export default function PCRReports() {
         {loading ? <div className="text-center py-16 text-sm text-muted-foreground">Loading Patient Care Records...</div> : <>
           <div className="overflow-x-auto"><table className="w-full text-sm">
             <thead className="bg-secondary text-muted-foreground text-xs uppercase"><tr>{['Response No.', 'Patient', 'Incident', 'Location', 'Dispatch', 'Status', 'Updated', 'Actions'].map(item => <th key={item} className="text-left px-4 py-3">{item}</th>)}</tr></thead>
-            <tbody>{visibleRecords.map(record => <tr key={record.id} onClick={() => setSelected(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
+            <tbody>{visibleRecords.map(record => <tr key={logicalRecordKey(record)} onClick={() => setSelected(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
               <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber}</td>
               <td className="px-4 py-3"><div className="font-semibold">{record.patientName || 'Unnamed patient'}</div><div className="text-xs text-muted-foreground">{record.age && `${record.age} yrs`} {record.gender}</div></td>
               <td className="px-4 py-3">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</td>
@@ -249,14 +317,14 @@ export default function PCRReports() {
                 <button onClick={() => setSelected(record)} title="View PCR" aria-label="View PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><Eye size={15} /><span className="hidden xl:inline">View</span></button>
                 {canCreate && isEditable(record) && <button onClick={() => edit(record)} title="Edit PCR" aria-label="Edit PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"><Edit3 size={15} /><span className="hidden xl:inline">Edit</span></button>}
                 <button onClick={() => doPdf(record)} title="Download PCR PDF" aria-label="Download PCR PDF" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"><Download size={15} /><span className="hidden xl:inline">PDF</span></button>
-                {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
-                {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${record.id}`)} title="Create connected Dispatch Form" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><FilePlus2 size={15} /></button>}
-                {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(record, 'approve')} title="Verify connected records" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
-                {user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
-                {canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {canCreate && (record.archived
+                {isCloudBacked(record) && user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {isCloudBacked(record) && user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {isCloudBacked(record) && user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${record.id}`)} title="Create connected Dispatch Form" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><FilePlus2 size={15} /></button>}
+                {isCloudBacked(record) && user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(record, 'approve')} title="Verify connected records" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {isCloudBacked(record) && user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {isCloudBacked(record) && canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {isCloudBacked(record) && canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {isCloudBacked(record) && canCreate && (record.archived
                   ? <button onClick={() => unarchive(record)} title="Restore" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><ArchiveRestore size={15} /></button>
                   : <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>)}
               </div></td>
@@ -276,12 +344,12 @@ export default function PCRReports() {
                 <p className="text-xs text-muted-foreground">{selected.patientName || 'Unnamed patient'}</p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
-                {user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(selected, 'accept')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
-                {user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${selected.id}`)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><FilePlus2 size={14} />Create Dispatch</button>}
-                {user?.role === 'administrator' && selected.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify Both</button>}
-                {isReverseWorkflowRecord(selected) && ((user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review') || (user?.role === 'administrator' && selected.status === 'Pending Admin Verification')) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
-                {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
-                {canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
+                {isCloudBacked(selected) && user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(selected, 'accept')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Accept</button>}
+                {isCloudBacked(selected) && user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${selected.id}`)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><FilePlus2 size={14} />Create Dispatch</button>}
+                {isCloudBacked(selected) && user?.role === 'administrator' && selected.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify Both</button>}
+                {isCloudBacked(selected) && isReverseWorkflowRecord(selected) && ((user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review') || (user?.role === 'administrator' && selected.status === 'Pending Admin Verification')) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
+                {isCloudBacked(selected) && canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
+                {isCloudBacked(selected) && canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
                 {canCreate && isEditable(selected) && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
                 <button onClick={() => doPdf(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Download size={14} />PDF</button>
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
