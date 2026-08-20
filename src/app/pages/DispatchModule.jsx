@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Save, Download, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
@@ -525,18 +525,21 @@ export default function DispatchModule({ onBack }) {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([
+    Promise.allSettled([
       listRespondingTeams(),
       listAmbulanceUnits(),
       listCrewMembers(),
     ])
-      .then(([teams, vehicles, crew]) => {
+      .then(([teamsResult, vehiclesResult, crewResult]) => {
         if (!mounted) return;
-        setTeamOptions(teams);
-        setVehicleOptions(vehicles);
-        setCrewOptions(crew);
-      })
-      .catch(error => toast.error(error.message || "Unable to load form reference data."));
+        setTeamOptions(teamsResult.status === "fulfilled" ? teamsResult.value : []);
+        setVehicleOptions(vehiclesResult.status === "fulfilled" ? vehiclesResult.value : []);
+        setCrewOptions(crewResult.status === "fulfilled" ? crewResult.value : []);
+        const failed = [teamsResult, vehiclesResult, crewResult].find(result => result.status === "rejected");
+        if (failed && getConnectionState().mode !== "local") {
+          toast.error(failed.reason?.message || "Unable to load some form reference data.");
+        }
+      });
     return () => {
       mounted = false;
     };
@@ -596,19 +599,46 @@ export default function DispatchModule({ onBack }) {
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
   const updateTeam = teamId => {
-    const team = teamOptions.find(option => option.id === teamId);
+    const team = effectiveTeamOptions.find(option => option.id === teamId);
     setForm(f => ({ ...f, respondingTeamId: teamId, team: team?.name || "" }));
   };
   const updateVehicle = vehicleId => {
-    const vehicle = vehicleOptions.find(option => option.id === vehicleId);
+    const vehicle = effectiveVehicleOptions.find(option => option.id === vehicleId);
     setForm(f => ({ ...f, vehicleId, vehicle: vehicle?.call_sign || "" }));
   };
-  const crewSelectOptions = role => crewOptions
-    .filter(member => member.role === role)
-    .filter(member => !selectedTeamId || !member.responding_team_id || member.responding_team_id === selectedTeamId)
-    .map(member => ({ value: member.name, label: member.name }));
-  const selectedTeamId = form.respondingTeamId || teamOptions.find(team => team.name === form.team)?.id || "";
-  const selectedVehicleId = form.vehicleId || vehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
+  const effectiveTeamOptions = useMemo(() => {
+    const options = [...teamOptions];
+    if (form.respondingTeamId && form.team && !options.some(team => team.id === form.respondingTeamId)) {
+      options.unshift({ id: form.respondingTeamId, name: form.team, localFallback: true });
+    }
+    return options;
+  }, [form.respondingTeamId, form.team, teamOptions]);
+  const effectiveVehicleOptions = useMemo(() => {
+    const options = [...vehicleOptions];
+    if (form.vehicleId && form.vehicle && !options.some(unit => unit.id === form.vehicleId)) {
+      options.unshift({ id: form.vehicleId, call_sign: form.vehicle, localFallback: true });
+    }
+    return options;
+  }, [form.vehicle, form.vehicleId, vehicleOptions]);
+  const selectedTeamId = form.respondingTeamId || effectiveTeamOptions.find(team => team.name === form.team)?.id || "";
+  const selectedVehicleId = form.vehicleId || effectiveVehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
+  const savedCrewByRole = {
+    driver: form.driver,
+    main_aider: form.mainAider,
+    group_leader: form.groupLeader,
+    assistant_aider: form.assistantAider,
+  };
+  const crewSelectOptions = role => {
+    const options = crewOptions
+      .filter(member => member.role === role)
+      .filter(member => !selectedTeamId || !member.responding_team_id || member.responding_team_id === selectedTeamId)
+      .map(member => ({ value: member.name, label: member.name }));
+    const savedName = savedCrewByRole[role];
+    if (savedName && !options.some(option => option.value === savedName)) {
+      options.unshift({ value: savedName, label: savedName });
+    }
+    return options;
+  };
   const reverseSourcePcrId = sourcePcrId || form.sourcePcrId || (linkedPCR?.workflowOrigin === 'reverse' ? linkedPCR.id : null);
   const isReverseWorkflow = Boolean(reverseSourcePcrId);
   const updateIncidentLocation = location => setForm(f => ({
@@ -810,8 +840,8 @@ export default function DispatchModule({ onBack }) {
                 <option value="3">3</option>
               </select>
             </Field>
-            <SelectField label="Responding Team" value={selectedTeamId} options={teamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team" />
-            <SelectField label="Vehicle" value={selectedVehicleId} options={vehicleOptions.map(unit => ({ value: unit.id, label: `${unit.call_sign}${unit.plate_number ? ` - ${unit.plate_number}` : ""}` }))} onChange={updateVehicle} placeholder="Select available ambulance" />
+            <SelectField label="Responding Team" value={selectedTeamId} options={effectiveTeamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team" />
+            <SelectField label="Vehicle" value={selectedVehicleId} options={effectiveVehicleOptions.map(unit => ({ value: unit.id, label: `${unit.call_sign}${unit.plate_number ? ` - ${unit.plate_number}` : ""}` }))} onChange={updateVehicle} placeholder="Select available ambulance" />
             <SelectField label="Driver" value={form.driver} options={crewSelectOptions("driver")} onChange={value => update("driver", value)} placeholder="Select driver" />
             <SelectField label="Main Aider" value={form.mainAider} options={crewSelectOptions("main_aider")} onChange={value => update("mainAider", value)} placeholder="Select main aider" />
             <SelectField label="Group Leader" value={form.groupLeader} options={crewSelectOptions("group_leader")} onChange={value => update("groupLeader", value)} placeholder="Select group leader" />

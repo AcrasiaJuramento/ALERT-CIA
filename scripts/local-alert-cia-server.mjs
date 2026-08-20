@@ -405,6 +405,7 @@ function readBody(req) {
 function normalizeDispatch(payload = {}) {
   const id = payload.dispatchId || payload.id || randomUUID();
   const responseId = payload.responseClientId || payload.responseId || randomUUID();
+  const respondingTeam = payload.respondingTeam || payload.team || "";
   const patients = (payload.patients?.length ? payload.patients : []).map((patient, index) => ({
     ...patient,
     id: patient.id || patient.patientClientId || randomUUID(),
@@ -416,6 +417,9 @@ function normalizeDispatch(payload = {}) {
   });
   return {
     ...payload,
+    team: respondingTeam,
+    respondingTeam,
+    respondingTeamId: payload.respondingTeamId || null,
     id,
     dispatchId: id,
     dispatchClientId: payload.dispatchClientId || id,
@@ -625,6 +629,9 @@ const server = http.createServer(async (req, res) => {
       const pcrId = pcrReports.get(dispatch.responseId)?.id || randomUUID();
       const pcr = {
         ...dispatch,
+        team: dispatch.team || dispatch.respondingTeam || "",
+        respondingTeam: dispatch.respondingTeam || dispatch.team || "",
+        respondingTeamId: dispatch.respondingTeamId || null,
         id: pcrId,
         pcrId,
         responseId: dispatch.responseId,
