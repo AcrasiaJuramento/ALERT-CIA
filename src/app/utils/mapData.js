@@ -1,11 +1,11 @@
 const ECHAGUE_BOUNDS = {
-  north: 16.765,
-  south: 16.625,
-  west: 121.57,
-  east: 121.74,
+  north: 16.761389,
+  south: 16.517025,
+  west: 121.594053,
+  east: 122.048571,
 };
 
-export const ECHAGUE_CENTER = [16.705, 121.676];
+export const ECHAGUE_CENTER = [16.70536, 121.6749455];
 export const ISABELA_CENTER = [17.125, 121.885];
 
 const ISABELA_BOUNDS = {

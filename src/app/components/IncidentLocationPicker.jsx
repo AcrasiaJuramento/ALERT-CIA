@@ -95,7 +95,7 @@ function LocationPickerDialog({
   const center = draftPin ? [draftPin.lat, draftPin.lng] : defaultCenter;
   const zoom = draftPin ? 15 : scope === 'isabela' ? 9 : 12;
   return (
-    <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 p-4">
+    <div className="fixed inset-0 z-6000 flex items-center justify-center bg-black/70 p-4">
       <div className="flex h-[min(720px,90vh)] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl">
         <div className="flex items-center justify-between border-b border-border p-3">
           <div>

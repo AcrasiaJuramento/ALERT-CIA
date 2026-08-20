@@ -13,6 +13,7 @@ export function RouteLayer({ routes = [] }) {
           color: route.color || '#2563eb',
           weight: route.weight || 5,
           opacity: route.opacity ?? 0.85,
+          dashArray: route.dashArray,
         }}
       >
         <Popup>{route.label || 'Route'}</Popup>

@@ -609,6 +609,8 @@ export function BarangayHeatmap({
   mapZoomBoost = 0.75,
   mapMinZoom = 10,
   showDetailsPanel = true,
+  compactMapClassName = 'min-h-[720px]',
+  compactDetailsClassName = 'xl:h-[720px]',
   layerVisibility = {
     boundary: true,
     incidentMarkers: true,
@@ -697,7 +699,7 @@ export function BarangayHeatmap({
       </div>
 
       <div className={`grid min-h-0 ${showDetailsPanel ? (compact ? 'xl:grid-cols-[minmax(0,1fr)_320px]' : 'xl:grid-cols-[minmax(0,1fr)_330px]') : 'grid-cols-1'}`}>
-        <div className={`relative bg-slate-100 ${compact ? 'min-h-[720px]' : 'min-h-[740px] xl:h-[calc(100vh-11rem)]'}`}>
+        <div className={`relative bg-slate-100 ${compact ? compactMapClassName : 'min-h-[740px] xl:h-[calc(100vh-11rem)]'}`}>
           <BarangayGeoJsonMap
             stats={stats}
             selectedName={selected?.name || selectedName}
@@ -710,7 +712,7 @@ export function BarangayHeatmap({
         </div>
 
         {showDetailsPanel && (
-          <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? 'xl:h-[720px]' : 'xl:h-[calc(100vh-11rem)] xl:min-h-[740px]'}`}>
+          <aside className={`flex min-h-0 flex-col overflow-y-auto border-t border-border bg-card xl:border-l xl:border-t-0 ${compact ? compactDetailsClassName : 'xl:h-[calc(100vh-11rem)] xl:min-h-[740px]'}`}>
             <PriorityBreakdown items={prioritySummary} />
             <SelectedBarangayPanel selected={selected} periodBreakdown={selectedPeriodBreakdown} range={range} />
             <RankingPanel

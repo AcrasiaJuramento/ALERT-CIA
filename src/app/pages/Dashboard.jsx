@@ -2,13 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, Ambulance, Users, CheckCircle2, Clock, TrendingUp,
-  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2, Save, X
+  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2, Save, X, Layers3
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
-import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/analyticsModule';
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
@@ -77,6 +76,13 @@ const priorityColors = {
   Low: '#22c55e',
 };
 
+const riskBadgeStyles = {
+  Critical: 'border-red-500/30 bg-red-500/10 text-red-300',
+  High: 'border-orange-500/30 bg-orange-500/10 text-orange-300',
+  Moderate: 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300',
+  Low: 'border-green-500/30 bg-green-500/10 text-green-300',
+};
+
 const ambulanceStatusStyles = {
   available: 'bg-green-500/20 text-green-400',
   busy: 'bg-blue-500/20 text-blue-400',
@@ -117,7 +123,6 @@ const AnalyticsTooltip = ({ active, payload, label }) => {
 export default function Dashboard() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const [selectedIncident, setSelectedIncident] = useState(null);
   const [rankingView, setRankingView] = useState('bar');
   const [incidents, setIncidents] = useState([]);
   const [dispatches, setDispatches] = useState([]);
@@ -241,6 +246,14 @@ export default function Dashboard() {
   const todayAnalytics = useMemo(() => filterIncidentsByRange(analyticsIncidents, 'today'), [analyticsIncidents]);
   const barangayRanking = useMemo(() => getBarangayStats(todayAnalytics).filter((item) => item.count > 0), [todayAnalytics]);
   const priorityData = useMemo(() => summarizeBy(todayAnalytics, 'priority'), [todayAnalytics]);
+  const riskRanking = useMemo(() => barangayRanking
+    .map((item) => {
+      const score = (item.critical * 4) + (item.high * 3) + (item.medium * 2) + item.low;
+      const risk = score >= 10 ? 'Critical' : score >= 6 ? 'High' : score >= 3 ? 'Moderate' : 'Low';
+      return { ...item, score, risk };
+    })
+    .sort((a, b) => b.score - a.score || b.count - a.count)
+    .slice(0, 5), [barangayRanking]);
   const dashboardStats = useMemo(() => [
     {
       label: 'Total Incidents Today',
@@ -551,181 +564,209 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        <div className="xl:col-span-2">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+        <div className="xl:col-span-7">
           <BarangayHeatmap
             incidents={todayAnalytics}
             allIncidents={analyticsIncidents}
             compact
             range="today"
+            title="Echague Barangay GIS Map"
             mapZoomBoost={0}
             mapMinZoom={8}
+            showDetailsPanel={false}
+            compactMapClassName="h-96 min-h-96"
           />
         </div>
-        <div className="space-y-5">
-          <div className="bg-card border border-border rounded-lg p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">Top Barangays by Incident Count Today</h3>
-                <p className="text-xs text-muted-foreground">Highest to lowest ranking</p>
-              </div>
-              <div className="flex rounded-lg border border-border bg-secondary/40 p-0.5">
-                <button
-                  onClick={() => setRankingView('bar')}
-                  className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'bar' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-                  title="Bar chart view"
-                >
-                  <BarChart2 className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => setRankingView('table')}
-                  className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'table' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
-                  title="Table view"
-                >
-                  <Table2 className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-            {rankingView === 'bar' ? (
-              <ResponsiveContainer width="100%" height={230}>
-                <BarChart data={barangayRanking} layout="vertical" margin={{ top: 0, right: 8, left: 22, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis type="number" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" />
-                  <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" width={78} />
-                  <Tooltip content={<AnalyticsTooltip />} />
-                  <Bar dataKey="count" name="Incidents" fill="#2563eb" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border text-muted-foreground">
-                      <th className="py-2 text-left font-medium">Barangay</th>
-                      <th className="py-2 text-right font-medium">Total</th>
-                      <th className="py-2 text-right font-medium">Share</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {barangayRanking.map((item) => (
-                      <tr key={item.name} className="border-b border-border/60">
-                        <td className="py-2 text-foreground">{item.name}</td>
-                        <td className="py-2 text-right font-semibold text-foreground">{item.count}</td>
-                        <td className="py-2 text-right text-muted-foreground">{item.percent}%</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
 
-          <div className="bg-card border border-border rounded-lg p-4">
+        <div className="grid gap-5 md:grid-cols-2 xl:col-span-5 xl:grid-cols-1">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
             <div className="mb-4">
               <h3 className="text-sm font-semibold text-foreground">Incidents by Priority</h3>
               <p className="text-xs text-muted-foreground">Critical, high, medium, and low distribution</p>
             </div>
-            <div className="grid grid-cols-[120px_1fr] gap-3">
-              <ResponsiveContainer width="100%" height={120}>
-                <PieChart>
-                  <Pie data={priorityData} dataKey="count" nameKey="name" innerRadius={34} outerRadius={55} paddingAngle={2}>
-                    {priorityData.map((entry) => <Cell key={entry.name} fill={priorityColors[entry.name]} />)}
-                  </Pie>
-                  <Tooltip content={<AnalyticsTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="space-y-2">
-                {priorityData.map((item) => (
-                  <div key={item.name}>
-                    <div className="mb-1 flex justify-between text-xs">
-                      <span className="text-muted-foreground">{item.name}</span>
-                      <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
+            {priorityData.length ? (
+              <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-3">
+                <ResponsiveContainer width="100%" height={120}>
+                  <PieChart>
+                    <Pie data={priorityData} dataKey="count" nameKey="name" innerRadius={34} outerRadius={55} paddingAngle={2}>
+                      {priorityData.map((entry) => <Cell key={entry.name} fill={priorityColors[entry.name] || '#64748b'} />)}
+                    </Pie>
+                    <Tooltip content={<AnalyticsTooltip />} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="space-y-2">
+                  {priorityData.map((item) => (
+                    <div key={item.name}>
+                      <div className="mb-1 flex justify-between text-xs">
+                        <span className="text-muted-foreground">{item.name}</span>
+                        <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                        <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: priorityColors[item.name] || '#64748b' }} />
+                      </div>
                     </div>
-                    <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                      <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: priorityColors[item.name] }} />
-                    </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
+            ) : (
+              <div className="grid h-[120px] place-items-center rounded-lg border border-dashed border-border bg-secondary/30 text-xs text-muted-foreground">
+                No priority distribution for today.
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Highest Accident Levels</h3>
+                <p className="text-xs text-muted-foreground">Weighted by priority and incident count</p>
+              </div>
+              <Layers3 className="h-4 w-4 text-blue-400" />
+            </div>
+            <div className="space-y-2.5">
+              {riskRanking.slice(0, 3).map((item, index) => (
+                <div key={item.name} className="rounded-lg border border-border bg-secondary/40 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-blue-500/10 text-[10px] font-bold text-blue-300">{index + 1}</span>
+                        <span className="truncate text-sm font-semibold text-foreground">{item.name}</span>
+                      </div>
+                      <div className="mt-1 text-[10px] text-muted-foreground">{item.count} incidents / score {item.score}</div>
+                    </div>
+                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${riskBadgeStyles[item.risk]}`}>
+                      {item.risk}
+                    </span>
+                  </div>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background">
+                    <div
+                      className="h-full rounded-full bg-blue-500"
+                      style={{ width: `${Math.min(100, Math.max(8, item.score * 8))}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+              {!riskRanking.length && (
+                <div className="rounded-lg border border-dashed border-border bg-secondary/30 px-3 py-8 text-center text-xs text-muted-foreground">
+                  No accident levels to rank today.
+                </div>
+              )}
             </div>
           </div>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card p-4 shadow-sm xl:col-span-12">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-foreground">Top Barangays by Incident Count Today</h3>
+              <p className="text-xs text-muted-foreground">Highest to lowest ranking from current incident records</p>
+            </div>
+            <div className="flex rounded-lg border border-border bg-secondary/40 p-0.5">
+              <button
+                onClick={() => setRankingView('bar')}
+                className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'bar' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                title="Bar chart view"
+              >
+                <BarChart2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setRankingView('table')}
+                className={`grid h-7 w-7 place-items-center rounded-md ${rankingView === 'table' ? 'bg-blue-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}
+                title="Table view"
+              >
+                <Table2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          {barangayRanking.length ? rankingView === 'bar' ? (
+            <ResponsiveContainer width="100%" height={290}>
+              <BarChart data={barangayRanking.slice(0, 8)} layout="vertical" margin={{ top: 0, right: 16, left: 22, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis type="number" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" />
+                <YAxis dataKey="name" type="category" tick={{ fontSize: 10, fill: 'currentColor' }} className="text-muted-foreground" width={110} />
+                <Tooltip content={<AnalyticsTooltip />} />
+                <Bar dataKey="count" name="Incidents" fill="#2563eb" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="max-h-[290px] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-border text-muted-foreground">
+                    <th className="py-2 text-left font-medium">Barangay</th>
+                    <th className="py-2 text-right font-medium">Total</th>
+                    <th className="py-2 text-right font-medium">Share</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {barangayRanking.map((item) => (
+                    <tr key={item.name} className="border-b border-border/60">
+                      <td className="py-2 text-foreground">{item.name}</td>
+                      <td className="py-2 text-right font-semibold text-foreground">{item.count}</td>
+                      <td className="py-2 text-right text-muted-foreground">{item.percent}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="grid h-[290px] place-items-center rounded-lg border border-dashed border-border bg-secondary/30 text-xs text-muted-foreground">
+              No barangay incidents recorded today.
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Main Grid: Map + Side Panel */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-        {/* Live Map */}
-        <div className="xl:col-span-2 bg-card border border-border rounded-xl overflow-hidden" style={{ height: '460px' }}>
+      {/* Operations Feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Recent Activity Feed */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-              <span className="text-sm font-semibold text-foreground">Live Incident Map</span>
+              <Bell className="w-4 h-4 text-blue-400" />
+              <span className="text-sm font-semibold text-foreground">Activity Feed</span>
             </div>
-            <button
-              onClick={() => navigate('/admin/map')}
-              className="flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300 transition-colors"
-            >
-              Full Map <ChevronRight className="w-3 h-3" />
-            </button>
+            <span className="text-[10px] text-muted-foreground px-2 py-0.5 bg-secondary rounded-full">Live</span>
           </div>
-          <LeafletIncidentMap
-            height="calc(100% - 45px)"
-            showControls={true}
-            compact={true}
-            onMarkerClick={(id) => setSelectedIncident(id)}
-            selectedIncidentId={selectedIncident || undefined}
-          />
+          <div className="max-h-80 overflow-y-auto">
+            {loading && <div className="px-4 py-8 text-center text-xs text-muted-foreground">Loading activity...</div>}
+            {!loading && error && <div className="px-4 py-8 text-center text-xs text-red-400">{error}</div>}
+            {!loading && !error && recentActivity.map((item) => (
+              <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 border-b border-border hover:bg-secondary/50 transition-all">
+                <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${activityColor[item.type]}`} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-foreground leading-tight">{item.message}</p>
+                  <span className="text-[10px] text-muted-foreground">{item.time}</span>
+                </div>
+              </div>
+            ))}
+            {!loading && !error && !recentActivity.length && <div className="px-4 py-8 text-center text-xs text-muted-foreground">No recent activity is available.</div>}
+          </div>
         </div>
 
-        {/* Side Panel */}
-        <div className="flex flex-col gap-4">
-          {/* Recent Activity Feed */}
-          <div className="flex-1 bg-card border border-border rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Bell className="w-4 h-4 text-blue-400" />
-                <span className="text-sm font-semibold text-foreground">Activity Feed</span>
-              </div>
-              <span className="text-[10px] text-muted-foreground px-2 py-0.5 bg-secondary rounded-full">Live</span>
-            </div>
-            <div className="overflow-y-auto" style={{ maxHeight: '200px' }}>
-              {loading && <div className="px-4 py-8 text-center text-xs text-muted-foreground">Loading activity...</div>}
-              {!loading && error && <div className="px-4 py-8 text-center text-xs text-red-400">{error}</div>}
-              {!loading && !error && recentActivity.map((item) => (
-                <div key={item.id} className="flex items-start gap-3 px-4 py-2.5 border-b border-border hover:bg-secondary/50 transition-all">
-                  <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${activityColor[item.type]}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-foreground leading-tight">{item.message}</p>
-                    <span className="text-[10px] text-muted-foreground">{item.time}</span>
-                  </div>
-                </div>
-              ))}
-              {!loading && !error && !recentActivity.length && <div className="px-4 py-8 text-center text-xs text-muted-foreground">No recent activity is available.</div>}
+        {/* Dispatch Quick View */}
+        <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+            <div className="flex items-center gap-2">
+              <Radio className="w-4 h-4 text-orange-400" />
+              <span className="text-sm font-semibold text-foreground">Dispatch Status</span>
             </div>
           </div>
-
-          {/* Dispatch Quick View */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Radio className="w-4 h-4 text-orange-400" />
-                <span className="text-sm font-semibold text-foreground">Dispatch Status</span>
-              </div>
-            </div>
-            <div className="p-3 space-y-2">
-              {dispatches.slice(0, 5).map(({ id, team, placeOfIncident, barangay, status }) => (
-                <div key={id} className="flex items-center justify-between px-3 py-2 bg-secondary/50 rounded-lg">
-                  <div>
-                    <div className="text-xs font-medium text-foreground">{team || 'Unassigned'}</div>
-                    <div className="text-[10px] text-muted-foreground flex items-center gap-1">
-                      <MapPin className="w-2.5 h-2.5" /> {placeOfIncident || barangay || 'No location'}
-                    </div>
+          <div className="p-3 space-y-2">
+            {dispatches.slice(0, 5).map(({ id, team, placeOfIncident, barangay, status }) => (
+              <div key={id} className="flex items-center justify-between gap-3 px-3 py-2 bg-secondary/50 rounded-lg">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-medium text-foreground">{team || 'Unassigned'}</div>
+                  <div className="flex min-w-0 items-center gap-1 text-[10px] text-muted-foreground">
+                    <MapPin className="w-2.5 h-2.5 shrink-0" />
+                    <span className="truncate">{placeOfIncident || barangay || 'No location'}</span>
                   </div>
-                  <span className="text-[10px] font-semibold text-blue-400">{status}</span>
                 </div>
-              ))}
-              {!dispatches.length && <div className="px-3 py-6 text-center text-xs text-muted-foreground">No dispatch records are available.</div>}
-            </div>
+                <span className="shrink-0 text-[10px] font-semibold text-blue-400">{status}</span>
+              </div>
+            ))}
+            {!dispatches.length && <div className="px-3 py-6 text-center text-xs text-muted-foreground">No dispatch records are available.</div>}
           </div>
         </div>
       </div>
@@ -764,9 +805,7 @@ export default function Dashboard() {
                 return (
                   <tr
                     key={incident.id}
-                    className={`border-b border-border hover:bg-secondary/30 transition-all cursor-pointer ${
-                      selectedIncident === incident.id ? 'bg-blue-500/10' : ''
-                    }`}
+                    className="border-b border-border hover:bg-secondary/30 transition-all cursor-pointer"
                     onClick={() => navigate(`/admin/incidents/${incident.id}`)}
                   >
                     <td className="px-5 py-3 font-mono text-blue-400">{incident.id}</td>

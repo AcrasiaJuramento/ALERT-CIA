@@ -3,11 +3,11 @@ export const ECHAGUE_GIS = {
   name: 'Municipality of Echague',
   province: 'Isabela',
   country: 'Philippines',
-  center: [16.7070, 121.6730],
+  center: [16.70536, 121.6749455],
   zoom: 11,
   bounds: {
-    southWest: [16.60, 121.54],
-    northEast: [16.82, 121.80],
+    southWest: [16.517025, 121.594053],
+    northEast: [16.761389, 122.048571],
   },
   barangayBoundaryServiceUrl: import.meta.env.VITE_PSA_BARANGAY_LAYER4_URL || '',
   barangayBoundaryServiceWhere: import.meta.env.VITE_PSA_BARANGAY_LAYER4_QUERY || '',
@@ -104,8 +104,8 @@ export function normalizeBarangayName(value = '') {
   return String(value)
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .toLowerCase()
-    .replace(/\((poblacion|formerly atelan)\)/g, '')
-    .replace(/brgy\.?|barangay|poblacion/g, '')
+    .replace(/\((poblacion|pob\.?|formerly atelan)\)/g, '')
+    .replace(/brgy\.?|barangay|poblacion|pob\.?/g, '')
     .replace(/[^a-z0-9]+/g, '');
 }
 

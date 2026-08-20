@@ -113,6 +113,65 @@ function riskSeverity(area = {}) {
   return 'moderate';
 }
 
+function routeRiskPriority(alert = {}) {
+  if (alert.type === 'accident-prone-area' && alert.riskLevel === 'Critical') return 6;
+  if (alert.severity === 'critical') return 5;
+  if (alert.type === 'accident-prone-area' && alert.riskLevel === 'High') return 4;
+  if (alert.severity === 'warning' || alert.severity === 'high') return 3;
+  if (alert.severity === 'moderate') return 2;
+  return 1;
+}
+
+function compareRouteAlertsForAvoidance(first, second) {
+  return routeRiskPriority(second) - routeRiskPriority(first)
+    || Number(first.distance || 0) - Number(second.distance || 0)
+    || Number(first.approach || 0) - Number(second.approach || 0);
+}
+
+function routeSafetyProfile(route, alerts = [], baseRoute = null) {
+  const criticalRiskAreas = alerts.filter(alert => alert.type === 'accident-prone-area' && alert.riskLevel === 'Critical').length;
+  const criticalAlerts = alerts.filter(alert => alert.severity === 'critical').length;
+  const highRiskAreas = alerts.filter(alert => alert.type === 'accident-prone-area' && alert.riskLevel === 'High').length;
+  const warningAlerts = alerts.filter(alert => alert.severity === 'warning' || alert.severity === 'high').length;
+  const moderateAlerts = alerts.filter(alert => alert.severity === 'moderate').length;
+  const safetyScore = alerts.reduce((total, alert) => {
+    const hierarchyPenalty = routeRiskPriority(alert) * 100;
+    const proximityPenalty = Math.max(0, 1 - Number(alert.distance || 0)) * 10;
+    const riskScorePenalty = Number(alert.riskScore || 0);
+    return total + hierarchyPenalty + proximityPenalty + riskScorePenalty;
+  }, 0);
+
+  return {
+    criticalRiskAreas,
+    criticalAlerts,
+    highRiskAreas,
+    warningAlerts,
+    moderateAlerts,
+    totalAlerts: alerts.length,
+    safetyScore: Math.round(safetyScore * 10) / 10,
+    distanceKm: route?.distanceKm || 0,
+    durationMinutes: route?.durationMinutes || 0,
+    extraDistanceKm: Math.max(0, (route?.distanceKm || 0) - (baseRoute?.distanceKm || 0)),
+    extraDurationMinutes: Math.max(0, (route?.durationMinutes || 0) - (baseRoute?.durationMinutes || 0)),
+  };
+}
+
+function compareRouteProfiles(first, second) {
+  return first.criticalRiskAreas - second.criticalRiskAreas
+    || first.criticalAlerts - second.criticalAlerts
+    || first.highRiskAreas - second.highRiskAreas
+    || first.warningAlerts - second.warningAlerts
+    || first.moderateAlerts - second.moderateAlerts
+    || first.totalAlerts - second.totalAlerts
+    || first.safetyScore - second.safetyScore
+    || first.extraDistanceKm - second.extraDistanceKm
+    || first.extraDurationMinutes - second.extraDurationMinutes;
+}
+
+function routeProfileSummary(profile = {}) {
+  return `${profile.criticalRiskAreas} critical risk area${profile.criticalRiskAreas === 1 ? '' : 's'}, ${profile.highRiskAreas} high risk area${profile.highRiskAreas === 1 ? '' : 's'}, ${profile.totalAlerts} total alert${profile.totalAlerts === 1 ? '' : 's'}`;
+}
+
 function naturalInstruction(instruction = '') {
   const text = String(instruction || '')
     .replaceAll('_', ' ')
@@ -266,6 +325,9 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, routePoi
         label: `${formatRiskLevel(area.risk_level)}: ${area.barangay}`,
         type: 'accident-prone-area',
         severity: riskSeverity(area),
+        riskLevel: area.risk_level,
+        riskScore: area.total_risk_score,
+        riskRadiusKm: riskRadiusKm(area),
         latLng,
         distance: routeDistance,
         approach,
@@ -276,22 +338,8 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, routePoi
     .filter(item => item.distance <= 0.12);
 
   return [...incidentAlerts, ...zoneAlerts, ...accidentProneAlerts]
-    .sort((first, second) => first.approach - second.approach)
+    .sort(compareRouteAlertsForAvoidance)
     .slice(0, 12);
-}
-
-function routeAlertScore(alerts = []) {
-  const severityWeight = { critical: 8, warning: 4, high: 4, moderate: 2, low: 1 };
-  return alerts.reduce((total, alert) => {
-    const proximityPenalty = Math.max(0, 1 - Number(alert.distance || 0)) * 2;
-    return total + (severityWeight[alert.severity] || 2) + proximityPenalty;
-  }, 0);
-}
-
-function isBetterSafetyRoute(candidateAlerts = [], currentAlerts = []) {
-  if (candidateAlerts.length < currentAlerts.length) return true;
-  if (candidateAlerts.length > currentAlerts.length) return false;
-  return routeAlertScore(candidateAlerts) < routeAlertScore(currentAlerts);
 }
 
 function routeDirectnessRatio(route, directDistanceKm) {
@@ -359,6 +407,7 @@ export default function PublicMap() {
   const [continuedAlertIds, setContinuedAlertIds] = useState([]);
   const [safetyRouteWaypoint, setSafetyRouteWaypoint] = useState(null);
   const [safetyRouteSourceId, setSafetyRouteSourceId] = useState('');
+  const [pendingSaferRoute, setPendingSaferRoute] = useState(null);
   const currentLocationRef = useRef(null);
   const destinationRef = useRef(null);
   const routePlanRef = useRef(null);
@@ -406,6 +455,7 @@ export default function PublicMap() {
       offRouteCountRef.current = 0;
       setRoutePlan(resolvedRoute);
       setCurrentStepIndex(0);
+      setPendingSaferRoute(null);
 
       if (automatic) {
         setStart(origin);
@@ -426,6 +476,7 @@ export default function PublicMap() {
         routePlanRef.current = directRoute;
         routeEndpointsKeyRef.current = `${origin.latLng.join(',')}>${selectedDestination.latLng.join(',')}`;
         setRoutePlan(directRoute);
+        setPendingSaferRoute(null);
         setRouteError(`${requestError.message || 'Routing service unavailable.'} Showing direct safety route.`);
       } else if (automatic) {
         setRouteError(`${requestError.message || 'Automatic rerouting is temporarily unavailable.'} Keeping the last route and continuing GPS tracking.`);
@@ -597,7 +648,7 @@ export default function PublicMap() {
     });
     const alertIds = alerts.map(a => `${a.type}:${a.id}`);
     const newAlerts = alertIds.filter(id => !lastRouteAlertIdsRef.current.includes(id));
-    if (newAlerts.length && alerts.length && !avoidancePrompt) {
+    if (newAlerts.length && alerts.length && !avoidancePrompt && !pendingSaferRoute) {
       const first = alerts.find(a => `${a.type}:${a.id}` === newAlerts[0]);
       const firstId = first ? `${first.type}:${first.id}` : '';
       if (first && first.distance <= 0.6 && firstId !== safetyRouteSourceId && !continuedAlertIds.includes(firstId)) {
@@ -605,7 +656,7 @@ export default function PublicMap() {
       }
     }
     lastRouteAlertIdsRef.current = alertIds;
-  }, [incidents, routePlan, start, destination, hazardZones, publicRiskAreas, routePoints, currentLocation, avoidancePrompt, continuedAlertIds, safetyRouteSourceId]);
+  }, [incidents, routePlan, start, destination, hazardZones, publicRiskAreas, routePoints, currentLocation, avoidancePrompt, pendingSaferRoute, continuedAlertIds, safetyRouteSourceId]);
 
   function offsetPoint(point, side, offsetMeters) {
     const offsetDegLat = offsetMeters / 111320;
@@ -638,8 +689,12 @@ export default function PublicMap() {
     const lon2 = next[1] * (Math.PI / 180);
     const heading = Math.atan2(Math.sin(lon2 - lon1) * Math.cos(lat2), Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(lon2 - lon1));
     const sideHint = Math.sign(Math.sin(heading)) || 1;
+    const baseClearanceMeters = Math.max(250, Math.ceil(Number(alert.riskRadiusKm || 0.12) * 1000) + 220);
+    const offsets = alert.type === 'accident-prone-area' && alert.riskLevel === 'Critical'
+      ? [baseClearanceMeters, baseClearanceMeters + 350, baseClearanceMeters + 700, baseClearanceMeters + 1100, baseClearanceMeters + 1600]
+      : [250, 400, 650, 900, 1200];
     const candidates = [];
-    [250, 400, 650, 900, 1200].forEach(offsetMeters => {
+    offsets.forEach(offsetMeters => {
       [sideHint, -sideHint].forEach(side => {
         candidates.push({
           label: `${offsetMeters}m side road`,
@@ -671,13 +726,24 @@ export default function PublicMap() {
     [activeIncidents, currentLocation]
   );
   const route = routePlan
-    ? [{
+    ? [
+      {
         id: 'planned-route',
         label: `${start?.label || 'Point A'} to ${destination?.label || 'Point B'}`,
         positions: routePlan.positions,
         color: routeAlerts.some(alert => alert.severity === 'critical') ? '#dc2626' : '#2563eb',
         weight: 6,
-      }]
+      },
+      pendingSaferRoute && {
+        id: 'proposed-safer-route',
+        label: pendingSaferRoute.improved ? 'Proposed safer route' : 'Proposed alternate route',
+        positions: pendingSaferRoute.route.positions,
+        color: '#16a34a',
+        weight: 5,
+        opacity: 0.78,
+        dashArray: '8 8',
+      },
+    ].filter(Boolean)
     : [];
 
   const recalculateForDestinationChange = (nextDestination) => {
@@ -723,6 +789,7 @@ export default function PublicMap() {
     }
     setSafetyRouteWaypoint(null);
     setSafetyRouteSourceId('');
+    setPendingSaferRoute(null);
     setAvoidancePrompt(null);
     setContinuedAlertIds([]);
     lastRouteAlertIdsRef.current = [];
@@ -742,6 +809,7 @@ export default function PublicMap() {
     }
     setSafetyRouteWaypoint(null);
     setSafetyRouteSourceId('');
+    setPendingSaferRoute(null);
     setAvoidancePrompt(null);
     setContinuedAlertIds([]);
     lastRouteAlertIdsRef.current = [];
@@ -758,6 +826,7 @@ export default function PublicMap() {
     setStartInput('Current GPS location');
     setSafetyRouteWaypoint(null);
     setSafetyRouteSourceId('');
+    setPendingSaferRoute(null);
     setAvoidancePrompt(null);
     setContinuedAlertIds([]);
     lastRouteAlertIdsRef.current = [];
@@ -776,8 +845,10 @@ export default function PublicMap() {
     } else {
       setDestination(point);
       setDestinationInput(label);
+      setPendingSaferRoute(null);
       recalculateForDestinationChange(point);
     }
+    if (pinMode === 'start') setPendingSaferRoute(null);
     setFocusedLocation(point);
     setPinMode(null);
     setRouteError('');
@@ -848,6 +919,7 @@ export default function PublicMap() {
     const alertId = `${avoidancePrompt.type}:${avoidancePrompt.id}`;
     setContinuedAlertIds(current => [...new Set([...current, alertId])]);
     setAvoidancePrompt(null);
+    setPendingSaferRoute(null);
     setRouteError('Continuing on the current route. Safety alerts will remain visible.');
   };
 
@@ -909,12 +981,14 @@ export default function PublicMap() {
         }
       }));
 
-      const best = [...baseAlternatives, ...detourRoutes.flat()]
-        .sort((first, second) => (
-          routeAlertScore(first.alerts) - routeAlertScore(second.alerts)
-          || first.alerts.length - second.alerts.length
-          || first.route.distanceKm - second.route.distanceKm
-        ))[0];
+      const currentProfile = routeSafetyProfile(routePlan, currentAlerts, routePlan);
+      const scoredCandidates = [...baseAlternatives, ...detourRoutes.flat()]
+        .map(candidate => ({
+          ...candidate,
+          profile: routeSafetyProfile(candidate.route, candidate.alerts, routePlan),
+        }));
+      const best = scoredCandidates
+        .sort((first, second) => compareRouteProfiles(first.profile, second.profile))[0];
 
       if (requestId !== routeRequestSequenceRef.current) return;
 
@@ -926,25 +1000,59 @@ export default function PublicMap() {
         return;
       }
 
-      const improved = isBetterSafetyRoute(best.alerts, currentAlerts);
-      setSafetyRouteWaypoint(best.waypoints || []);
-      setSafetyRouteSourceId(alertId);
+      const improved = compareRouteProfiles(best.profile, currentProfile) < 0;
       setAvoidancePrompt(null);
-      lastRouteAlertIdsRef.current = best.alerts.map(alert => `${alert.type}:${alert.id}`);
-      const saferRoute = { ...best.route, provider: improved ? 'Safer road route' : 'Best available alternate route' };
-      routePlanRef.current = saferRoute;
-      routeEndpointsKeyRef.current = `${routingStart.latLng.join(',')}>${destination.latLng.join(',')}`;
-      offRouteCountRef.current = 0;
-      setRoutePlan(saferRoute);
+      const saferRoute = {
+        ...best.route,
+        provider: improved ? 'Proposed safer route' : 'Best available alternate route',
+      };
+      setPendingSaferRoute({
+        route: saferRoute,
+        alerts: best.alerts,
+        waypoints: best.waypoints || [],
+        sourceAlertId: alertId,
+        currentProfile,
+        proposedProfile: best.profile,
+        improved,
+      });
       setRouteError(
         improved
-          ? `Safer route selected. ${best.alerts.length} safety alert${best.alerts.length === 1 ? '' : 's'} remain near this route.`
-          : `Best available alternate route selected. ${best.alerts.length} safety alert${best.alerts.length === 1 ? '' : 's'} still remain, so continue carefully.`
+          ? 'Safer route found. Review the comparison, then accept the safer route or retain the first route.'
+          : 'An alternate route was found, but it does not improve the safety hierarchy. Review it before changing routes.'
       );
-      navVoice.speak(improved ? 'Safer route selected.' : 'Best available alternate route selected. Please continue carefully.');
+      navVoice.speak(improved ? 'Safer route found. Please review before accepting.' : 'An alternate route was found, but the current route may still be best.');
     } finally {
       if (requestId === routeRequestSequenceRef.current) setRouteLoading(false);
     }
+  };
+
+  const acceptSaferRoute = () => {
+    if (!pendingSaferRoute) return;
+    const nextRoute = {
+      ...pendingSaferRoute.route,
+      provider: pendingSaferRoute.improved ? 'Safer road route' : 'Accepted alternate route',
+    };
+    setSafetyRouteWaypoint(pendingSaferRoute.waypoints || []);
+    setSafetyRouteSourceId(pendingSaferRoute.sourceAlertId || '');
+    lastRouteAlertIdsRef.current = pendingSaferRoute.alerts.map(alert => `${alert.type}:${alert.id}`);
+    routePlanRef.current = nextRoute;
+    routeEndpointsKeyRef.current = `${(currentLocationRef.current?.latLng || start?.latLng || []).join(',')}>${destination?.latLng?.join(',')}`;
+    offRouteCountRef.current = 0;
+    setRoutePlan(nextRoute);
+    setPendingSaferRoute(null);
+    setRouteError(`Safer route accepted. ${pendingSaferRoute.alerts.length} safety alert${pendingSaferRoute.alerts.length === 1 ? '' : 's'} remain near this route.`);
+    navVoice.speak('Safer route accepted.');
+  };
+
+  const retainFirstRoute = () => {
+    const sourceAlertId = pendingSaferRoute?.sourceAlertId || (avoidancePrompt ? `${avoidancePrompt.type}:${avoidancePrompt.id}` : '');
+    if (sourceAlertId) {
+      setContinuedAlertIds(current => [...new Set([...current, sourceAlertId])]);
+    }
+    setPendingSaferRoute(null);
+    setAvoidancePrompt(null);
+    setRouteError('Retained the first route. Safety alerts will remain visible for caution.');
+    navVoice.speak('First route retained. Please continue carefully.');
   };
 
   const approachingAlert = routeAlerts.find(alert => alert.approach <= 0.35);
@@ -1057,6 +1165,9 @@ export default function PublicMap() {
             avoidancePrompt={avoidancePrompt}
             onContinueRiskRoute={continueRiskRoute}
             onRequestSaferRoute={requestSaferRoute}
+            pendingSaferRoute={pendingSaferRoute}
+            onAcceptSaferRoute={acceptSaferRoute}
+            onRetainFirstRoute={retainFirstRoute}
             saferRouteActive={Boolean(safetyRouteWaypoint)}
             navigationActive={navigationActive}
             onToggleNavigation={toggleNavigation}
@@ -1149,6 +1260,9 @@ function RoutePlanner({
   avoidancePrompt,
   onContinueRiskRoute,
   onRequestSaferRoute,
+  pendingSaferRoute,
+  onAcceptSaferRoute,
+  onRetainFirstRoute,
   saferRouteActive,
   navigationActive,
   onToggleNavigation,
@@ -1257,6 +1371,44 @@ function RoutePlanner({
             </button>
             <button onClick={onRequestSaferRoute} className="rounded-lg bg-blue-600 px-3 py-2 text-[11px] font-semibold text-white hover:bg-blue-700">
               Safer route
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pendingSaferRoute && (
+        <div className="mt-3 rounded-lg border border-green-500/40 bg-green-500/10 p-3">
+          <div className="flex items-start gap-2">
+            <Route className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-bold text-foreground">
+                {pendingSaferRoute.improved ? 'Safer route available' : 'Alternate route available'}
+              </div>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                The dashed green route is scored by safety hierarchy first: critical risk areas, critical alerts, high risk areas, warning alerts, then route length and time.
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 grid gap-2 text-[11px]">
+            <div className="rounded-md border border-border bg-background/70 p-2">
+              <div className="font-semibold text-foreground">First route</div>
+              <div className="mt-0.5 text-muted-foreground">{routeProfileSummary(pendingSaferRoute.currentProfile)}</div>
+            </div>
+            <div className="rounded-md border border-green-500/30 bg-green-500/10 p-2">
+              <div className="font-semibold text-green-600 dark:text-green-300">System safer route</div>
+              <div className="mt-0.5 text-muted-foreground">
+                {routeProfileSummary(pendingSaferRoute.proposedProfile)}
+                {pendingSaferRoute.proposedProfile.extraDistanceKm > 0 && ` / +${formatDistance(pendingSaferRoute.proposedProfile.extraDistanceKm)}`}
+                {pendingSaferRoute.proposedProfile.extraDurationMinutes > 0 && ` / +${pendingSaferRoute.proposedProfile.extraDurationMinutes} min`}
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button onClick={onRetainFirstRoute} className="rounded-lg border border-border px-3 py-2 text-[11px] font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground">
+              Retain first route
+            </button>
+            <button onClick={onAcceptSaferRoute} className="rounded-lg bg-green-600 px-3 py-2 text-[11px] font-semibold text-white hover:bg-green-700">
+              Accept safer route
             </button>
           </div>
         </div>
