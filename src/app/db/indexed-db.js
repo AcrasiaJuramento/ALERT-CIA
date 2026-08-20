@@ -321,6 +321,86 @@ export async function putIdMapping({ entityType, clientId, localId, cloudId, dev
   });
 }
 
+function matchesAny(value, candidates) {
+  return value && candidates.has(value);
+}
+
+function parentMatch(payload = {}, dispatchIds, responseIds) {
+  return matchesAny(payload.dispatchId, dispatchIds)
+    || matchesAny(payload.dispatchClientId, dispatchIds)
+    || matchesAny(payload.responseId, responseIds)
+    || matchesAny(payload.responseClientId, responseIds);
+}
+
+function remapPayloadParent(payload = {}, mapping) {
+  return {
+    ...payload,
+    dispatchId: mapping.cloudDispatchId || payload.dispatchId,
+    dispatchClientId: payload.dispatchClientId || mapping.localDispatchId || mapping.dispatchClientId || payload.dispatchId,
+    responseId: mapping.cloudResponseId || payload.responseId,
+    responseClientId: payload.responseClientId || mapping.localResponseId || mapping.responseClientId || payload.responseId,
+  };
+}
+
+function remapDependencyKeys(keys = [], dispatchIds) {
+  return keys.filter(key => ![...dispatchIds].some(dispatchId => String(key).includes(`:dispatch:${dispatchId}:`)));
+}
+
+export async function remapQueuedDispatchParentIds(mapping = {}) {
+  const dispatchIds = new Set([
+    mapping.localDispatchId,
+    mapping.dispatchClientId,
+    mapping.cloudDispatchId,
+  ].filter(Boolean));
+  const responseIds = new Set([
+    mapping.localResponseId,
+    mapping.responseClientId,
+    mapping.cloudResponseId,
+  ].filter(Boolean));
+
+  if ((!dispatchIds.size && !responseIds.size) || (!mapping.cloudDispatchId && !mapping.cloudResponseId)) return 0;
+
+  const now = new Date().toISOString();
+  let updated = 0;
+
+  const pcrRows = await getAllRecords("local_pcr_reports");
+  await Promise.all(pcrRows
+    .filter(row => parentMatch(row, dispatchIds, responseIds))
+    .map(row => {
+      updated += 1;
+      return putRecord("local_pcr_reports", {
+        ...remapPayloadParent(row, mapping),
+        id: row.id,
+        pcrId: row.pcrId || row.id,
+        updated_at_device: now,
+        updatedAt: row.updatedAt || now,
+      });
+    }));
+
+  const queueRows = await getAllRecords("sync_queue");
+  await Promise.all(queueRows
+    .filter(row => row.entity_type === "pcr" && parentMatch(row.payload || {}, dispatchIds, responseIds))
+    .filter(row => !["synced", "completed", "cancelled"].includes(row.sync_status))
+    .map(row => {
+      updated += 1;
+      const dependencyKeys = remapDependencyKeys(row.dependency_keys || [], dispatchIds);
+      const wasBlockedOnParent = row.sync_status === "waiting_dependency" || row.error_category === "dependency";
+      return putRecord("sync_queue", {
+        ...row,
+        payload: remapPayloadParent(row.payload || {}, mapping),
+        dependency_keys: dependencyKeys,
+        sync_status: wasBlockedOnParent ? "pending" : row.sync_status,
+        error_category: wasBlockedOnParent ? null : row.error_category,
+        blocked_reason: wasBlockedOnParent ? null : row.blocked_reason,
+        last_sync_error: wasBlockedOnParent ? null : row.last_sync_error,
+        next_attempt_at: wasBlockedOnParent ? now : row.next_attempt_at,
+        updated_at_device: now,
+      });
+    }));
+
+  return updated;
+}
+
 export async function putDeviceSetting(key, value) {
   return putRecord("device_settings", { id: key, value, updated_at: new Date().toISOString() });
 }

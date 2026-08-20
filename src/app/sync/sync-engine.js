@@ -1,4 +1,4 @@
-import { getAllRecords, getPendingSyncOperations, logSyncEvent, putIdMapping, putRecord } from "../db/indexed-db";
+import { getAllRecords, getPendingSyncOperations, logSyncEvent, putIdMapping, putRecord, remapQueuedDispatchParentIds } from "../db/indexed-db";
 import { cloudClient } from "../api/cloud-client";
 import { localServerClient } from "../api/local-server-client";
 import { getConnectionState, checkConnection } from "../network/connection-manager";
@@ -272,24 +272,38 @@ async function recordIdMappings(operation, result) {
   const payload = operation.payload || {};
   const deviceId = operation.device_id;
   if (operation.entity_type === "dispatch") {
+    const cloudDispatchId = result.dispatchId || result.id;
+    const cloudResponseId = result.responseId || payload.responseId;
+    const localDispatchId = payload.dispatchId || payload.id;
+    const localResponseId = payload.responseId;
+    const dispatchClientId = result.dispatchClientId || payload.dispatchClientId || localDispatchId;
+    const responseClientId = result.responseClientId || payload.responseClientId || localResponseId;
     await putIdMapping({
       entityType: "dispatch",
-      clientId: payload.dispatchClientId || payload.dispatchId || payload.id,
-      localId: payload.dispatchId || payload.id,
-      cloudId: result.dispatchId || result.id,
+      clientId: dispatchClientId,
+      localId: localDispatchId,
+      cloudId: cloudDispatchId,
       deviceId,
       metadata: { responseNumber: result.responseNumber },
     });
-    if (result.responseId || payload.responseId) {
+    if (cloudResponseId || localResponseId) {
       await putIdMapping({
         entityType: "response",
-        clientId: payload.responseClientId || payload.responseId,
-        localId: payload.responseId,
-        cloudId: result.responseId || payload.responseId,
+        clientId: responseClientId,
+        localId: localResponseId,
+        cloudId: cloudResponseId,
         deviceId,
         metadata: { responseNumber: result.responseNumber },
       });
     }
+    await remapQueuedDispatchParentIds({
+      localDispatchId,
+      localResponseId,
+      cloudDispatchId,
+      cloudResponseId,
+      dispatchClientId,
+      responseClientId,
+    });
   }
   if (operation.entity_type === "pcr") {
     await putIdMapping({

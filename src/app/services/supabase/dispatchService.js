@@ -114,6 +114,20 @@ async function replaceDispatchPatients(client, dispatchFormId, patients = []) {
   if (error) throw error;
 }
 
+async function findExistingByClientId(client, tableName, clientGeneratedId) {
+  if (!clientGeneratedId) return null;
+  const { data, error } = await client
+    .from(tableName)
+    .select("id")
+    .eq("client_generated_id", clientGeneratedId)
+    .is("deleted_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id || null;
+}
+
 export async function listDispatchRecords({ status, teamId, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
@@ -173,7 +187,8 @@ export async function createDispatchRecord(form) {
 
   return runSupabaseRequest(async client => {
     const responsePayload = responsePayloadFromDispatch(form, ids);
-    if (form.responseId) responsePayload.id = form.responseId;
+    const existingResponseId = await findExistingByClientId(client, "responses", responsePayload.client_generated_id);
+    responsePayload.id = existingResponseId || form.responseId || responsePayload.id;
 
     const { data: response, error: responseError } = await client
       .from("responses")
@@ -183,7 +198,8 @@ export async function createDispatchRecord(form) {
     if (responseError) return { data: null, error: responseError };
 
     const dispatchPayload = { ...dispatchPayloadFromForm(form), response_id: response.id };
-    const dispatchId = form.dispatchId || form.id;
+    const existingDispatchId = await findExistingByClientId(client, "dispatch_forms", dispatchPayload.client_generated_id);
+    const dispatchId = existingDispatchId || form.dispatchId || form.id;
     if (dispatchId) dispatchPayload.id = dispatchId;
 
     const { data: dispatch, error: dispatchError } = await client
