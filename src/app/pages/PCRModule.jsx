@@ -20,6 +20,7 @@ const input = "w-full px-3 py-2 bg-input-background border border-border rounded
 const emergencyTypes = ["Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
 const traumaTypes = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Assault", "Animal Bite", "Motor Vehicle Crash"];
 const PIN_REQUIRED_MESSAGE = "Please pin the exact incident location inside Echague before saving this report.";
+const PCR_REFERENCE_CACHE_KEY = "alert-cia:pcr-reference-options:v1";
 const medicalHistory = ["None", "Heart Disease", "Hypertension", "Seizure", "COPD", "Diabetes Mellitus", "Asthma", "Stroke"];
 const MONTH_OPTIONS = [
   ["01", "Jan"], ["02", "Feb"], ["03", "Mar"], ["04", "Apr"], ["05", "May"], ["06", "Jun"],
@@ -53,6 +54,29 @@ function CheckGroup({ options, value = [], onChange, columns = 3 }) {
 function RadioButtons({ options, value, onChange }) { return <div className="flex flex-wrap gap-2">{options.map(option => <button type="button" key={option} onClick={() => onChange(option)} className={`px-3 py-2 rounded-lg border text-xs font-semibold ${value === option ? "bg-blue-600 border-blue-600 text-white" : "border-border text-muted-foreground"}`}>{option}</button>)}</div>; }
 function SelectField({ label, value, options, onChange, placeholder = "Select" }) {
   return <Field label={label}><select className={input} value={value || ""} onChange={event => onChange(event.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>;
+}
+function OfflineSelectField({ label, value, options, onChange, placeholder, manualValue, onManualChange, manualPlaceholder, manualExample, allowManual = true }) {
+  if (!allowManual) return <SelectField label={label} value={value} options={options} onChange={onChange} placeholder={placeholder}/>;
+  return <Field label={label}><div className="space-y-1.5"><select className={input} value={value || ""} onChange={event => onChange(event.target.value)}><option value="">{placeholder || "Select"}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select><input className={`${input} text-xs`} value={manualValue || ""} onChange={event => onManualChange(event.target.value)} placeholder={manualPlaceholder || `Or enter ${label.toLowerCase()} manually`} />{manualExample ? <p className="px-1 text-[10px] text-muted-foreground">Example format: {manualExample}</p> : null}</div></Field>;
+}
+function readPcrReferenceCache() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(PCR_REFERENCE_CACHE_KEY) || "{}");
+    return {
+      teams: Array.isArray(parsed.teams) ? parsed.teams : [],
+      vehicles: Array.isArray(parsed.vehicles) ? parsed.vehicles : [],
+      crew: Array.isArray(parsed.crew) ? parsed.crew : [],
+    };
+  } catch {
+    return { teams: [], vehicles: [], crew: [] };
+  }
+}
+function writePcrReferenceCache(value) {
+  try {
+    localStorage.setItem(PCR_REFERENCE_CACHE_KEY, JSON.stringify({ ...value, savedAt: new Date().toISOString() }));
+  } catch {
+    // The form still works when browser storage is unavailable.
+  }
 }
 function formatCurrentTime() {
   const now = new Date();
@@ -278,17 +302,24 @@ function DetailedPCRReview({ record, onClose }) {
 
 export default function PCRModule() {
   const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const editId = params.get("edit") || sessionStorage.getItem(PCR_EDIT_KEY); const dispatchId = params.get("dispatch"); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState(""); const [savingStatus, setSavingStatus] = useState("");
-  const [teamOptions, setTeamOptions] = useState([]);
-  const [vehicleOptions, setVehicleOptions] = useState([]);
-  const [crewOptions, setCrewOptions] = useState([]);
+  const [teamOptions, setTeamOptions] = useState(() => readPcrReferenceCache().teams);
+  const [vehicleOptions, setVehicleOptions] = useState(() => readPcrReferenceCache().vehicles);
+  const [crewOptions, setCrewOptions] = useState(() => readPcrReferenceCache().crew);
   useEffect(() => {
     let mounted = true;
     Promise.allSettled([listRespondingTeams(), listAmbulanceUnits(), listCrewMembers()])
       .then(([teamsResult, vehiclesResult, crewResult]) => {
         if (!mounted) return;
-        setTeamOptions(teamsResult.status === "fulfilled" ? teamsResult.value : []);
-        setVehicleOptions(vehiclesResult.status === "fulfilled" ? vehiclesResult.value : []);
-        setCrewOptions(crewResult.status === "fulfilled" ? crewResult.value : []);
+        const cached = readPcrReferenceCache();
+        const next = {
+          teams: teamsResult.status === "fulfilled" ? teamsResult.value : cached.teams,
+          vehicles: vehiclesResult.status === "fulfilled" ? vehiclesResult.value : cached.vehicles,
+          crew: crewResult.status === "fulfilled" ? crewResult.value : cached.crew,
+        };
+        setTeamOptions(next.teams);
+        setVehicleOptions(next.vehicles);
+        setCrewOptions(next.crew);
+        if ([teamsResult, vehiclesResult, crewResult].some(result => result.status === "fulfilled")) writePcrReferenceCache(next);
         const failed = [teamsResult, vehiclesResult, crewResult].find(result => result.status === "rejected");
         if (failed && getConnectionState().mode !== "local") {
           toast.error(failed.reason?.message || "Unable to load some form reference data.");
@@ -377,6 +408,8 @@ export default function PCRModule() {
     const vehicle = effectiveVehicleOptions.find(option => option.id === vehicleId);
     setForm(f => synchronizePCR({ ...f, vehicleId, vehicle: vehicle?.call_sign || "" }));
   };
+  const updateTeamManually = value => setForm(f => synchronizePCR({ ...f, respondingTeamId: "", respondingTeam: value, team: value }));
+  const updateVehicleManually = value => setForm(f => synchronizePCR({ ...f, vehicleId: "", vehicle: value }));
   const teamName = form.respondingTeam || form.team || "";
   const effectiveTeamOptions = useMemo(() => {
     const options = [...teamOptions];
@@ -394,6 +427,7 @@ export default function PCRModule() {
   }, [form.vehicle, form.vehicleId, vehicleOptions]);
   const selectedTeamId = form.respondingTeamId || effectiveTeamOptions.find(team => team.name === teamName)?.id || "";
   const selectedVehicleId = form.vehicleId || effectiveVehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
+  const isStandalonePCR = !dispatchId && !linkedDispatch && !form.dispatchId;
   const savedCrewByRole = {
     driver: form.driver,
     main_aider: form.mainAider,
@@ -411,6 +445,10 @@ export default function PCRModule() {
     }
     return options;
   };
+  const crewHasListedOption = (role, name) => Boolean(name) && crewOptions
+    .filter(member => member.role === role)
+    .filter(member => !selectedTeamId || !member.responding_team_id || member.responding_team_id === selectedTeamId)
+    .some(member => member.name === name);
   const updateAge = value => setForm(f => {
     const yearHints = possibleBirthYears(value);
     const birthdateParts = splitBirthdate(f.birthday);
@@ -581,7 +619,7 @@ export default function PCRModule() {
     <div className="space-y-4">
       <FloatingTimelinePrompt item={activeTimelinePrompt} onChange={updateTimeline} />
       {step === 0 && <>
-        <Section title="Response and Unit Details"><div className="grid md:grid-cols-3 gap-3"><Field label="Response No."><input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly/></Field><SelectField label="Responding Team" value={selectedTeamId} options={effectiveTeamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team"/><SelectField label="Vehicle" value={selectedVehicleId} options={effectiveVehicleOptions.map(unit => ({ value: unit.id, label: `${unit.call_sign}${unit.plate_number ? ` - ${unit.plate_number}` : ""}` }))} onChange={updateVehicle} placeholder="Select available ambulance"/><SelectField label="Driver" value={form.driver} options={crewSelectOptions("driver")} onChange={value=>update("driver",value)} placeholder="Select driver"/><SelectField label="Main Aider" value={form.mainAider} options={crewSelectOptions("main_aider")} onChange={value=>update("mainAider",value)} placeholder="Select main aider"/><SelectField label="Group Leader" value={form.groupLeader} options={crewSelectOptions("group_leader")} onChange={value=>update("groupLeader",value)} placeholder="Select group leader"/><SelectField label="Assistant Aider" value={form.assistantAider} options={crewSelectOptions("assistant_aider")} onChange={value=>update("assistantAider",value)} placeholder="Select assistant aider"/></div></Section>
+        <Section title="Response and Unit Details"><div className="grid md:grid-cols-3 gap-3"><Field label="Response No."><input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly/></Field><OfflineSelectField label="Responding Team" value={selectedTeamId} options={effectiveTeamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team" manualValue={selectedTeamId ? "" : teamName} onManualChange={updateTeamManually} manualExample="Alpha Run 1" allowManual={isStandalonePCR}/><OfflineSelectField label="Vehicle" value={selectedVehicleId} options={effectiveVehicleOptions.map(unit => ({ value: unit.id, label: `${unit.call_sign}${unit.plate_number ? ` - ${unit.plate_number}` : ""}` }))} onChange={updateVehicle} placeholder="Select available ambulance" manualValue={selectedVehicleId ? "" : form.vehicle} onManualChange={updateVehicleManually} manualExample="Ambulance 1 - 00214" allowManual={isStandalonePCR}/><OfflineSelectField label="Driver" value={crewHasListedOption("driver", form.driver) ? form.driver : ""} options={crewSelectOptions("driver")} onChange={value=>update("driver",value)} placeholder="Select driver" manualValue={crewHasListedOption("driver", form.driver) ? "" : form.driver} onManualChange={value=>update("driver",value)} manualExample="Juan Dela Cruz" allowManual={isStandalonePCR}/><OfflineSelectField label="Main Aider" value={crewHasListedOption("main_aider", form.mainAider) ? form.mainAider : ""} options={crewSelectOptions("main_aider")} onChange={value=>update("mainAider",value)} placeholder="Select main aider" manualValue={crewHasListedOption("main_aider", form.mainAider) ? "" : form.mainAider} onManualChange={value=>update("mainAider",value)} manualExample="Juan Dela Cruz" allowManual={isStandalonePCR}/><OfflineSelectField label="Group Leader" value={crewHasListedOption("group_leader", form.groupLeader) ? form.groupLeader : ""} options={crewSelectOptions("group_leader")} onChange={value=>update("groupLeader",value)} placeholder="Select group leader" manualValue={crewHasListedOption("group_leader", form.groupLeader) ? "" : form.groupLeader} onManualChange={value=>update("groupLeader",value)} manualExample="Juan Dela Cruz" allowManual={isStandalonePCR}/><OfflineSelectField label="Assistant Aider" value={crewHasListedOption("assistant_aider", form.assistantAider) ? form.assistantAider : ""} options={crewSelectOptions("assistant_aider")} onChange={value=>update("assistantAider",value)} placeholder="Select assistant aider" manualValue={crewHasListedOption("assistant_aider", form.assistantAider) ? "" : form.assistantAider} onManualChange={value=>update("assistantAider",value)} manualExample="Juan Dela Cruz" allowManual={isStandalonePCR}/></div></Section>
         <Section title="Patient Information"><div className="grid md:grid-cols-4 gap-3"><Field label="Patient Name" wide><input className={input} value={form.patientName} onChange={e=>update("patientName",e.target.value)}/></Field><Field label="Age"><input type="number" className={input} value={form.age} onChange={e=>updateAge(e.target.value)}/></Field><BirthdayInput form={form} update={update}/><Field label="Gender"><select className={input} value={form.gender} onChange={e=>update("gender",e.target.value)}><option value="">Select</option>{["Unknown","Male","Female","Other"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Civil Status"><select className={input} value={form.civilStatus} onChange={e=>update("civilStatus",e.target.value)}><option value="">Select</option>{["Unknown","Single","Married","Widowed","Separated"].map(x=><option key={x}>{x}</option>)}</select></Field><Field label="Address" wide><input className={input} value={form.address} onChange={e=>update("address",e.target.value)}/></Field><Field label="Contact Person"><input className={input} value={form.contactPerson} onChange={e=>update("contactPerson",e.target.value)}/></Field><Field label="Contact Number"><input className={input} value={form.contactNumber} onChange={e=>update("contactNumber",e.target.value)}/></Field></div></Section>
         <Section title="Nature and Initial Incident Details"><div className="mb-3"><RadioButtons options={["Emergency","Conduction"]} value={form.natureOfCall} onChange={v=>update("natureOfCall",v)}/></div><div className="grid md:grid-cols-4 gap-3"><Field label="Date of Incident"><input type="date" className={input} value={form.timeline?.dateOfIncident || form.dateOfIncident} onChange={e=>updateTimeline("dateOfIncident",e.target.value)}/></Field><Field label="Time of Incident"><input type="time" className={input} value={form.timeline?.timeOfIncident || form.timeOfIncident} onChange={e=>updateTimeline("timeOfIncident",e.target.value)}/></Field><Field label="Place of Incident"><input className={input} value={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={e=>setForm(f=>synchronizePCR({...f,placeOfIncident:e.target.value,locationText:e.target.value,timeline:{...(f.timeline||{}),placeOfIncident:e.target.value}}))}/></Field><Field label="Barangay"><input className={input} value={form.barangay || ""} onChange={e=>update("barangay",e.target.value)}/></Field><Field label="Dispatch Time"><input type="time" className={input} value={form.timeline?.dispatchTime || form.dispatchTime} readOnly/></Field><div className="md:col-span-4"><IncidentLocationPicker value={form} locationText={form.timeline?.placeOfIncident || form.placeOfIncident} onChange={updateIncidentLocation}/></div></div></Section>
       </>}
