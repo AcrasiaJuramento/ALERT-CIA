@@ -9,10 +9,26 @@ import { formatDateAndTime, formatLongDateTime } from '../../utils/dateFormat';
 import { locationAssessment } from '../../utils/locationAccuracy';
 
 const severityColors = {
+  black: '#111827',
+  red: '#dc2626',
+  yellow: '#eab308',
+  green: '#16a34a',
   critical: '#dc2626',
-  warning: '#f97316',
+  warning: '#dc2626',
   moderate: '#eab308',
+  low: '#16a34a',
   resolved: '#22c55e',
+};
+
+const severityLabels = {
+  black: 'Black - Very Critical',
+  red: 'Red - Critical',
+  yellow: 'Yellow - Moderate',
+  green: 'Green - Non-critical',
+  critical: 'Red - Critical',
+  warning: 'Red - Critical',
+  moderate: 'Yellow - Moderate',
+  low: 'Green - Non-critical',
 };
 
 const typeIcons = {
@@ -26,7 +42,8 @@ const typeIcons = {
 
 function MarkerGlyph({ incident }) {
   const Icon = typeIcons[incident.type] || MapPin;
-  const color = severityColors[incident.severity] || '#3b82f6';
+  const severity = String(incident.severity || '').toLowerCase();
+  const color = severityColors[severity] || '#3b82f6';
   const assessment = locationAssessment(incident);
 
   return (
@@ -63,7 +80,9 @@ function PopupContent({ incident }) {
       )}
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>
       <div className="mt-2 flex items-center gap-2 text-[11px]">
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">{incident.severity}</span>
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">
+          {severityLabels[String(incident.severity || '').toLowerCase()] || incident.severity || 'Unspecified'}
+        </span>
       </div>
       {incident.description && (
         <p className="mt-2 text-xs leading-relaxed text-slate-600">{incident.description}</p>

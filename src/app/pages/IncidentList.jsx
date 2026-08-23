@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, Filter, Plus, Eye, Edit2, Users,
-  AlertTriangle, Flame, Droplets, Car, Heart, Download
+  AlertTriangle, Flame, Droplets, Car, Heart, Download, FileText
 } from 'lucide-react';
-import { listIncidents } from '../services/supabase';
+import { getPCRReportByResponse, listIncidents } from '../services/supabase';
+import { PCRPreviewModal } from '../components/PCRPreviewModal';
 import { getIncidentStatusLabel, INCIDENT_STATUS_OPTIONS, isIncidentCompleted } from '../utils/incidentStatus';
 import { formatLongDate } from '../utils/dateFormat';
 
@@ -61,6 +62,8 @@ export default function IncidentList() {
   const [filterStatus, setFilterStatus] = useState('all');
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [pcrLoadingIncidentId, setPcrLoadingIncidentId] = useState(null);
+  const [pcrPreview, setPcrPreview] = useState(null);
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
@@ -149,6 +152,32 @@ export default function IncidentList() {
     link.download = `alert-cia-incidents-${new Date().toISOString().slice(0, 10)}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  };
+  const openLinkedPcr = async (incident) => {
+    if (!incident?.responseId) {
+      setError('This incident does not have a linked PCR response.');
+      return;
+    }
+
+    setError('');
+    setPcrLoadingIncidentId(incident.id);
+    try {
+      const linkedPcr = await getPCRReportByResponse(incident.responseId);
+      if (!linkedPcr) {
+        setError('No Patient Care Record is linked to this incident yet.');
+        return;
+      }
+      setPcrPreview(linkedPcr);
+    } catch (requestError) {
+      setError(requestError.message || 'Unable to open linked PCR.');
+    } finally {
+      setPcrLoadingIncidentId(null);
+    }
+  };
+  const editPcr = (record) => {
+    if (!record?.id) return;
+    setPcrPreview(null);
+    navigate(`/admin/pcr/new?edit=${record.id}`);
   };
 
   return (
@@ -324,6 +353,14 @@ export default function IncidentList() {
                         >
                           <Users className="w-3.5 h-3.5" />
                         </button>
+                        <button
+                          onClick={() => openLinkedPcr(incident)}
+                          disabled={pcrLoadingIncidentId === incident.id}
+                          className="p-1.5 rounded-lg text-cyan-400 hover:bg-cyan-500/10 transition-all disabled:cursor-wait disabled:opacity-60"
+                          title="Open linked PCR"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -362,6 +399,11 @@ export default function IncidentList() {
           </div>
         </div>
       </div>
+      <PCRPreviewModal
+        record={pcrPreview}
+        onClose={() => setPcrPreview(null)}
+        onEdit={editPcr}
+      />
     </div>
   );
 }

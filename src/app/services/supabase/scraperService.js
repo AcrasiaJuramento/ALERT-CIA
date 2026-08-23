@@ -145,7 +145,7 @@ function scraperRecordToApp(row = {}) {
     snippet: row.snippet || "",
     incidentType: row.incident_type || "",
     category: row.category,
-    severity: row.severity || "",
+    severity: severityToMapSeverity(row.severity || row.raw_payload?.severity, row.incident_type || row.incident_type_key || row.category, row),
     location: row.location_text || "",
     displayName: row.display_name || "",
     lat: row.latitude,
@@ -316,13 +316,54 @@ function scraperRecordToAnalyticsIncident(row = {}) {
   };
 }
 
-function severityToMapSeverity(severity, incidentType) {
+function scraperSeverityText(row = {}) {
+  return [
+    row.title,
+    row.snippet,
+    row.raw_payload?.title,
+    row.raw_payload?.snippet,
+    row.raw_payload?.body,
+    row.raw_payload?.article?.title,
+    row.raw_payload?.article?.snippet,
+    row.raw_payload?.article?.body,
+  ].filter(Boolean).join(" ");
+}
+
+function severityFromScrapedNewsText(row = {}) {
+  const text = scraperSeverityText(row);
+  const fatalityCount = Number(row.fatality_count ?? row.raw_payload?.fatality_count ?? row.raw_payload?.fatalityCount ?? 0);
+  const injuredCount = Number(row.injured_count ?? row.raw_payload?.injured_count ?? row.raw_payload?.injuredCount ?? 0);
+
+  if (
+    fatalityCount > 0 ||
+    /\b(?:nasawi|namatay|patay|pumanaw|binawian\s+ng\s+buhay|dead|died|dies|killed|fatalit(?:y|ies)|deceased)\b/i.test(text)
+  ) {
+    return "black";
+  }
+
+  if (
+    injuredCount >= 5 ||
+    /\b(?:malubha|kritikal|critical|serious(?:ly)?\s+injured|severe(?:ly)?\s+injured|grabeng\s+sugatan)\b/i.test(text)
+  ) {
+    return "red";
+  }
+
+  if (injuredCount > 0 || /\b(?:sugatan|nasugatan|injured)\b/i.test(text)) return "yellow";
+  if (/\b(?:minor\s+injur(?:y|ies)|bahagyang\s+nasugatan|walang\s+nasugatan|no\s+injur(?:y|ies))\b/i.test(text)) return "green";
+  return "";
+}
+
+function severityToMapSeverity(severity, incidentType, row = {}) {
+  const textSeverity = severityFromScrapedNewsText(row);
+  if (textSeverity) return textSeverity;
+
   const normalized = String(severity || "").toLowerCase();
-  if (["black", "red", "critical"].includes(normalized)) return "critical";
-  if (["yellow", "high", "warning"].includes(normalized)) return "warning";
-  if (["green", "low"].includes(normalized)) return "moderate";
-  if (["fire", "vehicular"].includes(incidentType)) return "warning";
-  return "moderate";
+  if (["black", "fatal", "fatality"].includes(normalized)) return "black";
+  if (["red", "critical", "high", "warning"].includes(normalized)) return "red";
+  if (["yellow", "moderate", "medium"].includes(normalized)) return "yellow";
+  if (["green", "low", "minor"].includes(normalized)) return "green";
+  if (["fire", "vehicular"].includes(incidentType)) return "yellow";
+  return "yellow";
 }
 
 function incidentTypeToMapType(record) {
@@ -408,7 +449,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     sourceLabel: row.source?.name || row.source_site || "External source",
     externalSourceUrl: row.source_url,
     type,
-    severity: severityToMapSeverity(row.severity, type),
+    severity: severityToMapSeverity(row.severity || row.raw_payload?.severity, type, row),
     barangay: mappedBarangay,
     municipality: mappedMunicipality,
     location: verifiedLocationText || row.location_text || row.display_name || row.barangay?.name || "Location from external source",

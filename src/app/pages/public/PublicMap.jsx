@@ -14,7 +14,8 @@ import { ECHAGUE_CENTER, getIncidentLatLng, getZoneLatLng, hasValidLatLng } from
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
 import {
-  calculateAccidentProneAreas,
+  calculateNewsCautionAreas,
+  calculateOfficialAccidentProneAreas,
   formatRiskLevel,
   riskStyles,
 } from '../../utils/accidentProneAreas';
@@ -37,11 +38,24 @@ const quickDestinations = [
 const ALERT_VOICE_DISTANCE_KM = 0.1;
 
 const severityTone = {
+  black: 'border-slate-300 bg-slate-950 text-white dark:border-slate-500/50 dark:bg-slate-950 dark:text-slate-100',
+  red: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
+  yellow: 'border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-300',
+  green: 'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300',
   critical: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
-  warning: 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-300',
+  warning: 'border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300',
   moderate: 'border-yellow-200 bg-yellow-50 text-yellow-700 dark:border-yellow-500/30 dark:bg-yellow-500/10 dark:text-yellow-300',
   resolved: 'border-green-200 bg-green-50 text-green-700 dark:border-green-500/30 dark:bg-green-500/10 dark:text-green-300',
 };
+
+function severityGroup(value = '') {
+  const severity = String(value || '').trim().toLowerCase();
+  if (severity === 'black') return 'black';
+  if (severity === 'red' || severity === 'critical' || severity === 'warning' || severity === 'high') return 'red';
+  if (severity === 'yellow' || severity === 'moderate') return 'yellow';
+  if (severity === 'green' || severity === 'low' || severity === 'resolved') return 'green';
+  return 'yellow';
+}
 
 function distanceKm(from, to) {
   if (!from || !to) return 0;
@@ -114,11 +128,12 @@ function riskSeverity(area = {}) {
 }
 
 function routeRiskPriority(alert = {}) {
+  if (alert.type === 'news-caution-area') return 3;
+  const severity = severityGroup(alert.severity);
   if (alert.type === 'accident-prone-area' && alert.riskLevel === 'Critical') return 6;
-  if (alert.severity === 'critical') return 5;
+  if (severity === 'black' || severity === 'red') return 5;
   if (alert.type === 'accident-prone-area' && alert.riskLevel === 'High') return 4;
-  if (alert.severity === 'warning' || alert.severity === 'high') return 3;
-  if (alert.severity === 'moderate') return 2;
+  if (severity === 'yellow') return 2;
   return 1;
 }
 
@@ -129,12 +144,13 @@ function compareRouteAlertsForAvoidance(first, second) {
 }
 
 function routeSafetyProfile(route, alerts = [], baseRoute = null) {
-  const criticalRiskAreas = alerts.filter(alert => alert.type === 'accident-prone-area' && alert.riskLevel === 'Critical').length;
-  const criticalAlerts = alerts.filter(alert => alert.severity === 'critical').length;
-  const highRiskAreas = alerts.filter(alert => alert.type === 'accident-prone-area' && alert.riskLevel === 'High').length;
-  const warningAlerts = alerts.filter(alert => alert.severity === 'warning' || alert.severity === 'high').length;
-  const moderateAlerts = alerts.filter(alert => alert.severity === 'moderate').length;
-  const safetyScore = alerts.reduce((total, alert) => {
+  const rerouteAlerts = alerts.filter(alert => alert.affectsReroute !== false);
+  const criticalRiskAreas = rerouteAlerts.filter(alert => alert.type === 'accident-prone-area' && alert.riskLevel === 'Critical').length;
+  const criticalAlerts = rerouteAlerts.filter(alert => ['black', 'red'].includes(severityGroup(alert.severity))).length;
+  const highRiskAreas = rerouteAlerts.filter(alert => alert.type === 'accident-prone-area' && alert.riskLevel === 'High').length;
+  const warningAlerts = rerouteAlerts.filter(alert => severityGroup(alert.severity) === 'yellow').length;
+  const moderateAlerts = rerouteAlerts.filter(alert => severityGroup(alert.severity) === 'green').length;
+  const safetyScore = rerouteAlerts.reduce((total, alert) => {
     const hierarchyPenalty = routeRiskPriority(alert) * 100;
     const proximityPenalty = Math.max(0, 1 - Number(alert.distance || 0)) * 10;
     const riskScorePenalty = Number(alert.riskScore || 0);
@@ -148,6 +164,7 @@ function routeSafetyProfile(route, alerts = [], baseRoute = null) {
     warningAlerts,
     moderateAlerts,
     totalAlerts: alerts.length,
+    rerouteAlerts: rerouteAlerts.length,
     safetyScore: Math.round(safetyScore * 10) / 10,
     distanceKm: route?.distanceKm || 0,
     durationMinutes: route?.durationMinutes || 0,
@@ -162,7 +179,7 @@ function compareRouteProfiles(first, second) {
     || first.highRiskAreas - second.highRiskAreas
     || first.warningAlerts - second.warningAlerts
     || first.moderateAlerts - second.moderateAlerts
-    || first.totalAlerts - second.totalAlerts
+    || first.rerouteAlerts - second.rerouteAlerts
     || first.safetyScore - second.safetyScore
     || first.extraDistanceKm - second.extraDistanceKm
     || first.extraDurationMinutes - second.extraDurationMinutes;
@@ -277,7 +294,7 @@ async function fetchRoute(start, destination) {
   return (await fetchRouteOptions(start, destination))[0];
 }
 
-function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, routePoints, currentLocation }) {
+function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, cautionAreas = [], routePoints, currentLocation }) {
   const incidentAlerts = incidents
     .map(item => {
       const latLng = getIncidentLatLng(item);
@@ -326,7 +343,9 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, routePoi
         type: 'accident-prone-area',
         severity: riskSeverity(area),
         riskLevel: area.risk_level,
-        riskScore: area.total_risk_score,
+        riskScore: area.severity_burden ?? area.total_risk_score,
+        affectsReroute: true,
+        allowSaferRoute: true,
         riskRadiusKm: riskRadiusKm(area),
         latLng,
         distance: routeDistance,
@@ -337,7 +356,33 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, routePoi
     .filter(item => item.latLng.every(Number.isFinite))
     .filter(item => item.distance <= 0.12);
 
-  return [...incidentAlerts, ...zoneAlerts, ...accidentProneAlerts]
+  const cautionAreaAlerts = cautionAreas
+    .map(area => {
+      const latLng = [Number(area.latitude), Number(area.longitude)];
+      const centerDistance = nearestPointDistanceKm(latLng, routePoints);
+      const routeDistance = Math.max(0, centerDistance - riskRadiusKm(area));
+      const approach = currentLocation ? distanceKm(currentLocation, latLng) : routeDistance;
+      const accidentCount = area.unique_incident_count ?? 0;
+      return {
+        id: area.area_id,
+        label: `News caution area: ${area.barangay}`,
+        type: 'news-caution-area',
+        severity: 'moderate',
+        riskLevel: area.risk_level,
+        riskScore: 0,
+        affectsReroute: false,
+        allowSaferRoute: false,
+        riskRadiusKm: riskRadiusKm(area),
+        latLng,
+        distance: routeDistance,
+        approach,
+        description: `${accidentCount} news-reported accident${accidentCount === 1 ? '' : 's'} near this route. Slow down and stay alert.`,
+      };
+    })
+    .filter(item => item.latLng.every(Number.isFinite))
+    .filter(item => item.distance <= 0.12);
+
+  return [...incidentAlerts, ...zoneAlerts, ...accidentProneAlerts, ...cautionAreaAlerts]
     .sort(compareRouteAlertsForAvoidance)
     .slice(0, 12);
 }
@@ -585,14 +630,18 @@ export default function PublicMap() {
 
   const activeIncidents = useMemo(() => incidents.filter(item => !isIncidentCompleted(item.status)), [incidents]);
   const publicRiskAreas = useMemo(() => {
-    const areas = calculateAccidentProneAreas(incidents, { publicOnly: true });
+    const areas = calculateOfficialAccidentProneAreas(incidents, { publicOnly: true });
     return showModerateRisk ? areas : areas.filter(area => ['High', 'Critical'].includes(area.risk_level));
+  }, [incidents, showModerateRisk]);
+  const publicCautionAreas = useMemo(() => {
+    const areas = calculateNewsCautionAreas(incidents, { publicOnly: true });
+    return showModerateRisk ? areas : areas.filter(area => area.unique_incident_count > 0);
   }, [incidents, showModerateRisk]);
   const selectedIncident = incidents.find(item => item.id === selectedIncidentId);
   const routePoints = useMemo(() => routePlan?.positions || [], [routePlan]);
   const routeAlerts = useMemo(
-    () => buildRouteAlerts({ incidents: activeIncidents, hazardZones, accidentProneAreas: publicRiskAreas, routePoints, currentLocation }),
-    [activeIncidents, currentLocation, hazardZones, publicRiskAreas, routePoints]
+    () => buildRouteAlerts({ incidents: activeIncidents, hazardZones, accidentProneAreas: publicRiskAreas, cautionAreas: publicCautionAreas, routePoints, currentLocation }),
+    [activeIncidents, currentLocation, hazardZones, publicCautionAreas, publicRiskAreas, routePoints]
   );
 
   // Announce when a route is calculated
@@ -645,6 +694,7 @@ export default function PublicMap() {
       incidents: incidents.filter(item => !isIncidentCompleted(item.status)),
       hazardZones,
       accidentProneAreas: publicRiskAreas,
+      cautionAreas: publicCautionAreas,
       routePoints,
       currentLocation,
     });
@@ -653,12 +703,12 @@ export default function PublicMap() {
     if (newAlerts.length && alerts.length && !avoidancePrompt && !pendingSaferRoute) {
       const first = alerts.find(a => `${a.type}:${a.id}` === newAlerts[0]);
       const firstId = first ? `${first.type}:${first.id}` : '';
-      if (first && first.distance <= 0.6 && firstId !== safetyRouteSourceId && !continuedAlertIds.includes(firstId)) {
+      if (first?.allowSaferRoute && first.distance <= 0.6 && firstId !== safetyRouteSourceId && !continuedAlertIds.includes(firstId)) {
         setAvoidancePrompt(first);
       }
     }
     lastRouteAlertIdsRef.current = alertIds;
-  }, [incidents, routePlan, start, destination, hazardZones, publicRiskAreas, routePoints, currentLocation, avoidancePrompt, pendingSaferRoute, continuedAlertIds, safetyRouteSourceId]);
+  }, [incidents, routePlan, start, destination, hazardZones, publicCautionAreas, publicRiskAreas, routePoints, currentLocation, avoidancePrompt, pendingSaferRoute, continuedAlertIds, safetyRouteSourceId]);
 
   function offsetPoint(point, side, offsetMeters) {
     const offsetDegLat = offsetMeters / 111320;
@@ -733,7 +783,7 @@ export default function PublicMap() {
         id: 'planned-route',
         label: `${start?.label || 'Point A'} to ${destination?.label || 'Point B'}`,
         positions: routePlan.positions,
-        color: routeAlerts.some(alert => alert.severity === 'critical') ? '#dc2626' : '#2563eb',
+        color: routeAlerts.some(alert => ['black', 'red'].includes(severityGroup(alert.severity))) ? '#dc2626' : '#2563eb',
         weight: 6,
       },
       pendingSaferRoute && {
@@ -955,6 +1005,7 @@ export default function PublicMap() {
               incidents: activeIncidents,
               hazardZones,
               accidentProneAreas: publicRiskAreas,
+              cautionAreas: publicCautionAreas,
               routePoints: route.positions,
               currentLocation,
             }),
@@ -974,6 +1025,7 @@ export default function PublicMap() {
                 incidents: activeIncidents,
                 hazardZones,
                 accidentProneAreas: publicRiskAreas,
+                cautionAreas: publicCautionAreas,
                 routePoints: route.positions,
                 currentLocation,
               }),
@@ -1069,6 +1121,7 @@ export default function PublicMap() {
             advisoryMarkers={advisories}
             hazardZones={hazardZones}
             accidentProneAreas={publicRiskAreas}
+            cautionAreas={publicCautionAreas}
             publicSafeRiskPopups
             routes={route}
             plannerPoints={{
@@ -1141,7 +1194,7 @@ export default function PublicMap() {
               <Car className="h-4 w-4 text-blue-500" />
               <h2 className="text-sm font-bold text-foreground">Route Guidance</h2>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {publicRiskAreas.length} accident-prone areas / {hazardZones.length} hazard zones</p>
+            <p className="mt-1 text-xs text-muted-foreground">{activeIncidents.length} public incident alerts / {publicRiskAreas.length} accident-prone areas / {publicCautionAreas.length} news caution areas / {hazardZones.length} hazard zones</p>
             {error && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-500">{error}</div>}
           </div>
 
@@ -1178,14 +1231,14 @@ export default function PublicMap() {
           />
 
           <div className="grid grid-cols-3 gap-2 border-b border-border p-4">
-            <Metric label="Critical" value={routeAlerts.filter(item => item.severity === 'critical').length} />
+            <Metric label="Critical" value={routeAlerts.filter(item => ['black', 'red'].includes(severityGroup(item.severity))).length} />
             <Metric label="Route Alerts" value={routeAlerts.length} />
             <Metric label="Steps" value={routePlan?.steps?.length || 0} />
           </div>
 
           <Panel title="Active Route Alerts">
             {advisories.map(advisory => (
-              <div key={`advisory-${advisory.id}`} className={`rounded-lg border p-3 ${severityTone[advisory.severity] || severityTone.warning}`}>
+              <div key={`advisory-${advisory.id}`} className={`rounded-lg border p-3 ${severityTone[severityGroup(advisory.severity)] || severityTone.yellow}`}>
                 <div className="flex items-center gap-2">
                   <Megaphone className="h-3.5 w-3.5" />
                   <span className="text-xs font-bold">{advisory.title}</span>
@@ -1194,7 +1247,7 @@ export default function PublicMap() {
               </div>
             ))}
             {routeAlerts.map(alert => (
-              <div key={`${alert.type}-${alert.id}`} className={`rounded-lg border p-3 ${severityTone[alert.severity] || severityTone.moderate}`}>
+              <div key={`${alert.type}-${alert.id}`} className={`rounded-lg border p-3 ${severityTone[severityGroup(alert.severity)] || severityTone.yellow}`}>
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-bold">{alert.label}</span>
                   <span className="text-[10px]">{formatDistance(alert.distance)} off route</span>
@@ -1418,7 +1471,7 @@ function RoutePlanner({
 
       <div className="mt-4 rounded-lg border border-border bg-background/60 p-3">
         <div className="flex items-start gap-3">
-          <ShieldAlert className={`mt-0.5 h-5 w-5 ${routeAlerts.some(alert => alert.severity === 'critical') ? 'text-red-500' : 'text-blue-500'}`} />
+          <ShieldAlert className={`mt-0.5 h-5 w-5 ${routeAlerts.some(alert => ['black', 'red'].includes(severityGroup(alert.severity))) ? 'text-red-500' : 'text-blue-500'}`} />
           <div className="min-w-0 flex-1">
             <div className="text-xs font-bold text-foreground">
               {routePlan ? `${routePlan.provider}: ${formatDistance(routePlan.distanceKm)}` : selectedIncident?.title || 'Plan a safe route'}

@@ -2,18 +2,19 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
-  RefreshCw, ChevronRight, ChevronDown, Zap, Clock, Database, FileText, Radio,
-  MapPin, Wrench, X, ExternalLink, ChevronUp
+  RefreshCw, ChevronRight, ChevronDown, Clock, Database, FileText, Radio,
+  MapPin, X, ExternalLink, ChevronUp, Trash2
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { listAdvisories, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, supabase } from '../services/supabase';
+import { listAdvisories, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, rejectScraperRecord, supabase } from '../services/supabase';
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea, isWithinIsabelaMapArea } from '../utils/mapData';
 import { formatDateAndTime } from '../utils/dateFormat';
 import { ISABELA_MUNICIPALITIES } from '../data/isabelaMunicipalities';
 import {
-  calculateAccidentProneAreas,
+  calculateNewsCautionAreas,
+  calculateOfficialAccidentProneAreas,
   riskStyles,
 } from '../utils/accidentProneAreas';
 
@@ -23,8 +24,12 @@ function SafeIcon({ icon: Icon, fallback: Fallback = AlertTriangle, className = 
 }
 
 const severityBadge = {
+  black: 'bg-slate-950 text-slate-100 border border-slate-500/60',
+  red: 'bg-red-600/20 text-red-400 border border-red-500/30',
+  yellow: 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30',
+  green: 'bg-green-600/20 text-green-400 border border-green-500/30',
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
-  warning: 'bg-orange-600/20 text-orange-400 border border-orange-500/30',
+  warning: 'bg-red-600/20 text-red-400 border border-red-500/30',
   moderate: 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30',
   resolved: 'bg-green-600/20 text-green-400 border border-green-500/30',
 };
@@ -35,6 +40,36 @@ const statusColors = {
   transporting: 'text-purple-400',
   completed: 'text-green-400',
 };
+
+function severityKey(value = '') {
+  return String(value || '').trim().toLowerCase();
+}
+
+function severityLabel(value = '') {
+  const key = severityKey(value);
+  if (key === 'black') return 'BLACK';
+  if (key === 'red' || key === 'critical') return 'RED';
+  if (key === 'yellow' || key === 'moderate') return 'YELLOW';
+  if (key === 'warning') return 'RED';
+  if (key === 'green' || key === 'low' || key === 'resolved') return 'GREEN';
+  return String(value || 'YELLOW').toUpperCase();
+}
+
+function severityBorderClass(value = '') {
+  const key = severityKey(value);
+  if (key === 'black') return 'border-slate-500/70';
+  if (key === 'red' || key === 'critical' || key === 'warning') return 'border-red-500/50';
+  if (key === 'green' || key === 'low' || key === 'resolved') return 'border-green-500/50';
+  return 'border-yellow-500/50';
+}
+
+function severityDotClass(value = '') {
+  const key = severityKey(value);
+  if (key === 'black') return { bg: 'bg-slate-950 ring-slate-500/30', text: 'text-slate-300' };
+  if (key === 'red' || key === 'critical' || key === 'warning') return { bg: 'bg-red-500/20', text: 'text-red-400' };
+  if (key === 'green' || key === 'low' || key === 'resolved') return { bg: 'bg-green-500/20', text: 'text-green-400' };
+  return { bg: 'bg-yellow-500/20', text: 'text-yellow-400' };
+}
 
 const typeIcons = {
   vehicular: Car,
@@ -52,7 +87,11 @@ const sourceFilters = [
 ];
 
 const accuracyLegend = [
-  { label: 'Verified / Exact', color: '#dc2626', icon: Shield },
+  { label: 'Black - Very Critical / Fatal', color: '#111827', icon: AlertTriangle },
+  { label: 'Red - Critical', color: '#dc2626', icon: Shield },
+  { label: 'Yellow - Moderate', color: '#eab308', icon: Car },
+  { label: 'Green - Non-critical', color: '#16a34a', icon: Heart },
+  { label: 'Verified / Exact Location', color: '#2563eb', icon: Shield },
   { label: 'Landmark Matched', color: '#2563eb', icon: MapPin },
   { label: 'Road-level (Medium)', color: '#f97316', icon: Car },
   { label: 'Barangay-level (Low)', color: '#eab308', icon: MapPin },
@@ -92,9 +131,13 @@ function isPromotableScrapedRecord(record = {}) {
   return getSourceGroup(record) === 'scraper' && record.recordId && (!record.relatedIncidentId || record.sourceKind !== 'promoted_scraped');
 }
 
+function isRemovableScrapedMapRecord(record = {}) {
+  return getSourceGroup(record) === 'scraper' && record.recordId && record.sourceKind !== 'promoted_scraped';
+}
+
 function riskBadgeClass(level = '') {
   if (level === 'Critical') return 'bg-red-600 text-white';
-  if (level === 'High') return 'bg-orange-500 text-white';
+  if (level === 'High') return 'bg-red-500 text-white';
   if (level === 'Moderate') return 'bg-amber-500 text-slate-950';
   return 'bg-green-500 text-white';
 }
@@ -133,7 +176,6 @@ export default function MapMonitoring() {
   const requestedRecordId = searchParams.get('record');
 
   const [selectedIncident, setSelectedIncident] = useState(null);
-  const [activeLayer, setActiveLayer] = useState(null);
   const [activeSource, setActiveSource] = useState('all');
   const [mapScope, setMapScope] = useState('isabela');
   const [selectedMunicipality, setSelectedMunicipality] = useState('all');
@@ -141,7 +183,6 @@ export default function MapMonitoring() {
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1024);
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
-  const [mapLayerMenuOpen, setMapLayerMenuOpen] = useState(false);
   const [selectedAccidentProneAreaId, setSelectedAccidentProneAreaId] = useState(null);
   const [mobileRiskNavOpen, setMobileRiskNavOpen] = useState(false);
   const [legendOpen, setLegendOpen] = useState(false);
@@ -152,6 +193,7 @@ export default function MapMonitoring() {
     unverifiedScraped: false,
     advisories: false,
     accidentProneAreas: true,
+    cautionAreas: true,
     criticalZones: true,
     heatmap: true,
     barangayBoundaries: true,
@@ -163,6 +205,7 @@ export default function MapMonitoring() {
   const [mapError, setMapError] = useState('');
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const [linkingRecordId, setLinkingRecordId] = useState(null);
+  const [removingRecordId, setRemovingRecordId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const scraperRefreshing = scraperJob.running;
@@ -292,6 +335,24 @@ export default function MapMonitoring() {
     }
   };
 
+  const removeScrapedMapPin = async (record) => {
+    if (!isRemovableScrapedMapRecord(record)) return;
+    const confirmed = window.confirm('Remove this scraped news pin from the map and mark it as not accident related?');
+    if (!confirmed) return;
+
+    setMapError('');
+    setRemovingRecordId(record.recordId);
+    try {
+      await rejectScraperRecord(record.recordId, 'Removed from admin map: not accident related.');
+      setScrapedIncidents(current => current.filter(item => item.recordId !== record.recordId));
+      setSelectedIncident(null);
+    } catch (error) {
+      setMapError(error.message || 'Unable to remove this scraped map pin.');
+    } finally {
+      setRemovingRecordId(null);
+    }
+  };
+
   const riskFilters = useMemo(() => ({
     ...DEFAULT_RISK_FILTERS,
     municipality: mapScope === 'isabela' ? selectedMunicipality : 'all',
@@ -307,8 +368,7 @@ export default function MapMonitoring() {
       .filter(hasValidLatLng)
       .filter(item => {
         if (mapScope === 'echague') return isWithinEchagueMapArea(item);
-        if (getSourceGroup(item) === 'scraper') return isWithinIsabelaMapArea(item);
-        return isWithinEchagueMapArea(item);
+        return isWithinIsabelaMapArea(item);
       })
       .filter(item => mapScope !== 'isabela' || selectedMunicipality === 'all' || getRecordMunicipality(item) === selectedMunicipality)
       .filter(item => activeSource === 'all' || getSourceGroup(item) === activeSource)
@@ -325,15 +385,26 @@ export default function MapMonitoring() {
       .filter(hasValidLatLng)
       .filter(item => {
         if (mapScope === 'echague') return isWithinEchagueMapArea(item);
-        if (getSourceGroup(item) === 'scraper') return isWithinIsabelaMapArea(item);
-        return isWithinEchagueMapArea(item);
+        return isWithinIsabelaMapArea(item);
       })
       .filter(item => mapScope !== 'isabela' || selectedMunicipality === 'all' || getRecordMunicipality(item) === selectedMunicipality)
       .filter(item => getSourceGroup(item) !== 'scraper' || item.sourceKind !== 'scraped'),
     [allMapRecords, mapScope, selectedMunicipality]
   );
+  const officialComputedAreas = useMemo(
+    () => calculateOfficialAccidentProneAreas(riskSourceRecords, {
+      publicOnly: false,
+      filters: riskFilters,
+      groupBy: 'barangay',
+    }),
+    [riskFilters, riskSourceRecords]
+  );
   const accidentProneAreas = useMemo(
-    () => calculateAccidentProneAreas(riskSourceRecords, {
+    () => officialComputedAreas.filter(area => ['High', 'Critical'].includes(area.risk_level)),
+    [officialComputedAreas]
+  );
+  const cautionAreas = useMemo(
+    () => calculateNewsCautionAreas(riskSourceRecords, {
       publicOnly: false,
       filters: riskFilters,
       groupBy: 'barangay',
@@ -341,11 +412,12 @@ export default function MapMonitoring() {
     [riskFilters, riskSourceRecords]
   );
   const topAccidentProneAreas = accidentProneAreas.slice(0, 5);
-  const selectedAccidentProneArea = accidentProneAreas.find(area => area.area_id === selectedAccidentProneAreaId);
+  const selectedAccidentProneArea = [...accidentProneAreas, ...cautionAreas].find(area => area.area_id === selectedAccidentProneAreaId);
   const focusedRiskArea = useMemo(() => selectedAccidentProneArea ? ({
     latLng: [Number(selectedAccidentProneArea.latitude), Number(selectedAccidentProneArea.longitude)],
   }) : null, [selectedAccidentProneArea]);
-  const highRiskAreas = accidentProneAreas.filter(area => ['High', 'Critical'].includes(area.risk_level));
+  const highRiskAreas = accidentProneAreas;
+  const highCautionAreas = cautionAreas.filter(area => ['High', 'Critical'].includes(area.risk_level));
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
   const selectedInc = mapIncidents.find(i => i.id === selectedIncident);
   const recentIncidents = useMemo(
@@ -379,6 +451,7 @@ export default function MapMonitoring() {
   const layerOptions = [
     { key: 'incidents', label: 'Incident Markers' },
     { key: 'accidentProneAreas', label: 'Accident-Prone Areas' },
+    { key: 'cautionAreas', label: 'News Caution Areas' },
     { key: 'criticalZones', label: 'Critical Zones' },
     { key: 'verifiedScraped', label: 'News Reports' },
     { key: 'unverifiedScraped', label: 'Unverified News Reports' },
@@ -386,13 +459,6 @@ export default function MapMonitoring() {
     { key: 'advisories', label: 'Public Advisories' },
     { key: 'barangayBoundaries', label: 'Barangay Boundaries' },
   ];
-  const mapLayerOptions = [
-    { key: 'hotspot', label: 'Accident Hotspot', color: 'text-red-400', icon: AlertTriangle },
-    { key: 'flood', label: 'Flood Risk Area', color: 'text-blue-400', icon: Droplets },
-    { key: 'traffic', label: 'Traffic Hazard', color: 'text-yellow-400', icon: Car },
-    { key: 'heatmap', label: 'Heatmap', color: 'text-orange-400', icon: Zap },
-  ];
-
   return (
     <div className="relative flex overflow-hidden bg-[#03111f] text-slate-100" style={{ height: 'calc(100vh - 64px)', fontFamily: 'Inter, sans-serif' }}>
       {/* Full-screen Map */}
@@ -402,6 +468,7 @@ export default function MapMonitoring() {
           incidents={mapIncidents}
           advisoryMarkers={advisories}
           accidentProneAreas={accidentProneAreas}
+          cautionAreas={cautionAreas}
           showControls={true}
           showHeatmap={true}
           showDangerZones={false}
@@ -441,7 +508,6 @@ export default function MapMonitoring() {
                 onClick={() => {
                   setLayerMenuOpen(current => !current);
                   setScrapeMenuOpen(false);
-                  setMapLayerMenuOpen(false);
                 }}
                 aria-expanded={layerMenuOpen}
                 className="flex h-10 items-center gap-2.5 rounded-lg border border-slate-800 bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl hover:bg-slate-100"
@@ -497,42 +563,9 @@ export default function MapMonitoring() {
             <div className="relative">
               <button
                 onClick={() => {
-                  setMapLayerMenuOpen(current => !current);
-                  setLayerMenuOpen(false);
-                  setScrapeMenuOpen(false);
-                }}
-                aria-expanded={mapLayerMenuOpen}
-                className="flex h-10 items-center gap-2.5 rounded-lg border border-slate-800 bg-white/95 px-4 text-xs font-bold text-slate-800 shadow-xl hover:bg-slate-100"
-              >
-                <Wrench className="h-4 w-4 text-slate-700" />
-                Tools
-                <ChevronDown className={`h-4 w-4 transition-transform ${mapLayerMenuOpen ? 'rotate-180' : ''}`} />
-              </button>
-              {mapLayerMenuOpen && (
-                <div className="absolute left-0 top-12 w-56 rounded-xl border border-slate-800 bg-[#071726]/95 p-3 text-slate-100 shadow-2xl">
-                  {mapLayerOptions.map(({ key, label, color, icon: Icon }) => (
-                    <button
-                      key={key}
-                      onClick={() => setActiveLayer(activeLayer === key ? null : key)}
-                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left text-xs font-bold transition-all ${
-                        activeLayer === key ? 'bg-blue-600/20 text-white' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-100'
-                      }`}
-                    >
-                      <SafeIcon icon={Icon} className={`h-4 w-4 ${color}`} />
-                      <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="relative">
-              <button
-                onClick={() => {
                   setReloadKey(key => key + 1);
                   setScrapeMenuOpen(false);
                   setLayerMenuOpen(false);
-                  setMapLayerMenuOpen(false);
                 }}
                 className="flex h-10 items-center gap-2.5 rounded-lg border border-blue-500/50 bg-white/95 px-3 text-xs font-bold text-slate-800 shadow-xl hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-75"
               >
@@ -547,7 +580,6 @@ export default function MapMonitoring() {
                 onClick={() => {
                   setScrapeMenuOpen(current => !current);
                   setLayerMenuOpen(false);
-                  setMapLayerMenuOpen(false);
                 }}
                 disabled={scraperRefreshing}
                 aria-expanded={scrapeMenuOpen}
@@ -594,7 +626,7 @@ export default function MapMonitoring() {
           <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2.5">
             <div>
               <div className="text-xs font-bold">Accident-Prone Areas</div>
-              <div className="text-[10px] text-slate-500">Top 5 by operational risk</div>
+              <div className="text-[10px] text-slate-500">Top 5 by recommended risk</div>
             </div>
             <AlertTriangle className="h-4 w-4 text-orange-400" />
           </div>
@@ -611,12 +643,12 @@ export default function MapMonitoring() {
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-slate-800 text-[10px] font-bold text-slate-300">{index + 1}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[11px] font-bold text-slate-100">{area.barangay}</span>
-                  <span className="block text-[10px] text-slate-400">{area.total_incidents ?? area.records?.length ?? 0} incidents</span>
+                  <span className="block text-[10px] text-slate-400">{area.unique_incident_count ?? area.total_incidents ?? area.records?.length ?? 0} accidents / danger score {area.severity_burden ?? 0}</span>
                 </span>
                 <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${riskBadgeClass(area.risk_level)}`}>{area.risk_level}</span>
               </button>
             ))}
-            {!topAccidentProneAreas.length && <div className="px-2 py-4 text-center text-[11px] text-slate-500">No scored areas available.</div>}
+            {!topAccidentProneAreas.length && <div className="px-2 py-4 text-center text-[11px] text-slate-500">No official high or critical accident-prone areas available.</div>}
           </div>
           <button
             onClick={() => { setIntelTab('risk'); setIncidentPanelOpen(true); }}
@@ -656,7 +688,7 @@ export default function MapMonitoring() {
                   className="flex min-h-12 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 >
                   <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-slate-800 text-[10px] font-bold">{index + 1}</span>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold">{area.barangay}</span><span className="text-[10px] text-slate-500">{area.total_incidents ?? area.records?.length ?? 0} incidents</span></span>
+                  <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-bold">{area.barangay}</span><span className="text-[10px] text-slate-500">{area.unique_incident_count ?? area.total_incidents ?? 0} accidents / danger score {area.severity_burden ?? 0}</span></span>
                   <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${riskBadgeClass(area.risk_level)}`}>{area.risk_level}</span>
                 </button>
               ))}
@@ -762,17 +794,13 @@ export default function MapMonitoring() {
         {/* Selected Incident Popup */}
         {selectedInc && (
           <div className="absolute bottom-20 left-1/2 z-[1001] w-[min(420px,calc(100vw-1.5rem))] -translate-x-1/2">
-            <div className={`rounded-xl border bg-[#071726]/96 p-4 text-slate-100 shadow-2xl backdrop-blur ${
-              selectedInc.severity === 'critical' ? 'border-red-500/50' :
-              selectedInc.severity === 'warning' ? 'border-orange-500/50' :
-              'border-slate-700'
-            }`}>
+            <div className={`rounded-xl border bg-[#071726]/96 p-4 text-slate-100 shadow-2xl backdrop-blur ${severityBorderClass(selectedInc.severity)}`}>
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-mono text-blue-400 text-sm font-bold">{selectedInc.id}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${severityBadge[selectedInc.severity]}`}>
-                      {selectedInc.severity.toUpperCase()}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${severityBadge[severityKey(selectedInc.severity)] || severityBadge.yellow}`}>
+                      {severityLabel(selectedInc.severity)}
                     </span>
                   </div>
                   <p className="text-xs text-slate-300">{selectedInc.location}</p>
@@ -835,13 +863,27 @@ export default function MapMonitoring() {
                   </span>
                   <span className="text-xs text-muted-foreground">{selectedInc.assignedTeam}</span>
                 </div>
-                <button
-                  onClick={() => openOrCreateLinkedRecord(selectedInc)}
-                  disabled={linkingRecordId === selectedInc.recordId}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all"
-                >
-                  {linkingRecordId === selectedInc.recordId ? 'Creating...' : isPromotableScrapedRecord(selectedInc) ? 'Create linked record' : 'Details'} <ChevronRight className="w-3 h-3" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {isRemovableScrapedMapRecord(selectedInc) && (
+                    <button
+                      type="button"
+                      onClick={() => removeScrapedMapPin(selectedInc)}
+                      disabled={removingRecordId === selectedInc.recordId}
+                      className="flex items-center gap-1 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-300 transition-all hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      title="Remove scraped news pin"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      {removingRecordId === selectedInc.recordId ? 'Removing...' : 'Remove pin'}
+                    </button>
+                  )}
+                  <button
+                    onClick={() => openOrCreateLinkedRecord(selectedInc)}
+                    disabled={linkingRecordId === selectedInc.recordId}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all"
+                  >
+                    {linkingRecordId === selectedInc.recordId ? 'Creating...' : isPromotableScrapedRecord(selectedInc) ? 'Create linked record' : 'Details'} <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -929,23 +971,28 @@ export default function MapMonitoring() {
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Accident-Prone Areas</div>
-                  <div className="text-[10px] text-slate-500">{highRiskAreas.length} high or critical / {accidentProneAreas.length} scored areas</div>
+                  <div className="text-[10px] text-slate-500">{highRiskAreas.length} official high or critical / {highCautionAreas.length} news caution</div>
                 </div>
               </div>
               <div className="space-y-2">
-                {accidentProneAreas.slice(0, 8).map(area => (
+                {[...accidentProneAreas, ...cautionAreas].slice(0, 8).map(area => (
                   <div key={area.area_id} className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate text-xs font-bold text-slate-100">{area.barangay}</div>
-                        <div className="mt-1 text-[10px] text-slate-500">{area.most_common_incident_type} / peak {area.peak_time}</div>
+                        <div className="mt-1 text-[10px] text-slate-500">{area.zone_label || 'Accident-Prone Area'} / peak {area.peak_time}</div>
                       </div>
                       <span className={`rounded-md px-2 py-1 text-[10px] font-bold ${riskBadgeClass(area.risk_level)}`}>
                         {area.risk_level}
                       </span>
                     </div>
                     <div className="mt-2 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
-                      <span>Score <strong className="text-slate-100">{area.total_risk_score}</strong></span>
+                      <span>Danger <strong className="text-slate-100">{area.severity_burden ?? 0}</strong></span>
+                      <span>Accidents <strong className="text-slate-100">{area.unique_incident_count ?? area.total_incidents}</strong></span>
+                      <span>Confidence <strong className="text-slate-100">{area.evidence_confidence || 'Low'}</strong></span>
+                    </div>
+                    <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
+                      <span>Legacy <strong className="text-slate-100">{area.legacy_total_risk_score ?? area.total_risk_score}</strong></span>
                       <span>MDRRMO <strong className="text-slate-100">{area.mdrrmo_incident_count}</strong></span>
                       <span>Web <strong className="text-slate-100">{area.web_scraped_verified_count}</strong></span>
                     </div>
@@ -962,7 +1009,7 @@ export default function MapMonitoring() {
                     </div>
                   </div>
                 ))}
-                {!accidentProneAreas.length && <div className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3 text-xs text-slate-400">No accident-prone areas match the filters.</div>}
+                {!accidentProneAreas.length && !cautionAreas.length && <div className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3 text-xs text-slate-400">No official accident-prone or news caution areas match the filters.</div>}
               </div>
             </div>}
 
@@ -973,6 +1020,7 @@ export default function MapMonitoring() {
               </div>
               {recentIncidents.map((inc) => {
                 const TypeIcon = typeIcons[inc.type] || AlertTriangle;
+                const tone = severityDotClass(inc.severity);
                 return (
                   <button
                     key={inc.id}
@@ -982,20 +1030,14 @@ export default function MapMonitoring() {
                     }`}
                   >
                     <div className="flex items-start gap-2">
-                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                        inc.severity === 'critical' ? 'bg-red-500/20' :
-                        inc.severity === 'warning' ? 'bg-orange-500/20' : 'bg-yellow-500/20'
-                      }`}>
-                        <TypeIcon className={`w-3 h-3 ${
-                          inc.severity === 'critical' ? 'text-red-400' :
-                          inc.severity === 'warning' ? 'text-orange-400' : 'text-yellow-400'
-                        }`} />
+                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${tone.bg}`}>
+                        <TypeIcon className={`w-3 h-3 ${tone.text}`} />
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-1 mb-0.5">
                           <span className="text-[10px] font-mono text-blue-400">{inc.id}</span>
-                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${severityBadge[inc.severity]}`}>
-                            {inc.severity.toUpperCase()}
+                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded ${severityBadge[severityKey(inc.severity)] || severityBadge.yellow}`}>
+                            {severityLabel(inc.severity)}
                           </span>
                         </div>
                         <p className="truncate text-xs font-bold text-slate-100">{inc.title || `${inc.type} incident`}</p>
@@ -1036,7 +1078,7 @@ export default function MapMonitoring() {
                 <div className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
                   <div className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Risk Areas</div>
                   <div className="mt-2 text-2xl font-bold text-white">{accidentProneAreas.length}</div>
-                  <div className="text-[10px] text-slate-500">{highRiskAreas.length} high or critical</div>
+                  <div className="text-[10px] text-slate-500">{highRiskAreas.length} official high/critical / {cautionAreas.length} news caution</div>
                 </div>
               </div>
               <div className="mt-4 rounded-lg border border-slate-800 bg-[#0b1d31] p-3">

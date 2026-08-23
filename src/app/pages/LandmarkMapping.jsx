@@ -76,8 +76,17 @@ export default function LandmarkMapping() {
     [landmarks, selectedId],
   );
 
-  const mapMarkers = useMemo(() => landmarks
-    .filter(landmark => Number.isFinite(Number(landmark.latitude)) && Number.isFinite(Number(landmark.longitude)))
+  const mapMarkers = useMemo(() => {
+    const formLatitude = Number(form.latitude);
+    const formLongitude = Number(form.longitude);
+    const hasFormPin = Number.isFinite(formLatitude) && Number.isFinite(formLongitude);
+    const landmarkMarkers = landmarks
+      .map(landmark => (
+        landmark.id === form.id && hasFormPin
+          ? { ...landmark, latitude: formLatitude, longitude: formLongitude, name: form.name || landmark.name }
+          : landmark
+      ))
+      .filter(landmark => Number.isFinite(Number(landmark.latitude)) && Number.isFinite(Number(landmark.longitude)))
     .map(landmark => ({
       id: `LM-${landmark.id}`,
       recordId: landmark.id,
@@ -103,7 +112,45 @@ export default function LandmarkMapping() {
         accuracy: "landmark_based",
         source: "local_landmark_registry",
       },
-    })), [landmarks]);
+    }));
+
+    if (!form.id && hasFormPin) {
+      landmarkMarkers.push({
+        id: "LM-DRAFT-PIN",
+        recordId: "draft-pin",
+        sourceKind: "landmark_registry",
+        sourceLabel: "Pinned draft location",
+        type: "other",
+        severity: "warning",
+        title: form.name || "Pinned location",
+        description: "Unsaved location selected from the map.",
+        barangay: form.barangay,
+        municipality: form.municipality,
+        location: [form.name || "Pinned location", form.barangay, form.municipality, "Isabela"].filter(Boolean).join(", "),
+        lat: formLatitude,
+        lng: formLongitude,
+        latitude: formLatitude,
+        longitude: formLongitude,
+        status: "in_route",
+        locationPrecision: "landmark",
+        coordinateSource: "manual_map_pin",
+        mappingStatus: "needs_review",
+        locationConfidence: {
+          level: "medium",
+          accuracy: "manually_pinned",
+          source: "manual_map_pin",
+        },
+      });
+    }
+
+    return landmarkMarkers;
+  }, [form.barangay, form.id, form.latitude, form.longitude, form.municipality, form.name, landmarks]);
+
+  const selectedMapMarkerId = useMemo(() => {
+    if (form.id) return `LM-${form.id}`;
+    if (Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude))) return "LM-DRAFT-PIN";
+    return selectedId ? `LM-${selectedId}` : undefined;
+  }, [form.id, form.latitude, form.longitude, selectedId]);
 
   async function loadLandmarks(nextFilters = filters) {
     setLoading(true);
@@ -293,12 +340,13 @@ export default function LandmarkMapping() {
         </section>
 
         <section className="grid min-h-0 grid-rows-[minmax(320px,1fr)_auto] gap-4">
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
+          <div className="relative overflow-hidden rounded-lg border border-border bg-card">
             <LeafletIncidentMap
               height="100%"
               incidents={mapMarkers}
-              selectedIncidentId={selectedId ? `LM-${selectedId}` : undefined}
+              selectedIncidentId={selectedMapMarkerId}
               onMarkerClick={marker => {
+                if (marker.recordId === "draft-pin") return;
                 const landmarkId = marker.recordId || String(marker.id || "").replace(/^LM-/, "");
                 const landmark = landmarks.find(item => item.id === landmarkId);
                 if (landmark) startEdit(landmark);
@@ -306,6 +354,7 @@ export default function LandmarkMapping() {
               onMapClick={latlng => {
                 updateForm("latitude", latlng.lat.toFixed(6));
                 updateForm("longitude", latlng.lng.toFixed(6));
+                toast.success("Pin location set from map.");
               }}
               showHeatmap={false}
               showDangerZones={false}
@@ -316,6 +365,11 @@ export default function LandmarkMapping() {
               compact
               scope="isabela"
             />
+            {Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude)) && (
+              <div className="pointer-events-none absolute right-3 top-3 z-[500] rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-lg">
+                Pin: {Number(form.latitude).toFixed(6)}, {Number(form.longitude).toFixed(6)}
+              </div>
+            )}
           </div>
 
           <form onSubmit={handleSubmit} className="rounded-lg border border-border bg-card p-4">

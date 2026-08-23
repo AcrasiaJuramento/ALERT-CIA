@@ -1,5 +1,5 @@
 import { classifyIncident, incidentTypeLabel } from "./classify.js";
-import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey } from "./deduplication.js";
+import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey, inferAccidentSeverity } from "./deduplication.js";
 import { extractArticle } from "./extractArticle.js";
 import { fetchHTML } from "./fetchHTML.js";
 import { isAccidentRelevant } from "./filters.js";
@@ -80,6 +80,7 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
   const geo = decision.accepted ? await geocode(location) : null;
   const details = extractStructuredAccidentDetails(combined);
   const incidentDateTime = extractIncidentDateTime(combined, article.published_at);
+  const severity = inferAccidentSeverity(combined, details);
   const record = decision.accepted ? {
     title: article.title,
     snippet: article.snippet,
@@ -88,6 +89,7 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
     incident_type: classification.type,
     incident_type_key: classification.type,
     incident_type_label: incidentTypeLabel(classification.type),
+    severity,
     classification_confidence: classification.confidence,
     classification_score: classification.score,
     classification_reason: classification.reason,

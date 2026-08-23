@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { getDispatchRecordByResponse, getIncident, getPCRReportByResponse, listAuditLogs } from '../services/supabase';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
+import { PCRPreviewModal } from '../components/PCRPreviewModal';
 import { getIncidentStatusLabel, INCIDENT_STATUS_ORDER } from '../utils/incidentStatus';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
 
@@ -65,6 +66,7 @@ export default function IncidentDetails() {
   const [dispatch, setDispatch] = useState(null);
   const [pcr, setPcr] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [pcrPreviewOpen, setPcrPreviewOpen] = useState(false);
   const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -141,6 +143,15 @@ export default function IncidentDetails() {
   const shareIncident = async () => {
     if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(window.location.href);
   };
+  const openPcrPreview = () => {
+    if (pcr) setPcrPreviewOpen(true);
+    else navigate('/admin/pcr');
+  };
+  const editPcr = (record = pcr) => {
+    if (!record?.id) return;
+    setPcrPreviewOpen(false);
+    navigate(`/admin/pcr/new?edit=${record.id}`);
+  };
 
   return (
     <div className="p-5 space-y-5" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -187,7 +198,7 @@ export default function IncidentDetails() {
               <Share2 className="w-3.5 h-3.5" /> Share
             </button>
             <button
-              onClick={() => pcr ? navigate(`/admin/pcr/new?edit=${pcr.id}`) : navigate('/admin/pcr')}
+              onClick={openPcrPreview}
               className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-xs text-white font-medium transition-all"
             >
               <FileText className="w-3.5 h-3.5" /> {pcr ? 'Open PCR' : 'PCR Records'}
@@ -257,7 +268,7 @@ export default function IncidentDetails() {
                   <p className="text-xs text-slate-400">No incident photos or PCR attachments are linked yet.</p>
                 </div>
               )}
-              <button onClick={() => pcr ? navigate(`/admin/pcr/new?edit=${pcr.id}`) : navigate('/admin/pcr')} className="rounded-lg flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-blue-500/50 text-slate-500 hover:text-blue-400 transition-all cursor-pointer text-xs gap-1 p-4">
+              <button onClick={openPcrPreview} className="rounded-lg flex flex-col items-center justify-center border-2 border-dashed border-slate-700 hover:border-blue-500/50 text-slate-500 hover:text-blue-400 transition-all cursor-pointer text-xs gap-1 p-4">
                 <Plus className="w-5 h-5" />
                 {pcr ? 'Add via PCR' : 'Open PCR Records'}
               </button>
@@ -391,7 +402,7 @@ export default function IncidentDetails() {
               {pcr ? `Linked PCR is ${pcr.status}. ${pcr.workflowLabel || ''}` : 'No Patient Care Record is linked to this incident yet.'}
             </p>
             <button
-              onClick={() => pcr ? navigate(`/admin/pcr/new?edit=${pcr.id}`) : navigate('/admin/pcr')}
+              onClick={openPcrPreview}
               className="w-full flex items-center justify-center gap-2 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-all"
             >
               {pcr ? <ExternalLink className="w-3.5 h-3.5" /> : <FileText className="w-3.5 h-3.5" />}
@@ -400,6 +411,11 @@ export default function IncidentDetails() {
           </div>
         </div>
       </div>
+      <PCRPreviewModal
+        record={pcrPreviewOpen ? pcr : null}
+        onClose={() => setPcrPreviewOpen(false)}
+        onEdit={editPcr}
+      />
     </div>
   );
 }

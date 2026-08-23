@@ -1,44 +1,150 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateAccidentProneAreas } from "./accidentProneAreas.js";
-import { calculateAccidentProneAreas as calculateMobileAreas } from "../../../../Alert-cia-expo-go-Application/src/utils/accidentProneAreas.js";
-import { buildAccidentProneDataset } from "../../../../Alert-cia-expo-go-Application/tests/fixtures/accidentProneDataset.mjs";
+import {
+  calculateAccidentProneAreas,
+  calculateNewsCautionAreas,
+  calculateOfficialAccidentProneAreas,
+  classifyRecommendedRisk,
+  getCanonicalIncidentKey,
+  readIncidentDate,
+} from "./accidentProneAreas.js";
 
-const records = buildAccidentProneDataset();
+const baseRecord = {
+  classification: "mvc",
+  status: "verified",
+  barangay: "San Fabian",
+  municipality: "Echague",
+  lat: 16.705,
+  lng: 121.665,
+  locationPrecision: "exact",
+  locationAccuracy: "near_exact",
+};
 
-test("Web requires at least two qualifying incidents", () => {
-  assert.deepEqual(calculateAccidentProneAreas([records[0]], { publicOnly: true }), []);
-  assert.equal(calculateAccidentProneAreas(records.slice(0, 2), { publicOnly: true })[0].total_incidents, 2);
+function record(id, overrides = {}) {
+  return {
+    ...baseRecord,
+    id,
+    incidentDate: "2026-08-01",
+    time: "08:00",
+    severity: "moderate",
+    ...overrides,
+  };
+}
+
+test("uses verified relationships for canonical incident identity", () => {
+  assert.equal(getCanonicalIncidentKey(record("scrape-a", { relatedIncidentId: "INC-1" })), "official_incident:INC-1");
+  assert.equal(getCanonicalIncidentKey(record("scrape-b", { scraped_incident_id: "SCRAPED-1" })), "scraped_incident:SCRAPED-1");
+  assert.equal(getCanonicalIncidentKey(record("raw-only")), "record:raw-only");
 });
 
-test("Web prevents duplicate records but counts distinct incidents sharing coordinates", () => {
-  assert.equal(calculateAccidentProneAreas([records[0], { ...records[0] }, records[1]], { publicOnly: true })[0].total_incidents, 2);
-  assert.equal(calculateAccidentProneAreas(records.slice(3), { publicOnly: true })[0].total_incidents, 2);
+test("does not fuzzy-merge separate crashes that share date and barangay", () => {
+  const areas = calculateAccidentProneAreas([
+    record("a", { title: "Motorcycle crash in San Fabian" }),
+    record("b", { title: "Motorcycle crash in San Fabian" }),
+  ]);
+
+  assert.equal(areas[0].unique_incident_count, 2);
 });
 
-test("Web recalculates when a record status changes", () => {
-  const peer = { ...records[2], id: "peer", status: "verified" };
-  assert.equal(calculateAccidentProneAreas([records[2], peer], { publicOnly: true }).length, 0);
-  assert.equal(calculateAccidentProneAreas([{ ...records[2], status: "verified" }, peer], { publicOnly: true }).length, 1);
+test("counts linked dispatch, PCR, and scraped report once", () => {
+  const areas = calculateAccidentProneAreas([
+    record("dispatch", { incidentId: "INC-77", responseId: "DSP-1", sourceKind: "mdrrmo" }),
+    record("pcr", { incident_id: "INC-77", pcrId: "PCR-1", sourceKind: "mdrrmo" }),
+    record("news", { relatedIncidentId: "INC-77", sourceKind: "reviewed_scraped", scraperStatus: "approved", publicVisible: true }),
+  ]);
+
+  assert.equal(areas[0].unique_incident_count, 1);
+  assert.equal(areas[0].recommended_risk_level, "Caution");
+  assert.equal(areas[0].risk_level, "Caution");
+  assert.ok(areas[0].legacy_risk_level);
 });
 
-test("Web and Mobile produce the same areas from the shared dataset", () => {
-  const comparable = area => ({
-    area_id: area.area_id,
-    barangay: area.barangay,
-    latitude: area.latitude,
-    longitude: area.longitude,
-    total_incidents: area.total_incidents,
-    frequency_score: area.frequency_score,
-    severity_score: area.severity_score,
-    recency_score: area.recency_score,
-    source_reliability_score: area.source_reliability_score,
-    total_risk_score: area.total_risk_score,
-    risk_level: area.risk_level,
-    point_hotspot_eligible: area.point_hotspot_eligible,
+test("separates official accident-prone areas from news caution areas", () => {
+  const records = [
+    record("pcr-a", { pcrId: "PCR-A", sourceKind: "pcr_report", severity: "critical" }),
+    record("dispatch-b", { responseId: "DSP-B", sourceKind: "response", severity: "high" }),
+    record("news-c", { sourceKind: "reviewed_scraped", scraperStatus: "approved", publicVisible: true, severity: "critical" }),
+    record("news-d", { sourceKind: "reviewed_scraped", scraperStatus: "approved", publicVisible: true, severity: "high" }),
+  ];
+
+  const officialAreas = calculateOfficialAccidentProneAreas(records);
+  const cautionAreas = calculateNewsCautionAreas(records);
+
+  assert.equal(officialAreas[0].zone_type, "official_accident_prone");
+  assert.equal(officialAreas[0].unique_incident_count, 2);
+  assert.equal(officialAreas[0].web_scraped_verified_count, 0);
+  assert.equal(cautionAreas[0].zone_type, "news_caution_area");
+  assert.equal(cautionAreas[0].unique_incident_count, 2);
+  assert.equal(cautionAreas[0].mdrrmo_incident_count, 0);
+});
+
+test("allows verified news caution areas to be public before they become high risk", () => {
+  const areas = calculateNewsCautionAreas([
+    record("news-only", {
+      sourceKind: "promoted_scraped",
+      publicVisible: true,
+      severity: "moderate",
+      title: "Vehicular accident in Harana",
+    }),
+  ], { publicOnly: true });
+
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0].zone_type, "news_caution_area");
+  assert.equal(areas[0].risk_level, "Caution");
+});
+
+test("reads incident date without falling back to scraper collection timestamps", () => {
+  assert.equal(readIncidentDate({ scrapedAt: "2026-08-23", createdAt: "2026-08-23" }), null);
+  assert.equal(readIncidentDate({ incidentAt: "2026-01-02T06:00:00.000Z" }).toISOString(), "2026-01-02T06:00:00.000Z");
+});
+
+test("excludes missing incident dates from revised 36-month computation but reports diagnostics", () => {
+  const areas = calculateAccidentProneAreas([
+    record("dated", { incidentDate: "2026-08-01" }),
+    record("missing-date", { incidentDate: undefined, date: undefined, scrapedAt: "2026-08-23" }),
+  ]);
+
+  assert.equal(areas[0].total_incidents, 2);
+  assert.equal(areas[0].unique_incident_count, 1);
+  assert.equal(areas[0].diagnostics.some(item => item.reason === "missing_incident_date"), true);
+});
+
+test("uses severity burden across all eligible unique crashes", () => {
+  const areas = calculateAccidentProneAreas([
+    record("a", { severity: "critical" }),
+    record("b", { severity: "high" }),
+    record("c", { severity: "moderate" }),
+    record("d", { severity: "low" }),
+    record("e", { severity: "critical" }),
+  ]);
+
+  assert.equal(areas[0].severity_burden, 9);
+  assert.deepEqual(areas[0].severity_counts, {
+    low: 1,
+    moderate: 1,
+    high: 1,
+    critical: 2,
+    unknown: 0,
   });
-  assert.deepEqual(
-    calculateAccidentProneAreas(records, { publicOnly: true }).map(comparable),
-    calculateMobileAreas(records, { publicOnly: true }).map(comparable),
-  );
+});
+
+test("separates recent advisory from recommended risk classification", () => {
+  const today = new Date();
+  const recentCritical = today.toISOString().slice(0, 10);
+  const areas = calculateAccidentProneAreas([
+    record("recent-critical", { incidentDate: recentCritical, severity: "critical" }),
+  ]);
+
+  assert.equal(areas[0].recommended_risk_level, "Caution");
+  assert.equal(areas[0].risk_level, "Caution");
+  assert.equal(areas[0].recent_advisory, "Immediate Review");
+  assert.equal(areas[0].is_public_visible, false);
+});
+
+test("implements the recommended risk thresholds", () => {
+  assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 0, severityBurden: 0 }), "Low");
+  assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 1, severityBurden: 3 }), "Caution");
+  assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 2, severityBurden: 6 }), "Moderate");
+  assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 3, severityBurden: 6 }), "High");
+  assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 5, severityBurden: 12 }), "Critical");
 });

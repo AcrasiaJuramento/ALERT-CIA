@@ -309,6 +309,7 @@ function locationConfidenceMetadata(record = {}) {
 function legacyLocationFields(record, runId) {
   return {
     run_id: runId,
+    severity: record.severity || null,
     location_text: record.location_text,
     display_name: record.display_name,
     latitude: Number.isFinite(record.lat) ? record.lat : null,

@@ -194,10 +194,12 @@ export async function getPCRDashboardCounts() {
 }
 
 function priorityToSeverity(priority = "medium") {
-  if (priority === "critical") return "critical";
-  if (priority === "high") return "warning";
-  if (priority === "low") return "moderate";
-  return "moderate";
+  const normalized = String(priority || "").trim().toLowerCase();
+  if (normalized === "black") return "black";
+  if (normalized === "red" || normalized === "critical" || normalized === "high" || normalized === "warning") return "red";
+  if (normalized === "yellow" || normalized === "medium" || normalized === "moderate") return "yellow";
+  if (normalized === "green" || normalized === "low") return "green";
+  return "yellow";
 }
 
 function classificationToType(classification = "other") {
@@ -291,8 +293,8 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
     sourceLabel: publicSafe ? "Verified response record" : "Patient Care Report",
     type,
     incident_type: type,
-    severity: priorityToSeverity(incident.priority || row.triage),
-    severity_level: priorityToSeverity(incident.priority || row.triage),
+    severity: priorityToSeverity(row.triage || incident.priority),
+    severity_level: priorityToSeverity(row.triage || incident.priority),
     location,
     location_name: location,
     barangay: response.barangay?.name || "",
@@ -376,7 +378,7 @@ export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
       sourceKind: "pcr_report",
       sourceLabel: "Verified emergency response",
       type: classificationToType(row.classification),
-      severity: priorityToSeverity(row.priority),
+      severity: priorityToSeverity(row.triage || row.priority),
       location: displayLocationText(row.barangay, row.location_text, "Verified response area"),
       barangay: row.barangay || "",
       lat: Number(row.latitude),

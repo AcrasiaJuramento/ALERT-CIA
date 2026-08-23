@@ -45,6 +45,15 @@ function classificationFromRecord(classification, extended = {}) {
   return classification || "other";
 }
 
+function priorityToMapSeverity(priority = "medium", extended = {}) {
+  const normalized = String(extended.triage || extended.triageLevel || priority || "").trim().toLowerCase();
+  if (normalized === "black") return "black";
+  if (normalized === "red" || normalized === "critical" || normalized === "high" || normalized === "warning") return "red";
+  if (normalized === "yellow" || normalized === "medium" || normalized === "moderate") return "yellow";
+  if (normalized === "green" || normalized === "low") return "green";
+  return "yellow";
+}
+
 function summarizeDescription(text, extended = {}, response = {}) {
   if (text && !text.trim().startsWith("{")) return text;
   const patient = extended.patientName || response.patient_name;
@@ -90,7 +99,7 @@ function incidentToApp(row = {}) {
     subtype: row.subtype || "",
     priority,
     type: classification === "mvc" ? "vehicular" : classification,
-    severity: priority === "critical" ? "critical" : priority === "high" ? "warning" : priority === "low" ? "moderate" : "moderate",
+    severity: priorityToMapSeverity(priority, descriptionParts.extended),
     title: row.title || "",
     description: summarizeDescription(descriptionParts.text, descriptionParts.extended, response),
     date: row.incident_date,

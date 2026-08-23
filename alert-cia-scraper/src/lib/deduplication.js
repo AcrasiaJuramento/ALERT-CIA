@@ -18,7 +18,7 @@ export function normalizedWords(value = "") {
 
 export function extractVictimCount(text = "") {
   const value = String(text);
-  const victimTerms = "people|persons?|passengers?|victims?|katao|indibidwal|motorsiklista|sakay|patay|nasawi|namatay|sugatan|nasugatan|injured|killed";
+  const victimTerms = "people|persons?|passengers?|victims?|katao|indibidwal|motorsiklista|pasahero|sakay|patay|nasawi|namatay|sugatan|nasugatan|injured|killed";
   const numeric = value.match(new RegExp(`\\b(\\d{1,3})\\s+(?:na\\s+)?(?:${victimTerms})\\b`, "i"));
   if (numeric) return Number(numeric[1]);
   const word = value.match(new RegExp(`\\b(${[...FILIPINO_NUMBERS.keys()].join("|")})\\s+(?:na\\s+)?(?:${victimTerms})\\b`, "i"));
@@ -58,6 +58,21 @@ export function extractStructuredAccidentDetails(text = "") {
     injuredCount: extractCount("injured|sugatan|nasugatan"),
     fatalityCount: extractCount("dead|killed|patay|nasawi|namatay|fatalities?|deceased"),
   };
+}
+
+export function inferAccidentSeverity(text = "", details = {}) {
+  const value = String(text || "").toLowerCase();
+  const fatalityTerms = /\b(?:dead|died|dies|killed|fatalit(?:y|ies)|deceased|patay|nasawi|namatay|binawian\s+ng\s+buhay)\b/i;
+  const severeInjuryTerms = /\b(?:critical|malubha|grabeng\s+sugatan|serious(?:ly)?\s+injured|severe(?:ly)?\s+injured)\b/i;
+  const minorTerms = /\b(?:minor\s+injur(?:y|ies)|minor\s+injured|bahagyang\s+nasugatan|walang\s+nasugatan|no\s+injur(?:y|ies))\b/i;
+  const injuredCount = Number(details.injuredCount ?? extractVictimCount(value) ?? 0);
+  const fatalityCount = Number(details.fatalityCount ?? 0);
+
+  if (fatalityCount > 0 || fatalityTerms.test(value)) return "black";
+  if (severeInjuryTerms.test(value) || injuredCount >= 5) return "red";
+  if (injuredCount > 0 || /\b(?:injured|sugatan|nasugatan)\b/i.test(value)) return "yellow";
+  if (minorTerms.test(value)) return "green";
+  return "unknown";
 }
 
 export function incidentKey(item) {

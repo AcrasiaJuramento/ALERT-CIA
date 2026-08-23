@@ -265,6 +265,7 @@ export function LeafletIncidentMap({
   routes = [],
   hazardZones = [],
   accidentProneAreas = [],
+  cautionAreas = [],
   selectedAccidentProneAreaId,
   onAccidentProneAreaClick,
   publicSafeRiskPopups = false,
@@ -287,6 +288,7 @@ export function LeafletIncidentMap({
     routes: true,
     locate: false,
     accidentProneAreas: true,
+    cautionAreas: true,
     criticalZones: true,
     barangayBoundaries: true,
   });
@@ -310,11 +312,15 @@ export function LeafletIncidentMap({
     () => accidentProneAreas.filter(area => area.point_hotspot_eligible !== false),
     [accidentProneAreas]
   );
-  const riskHeatPoints = useMemo(() => pointAccidentProneAreas.map(area => ({
+  const pointCautionAreas = useMemo(
+    () => cautionAreas.filter(area => area.point_hotspot_eligible !== false),
+    [cautionAreas]
+  );
+  const riskHeatPoints = useMemo(() => [...pointCautionAreas, ...pointAccidentProneAreas].map(area => ({
     lat: Number(area.latitude),
     lng: Number(area.longitude),
-    intensity: Math.min(Math.max(Number(area.total_risk_score || 1) / 12, 0.25), 1),
-  })), [pointAccidentProneAreas]);
+    intensity: Math.min(Math.max(Number(area.severity_burden ?? area.total_risk_score ?? 1) / 12, area.zone_type === 'news_caution_area' ? 0.12 : 0.25), area.zone_type === 'news_caution_area' ? 0.55 : 1),
+  })), [pointAccidentProneAreas, pointCautionAreas]);
 
   return (
     <div className="relative w-full overflow-hidden border border-border bg-slate-950" style={{ height }}>
@@ -346,6 +352,13 @@ export function LeafletIncidentMap({
           />
         )}
         <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} enabled={effectiveLayers.barangayBoundaries !== false} />
+        <AccidentProneAreasLayer
+          areas={pointCautionAreas}
+          enabled={Boolean(effectiveLayers.cautionAreas)}
+          publicSafe={publicSafeRiskPopups}
+          selectedAreaId={selectedAccidentProneAreaId}
+          onAreaClick={onAccidentProneAreaClick}
+        />
         <AccidentProneAreasLayer
           areas={pointAccidentProneAreas}
           enabled={Boolean(effectiveLayers.accidentProneAreas)}
@@ -404,6 +417,7 @@ export function LeafletIncidentMap({
                 ['incidents', 'Incidents'],
                 ['advisories', 'Advisories'],
                 ['accidentProneAreas', 'Accident-Prone Areas'],
+                ['cautionAreas', 'News Caution Areas'],
                 ['criticalZones', 'Critical Zones'],
                 ['heatmap', 'Heatmap'],
                 ['dangerZones', 'Geofences'],

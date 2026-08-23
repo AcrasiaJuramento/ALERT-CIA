@@ -1,6 +1,6 @@
 import { ENABLED_SOURCES } from "../constants/sources.js";
 import { classifyIncident, incidentTypeLabel } from "../lib/classify.js";
-import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey } from "../lib/deduplication.js";
+import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey, inferAccidentSeverity } from "../lib/deduplication.js";
 import { discoverArticleLinks } from "../lib/discoverLinks.js";
 import { extractArticle } from "../lib/extractArticle.js";
 import { diffFetchMetrics, fetchHTMLBatch, getFetchMetrics } from "../lib/fetchHTML.js";
@@ -218,6 +218,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
       : await geocode(location);
     const details = extractStructuredAccidentDetails(combined);
     const incidentDateTime = extractIncidentDateTime(combined, article.published_at);
+    const severity = inferAccidentSeverity(combined, details);
     const record = applyLandmarkMatch({
       title: article.title,
       snippet: article.snippet,
@@ -228,6 +229,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
       incident_type: classification.type,
       incident_type_key: classification.type,
       incident_type_label: incidentTypeLabel(classification.type),
+      severity,
       classification_confidence: classification.confidence,
       classification_score: classification.score,
       classification_reason: classification.reason,

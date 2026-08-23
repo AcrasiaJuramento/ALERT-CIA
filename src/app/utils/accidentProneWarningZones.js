@@ -7,7 +7,9 @@ export function getAccidentProneAreaRadiusMeters(area = {}) {
 
 export function toAccidentProneWarningZone(area = {}) {
   const areaName = area.barangay || area.area_label || area.municipality || 'Accident-prone area';
-  const riskLabel = area.risk_level === 'Critical'
+  const riskLabel = area.zone_type === 'news_caution_area'
+    ? 'News Caution Area'
+    : area.risk_level === 'Critical'
     ? 'Critical Road Safety Zone'
     : area.risk_level === 'High' ? 'Accident-Prone Area' : 'Caution Area';
 
@@ -15,11 +17,12 @@ export function toAccidentProneWarningZone(area = {}) {
     id: `calculated-${area.area_id || `${area.latitude}-${area.longitude}`}`,
     label: `${riskLabel}: ${areaName}`,
     type: 'accident_hotspot',
-    severity: area.risk_level === 'Critical' ? 'critical' : 'high',
+    severity: area.zone_type === 'news_caution_area' ? 'moderate' : area.risk_level === 'Critical' ? 'critical' : 'high',
     latitude: Number(area.latitude),
     longitude: Number(area.longitude),
     radiusMeters: getAccidentProneAreaRadiusMeters(area),
     warningSource: 'calculated',
     riskLevel: area.risk_level,
+    zoneType: area.zone_type || 'official_accident_prone',
   };
 }
