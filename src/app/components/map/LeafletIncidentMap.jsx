@@ -152,7 +152,9 @@ const BASEMAP_PROVIDERS = [
 function ResilientTileLayer({ onUnavailable, onRecovered }) {
   const [providerIndex, setProviderIndex] = useState(0);
   const failures = useRef(0);
-  const provider = BASEMAP_PROVIDERS[providerIndex];
+  const lastProviderIndex = BASEMAP_PROVIDERS.length - 1;
+  const safeProviderIndex = Math.min(Math.max(Number(providerIndex) || 0, 0), lastProviderIndex);
+  const provider = BASEMAP_PROVIDERS[safeProviderIndex] || BASEMAP_PROVIDERS[0];
   return (
     <TileLayer
       key={provider.url}
@@ -168,8 +170,10 @@ function ResilientTileLayer({ onUnavailable, onRecovered }) {
           failures.current += 1;
           if (failures.current < 6) return;
           failures.current = 0;
-          if (providerIndex < BASEMAP_PROVIDERS.length - 1) {
-            setProviderIndex(index => index + 1);
+          if (safeProviderIndex < lastProviderIndex) {
+            // Several tileerror events can be delivered in one render. Clamp
+            // the functional update so they cannot advance past the provider list.
+            setProviderIndex(index => Math.min(index + 1, lastProviderIndex));
           } else {
             onUnavailable?.();
           }

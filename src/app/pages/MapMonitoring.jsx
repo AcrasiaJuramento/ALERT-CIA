@@ -234,6 +234,11 @@ export default function MapMonitoring() {
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'responses' },
+        () => setReloadKey(key => key + 1),
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'public_advisories' },
         () => setReloadKey(key => key + 1),
       )

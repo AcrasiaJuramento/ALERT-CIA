@@ -519,6 +519,8 @@ export default function PublicMap() {
       .channel('public-live-navigation-records')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, () => loadMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => loadMap())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, () => loadMap())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, () => loadMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'hazard_zones' }, () => loadMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'public_advisories' }, () => loadMap())
       .subscribe();

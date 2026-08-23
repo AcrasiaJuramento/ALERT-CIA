@@ -7,7 +7,7 @@ import {
 import { formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
-import { listPublishedAdvisories, subscribeToPublicAdvisories } from '../../services/supabase';
+import { listPublishedAdvisories, subscribeToPublicAdvisories, supabase } from '../../services/supabase';
 import { formatDateAndTime } from '../../utils/dateFormat';
 
 const typeIcons = {
@@ -57,6 +57,8 @@ export default function PublicDashboard() {
 
   useEffect(() => {
     let mounted = true;
+    let incidentRequestInFlight = false;
+    let incidentRefreshTimer;
     async function loadAdvisoriesFromDatabase() {
       try {
         const advisories = await listPublishedAdvisories({ limit: 50 });
@@ -66,26 +68,53 @@ export default function PublicDashboard() {
       }
     }
 
-    async function loadIncidents() {
-      setLoading(true);
-      setError('');
+    async function loadIncidents({ silent = false } = {}) {
+      if (incidentRequestInFlight) return;
+      incidentRequestInFlight = true;
+      if (!silent) setLoading(true);
+      if (!silent) setError('');
       try {
         const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 200, pcrLimit: 200 });
-        if (mounted) setIncidents(publicIncidents);
+        if (mounted) {
+          setIncidents(publicIncidents);
+          setError('');
+        }
       } catch (requestError) {
-        if (mounted) setError(requestError.message || 'Unable to load public incident data.');
+        if (mounted && !silent) setError(requestError.message || 'Unable to load public incident data.');
       } finally {
-        if (mounted) setLoading(false);
+        incidentRequestInFlight = false;
+        if (mounted && !silent) setLoading(false);
       }
     }
+    const queueIncidentRefresh = () => {
+      window.clearTimeout(incidentRefreshTimer);
+      incidentRefreshTimer = window.setTimeout(() => loadIncidents({ silent: true }), 250);
+    };
     loadIncidents();
     loadAdvisoriesFromDatabase();
     const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
     const refreshTimer = window.setInterval(loadAdvisoriesFromDatabase, 60000);
+    const incidentPollTimer = window.setInterval(() => loadIncidents({ silent: true }), 15000);
+    const incidentChannel = supabase
+      ? supabase.channel('public-dashboard-records')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, queueIncidentRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, queueIncidentRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, queueIncidentRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, queueIncidentRefresh)
+          .subscribe()
+      : null;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') loadIncidents({ silent: true });
+    };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
     return () => {
       mounted = false;
       unsubscribe();
       window.clearInterval(refreshTimer);
+      window.clearInterval(incidentPollTimer);
+      window.clearTimeout(incidentRefreshTimer);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      if (incidentChannel) supabase.removeChannel(incidentChannel);
     };
   }, []);
 

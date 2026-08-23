@@ -1,5 +1,5 @@
-import { ECHAGUE_CENTER, getIncidentLatLng, hasValidLatLng } from './mapData';
-import { canUseForPointHotspot } from './locationAccuracy';
+import { ECHAGUE_CENTER, getIncidentLatLng, hasValidLatLng } from './mapData.js';
+import { canUseForPointHotspot } from './locationAccuracy.js';
 
 const VERIFIED_INCIDENT_STATUSES = new Set([
   'verified',
@@ -35,6 +35,8 @@ const riskOrder = {
   High: 3,
   Critical: 4,
 };
+
+export const MIN_ACCIDENT_PRONE_INCIDENTS = 2;
 
 export const riskStyles = {
   Low: { color: '#16a34a', label: 'Low Risk', publicLabel: 'Caution Area' },
@@ -188,9 +190,16 @@ export function getAccidentProneFilterOptions(records = []) {
 export function calculateAccidentProneAreas(records = [], { publicOnly = false, filters = {}, groupBy = 'barangay' } = {}) {
   const includePending = !publicOnly;
   const grouped = new Map();
+  const seenRecords = new Set();
   const groupByMunicipality = groupBy === 'municipality';
 
   records.forEach(record => {
+    const recordId = record.relatedIncidentId || record.incidentId || record.responseId || record.scraperRecordId || record.recordId || record.id;
+    if (recordId) {
+      const identity = String(recordId);
+      if (seenRecords.has(identity)) return;
+      seenRecords.add(identity);
+    }
     if (!passFilters(record, filters)) return;
     if (!hasValidLatLng(record)) return;
 
@@ -240,7 +249,9 @@ export function calculateAccidentProneAreas(records = [], { publicOnly = false, 
     grouped.set(key, group);
   });
 
-  return [...grouped.values()].map((group, index) => {
+  return [...grouped.values()]
+    .filter(group => group.records.length >= MIN_ACCIDENT_PRONE_INCIDENTS)
+    .map((group, index) => {
     const count = group.records.length;
     const latestDate = group.records
       .map(readDate)
