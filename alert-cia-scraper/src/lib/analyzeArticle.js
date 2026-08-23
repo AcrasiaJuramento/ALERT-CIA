@@ -4,6 +4,7 @@ import { extractArticle } from "./extractArticle.js";
 import { fetchHTML } from "./fetchHTML.js";
 import { isAccidentRelevant } from "./filters.js";
 import { geocode } from "./geocode.js";
+import { extractIncidentDateTime } from "./incidentTime.js";
 import { extractLocation, ISABELA_PLACES, isValidLocation } from "./locations.js";
 import { normalizeUrl } from "./urls.js";
 
@@ -78,6 +79,7 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
     : decide({ article, sourceUrl, classification, location });
   const geo = decision.accepted ? await geocode(location) : null;
   const details = extractStructuredAccidentDetails(combined);
+  const incidentDateTime = extractIncidentDateTime(combined, article.published_at);
   const record = decision.accepted ? {
     title: article.title,
     snippet: article.snippet,
@@ -98,6 +100,9 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
       coordinates: geo?.geocode_confidence || 0,
     },
     published_at: article.published_at || new Date().toISOString(),
+    incident_at: incidentDateTime?.incident_at || null,
+    incident_time_source: incidentDateTime?.source || null,
+    incident_time_evidence: incidentDateTime?.evidence || null,
     victim_count: extractVictimCount(combined),
     vehicle_types: details.vehicleTypes,
     injured_count: details.injuredCount,

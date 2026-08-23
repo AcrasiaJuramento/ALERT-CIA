@@ -184,6 +184,9 @@ function scraperRecordToApp(row = {}) {
     originalLocationSnapshot: row.original_location_snapshot || null,
     locationCorrectedBy: row.location_corrected_by || null,
     locationCorrectedAt: row.location_corrected_at || null,
+    incidentAt: row.raw_payload?.incident_at || null,
+    incidentTimeSource: row.raw_payload?.incident_time_source || "",
+    incidentTimeEvidence: row.raw_payload?.incident_time_evidence || "",
   };
 }
 
@@ -240,10 +243,48 @@ function scraperSourceHealthToApp(row = {}) {
   };
 }
 
+function validTimestamp(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function scraperEventDate(row = {}) {
+  return validTimestamp(
+    row.raw_payload?.incident_at ||
+    row.raw_payload?.incident_time?.incident_at ||
+    row.raw_payload?.published_at ||
+    row.raw_payload?.article?.published_at ||
+    row.scraped_at,
+  ) || new Date();
+}
+
+function formatManilaDate(date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatManilaTime(date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Manila",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function scraperEventDateSource(row = {}) {
+  if (row.raw_payload?.incident_at) return row.raw_payload?.incident_time_source || "article_text";
+  if (row.raw_payload?.published_at || row.raw_payload?.article?.published_at) return "article_published_at";
+  return "scraped_at";
+}
+
 function scraperRecordToAnalyticsIncident(row = {}) {
   const confidence = row.location_confidence || row.raw_payload?.location_confidence || {};
-  const date = row.scraped_at ? new Date(row.scraped_at).toISOString().slice(0, 10) : "";
-  const time = row.scraped_at ? new Date(row.scraped_at).toTimeString().slice(0, 5) : "";
+  const eventDate = scraperEventDate(row);
   return {
     id: `SCR-${String(row.id).slice(0, 8)}`,
     sourceKind: "verified_scraped",
@@ -261,8 +302,8 @@ function scraperRecordToAnalyticsIncident(row = {}) {
     lng: row.longitude,
     latitude: row.latitude,
     longitude: row.longitude,
-    date,
-    time,
+    date: formatManilaDate(eventDate),
+    time: formatManilaTime(eventDate),
     status: row.status,
     publicVisible: row.public_visible,
     scraperStatus: row.status,
@@ -342,7 +383,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
   const geocodeIsSafe = !mappedBarangay || ["barangay", "road", "barangay_master"].includes(precision);
   const lat = hasFiniteCoordinates(row) ? Number(row.latitude) : boundaryPoint?.lat ?? centroid?.lat ?? (geocodeIsSafe ? Number(row.latitude) : Number.NaN);
   const lng = hasFiniteCoordinates(row) ? Number(row.longitude) : boundaryPoint?.lng ?? centroid?.lng ?? (geocodeIsSafe ? Number(row.longitude) : Number.NaN);
-  const date = row.scraped_at ? new Date(row.scraped_at) : new Date();
+  const date = scraperEventDate(row);
   const verifiedLocationText = [mappedBarangay, mappedMunicipality, "Isabela, Philippines"].filter(Boolean).join(", ");
   const confidence = row.location_confidence || row.raw_payload?.location_confidence || {};
   const basePrecision = boundaryPoint?.precision || (centroid ? "barangay_master" : precision);
@@ -376,8 +417,10 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     latitude: lat,
     longitude: lng,
     coordinates: latLngToPercentCoordinates(lat, lng),
-    date: date.toISOString().slice(0, 10),
-    time: date.toTimeString().slice(0, 5),
+    date: formatManilaDate(date),
+    time: formatManilaTime(date),
+    incidentDateTimeSource: scraperEventDateSource(row),
+    incidentDateTimeEvidence: row.raw_payload?.incident_time_evidence || "",
     status: row.related_incident_id ? "on_scene" : "in_route",
     assignedTeam: row.related_incident_id ? "Imported to ALERT-CIA" : "External monitoring",
     description: row.snippet || row.title || "External incident candidate from scraper.",

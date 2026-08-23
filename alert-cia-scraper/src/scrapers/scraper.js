@@ -6,6 +6,7 @@ import { extractArticle } from "../lib/extractArticle.js";
 import { diffFetchMetrics, fetchHTMLBatch, getFetchMetrics } from "../lib/fetchHTML.js";
 import { isAccidentRelevant } from "../lib/filters.js";
 import { geocode } from "../lib/geocode.js";
+import { extractIncidentDateTime } from "../lib/incidentTime.js";
 import { applyLandmarkMatch, loadLandmarkRegistry, matchLocalLandmark } from "../lib/landmarkRegistry.js";
 import { extractLocation, ISABELA_PLACES, isValidLocation } from "../lib/locations.js";
 import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
@@ -216,6 +217,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
       }
       : await geocode(location);
     const details = extractStructuredAccidentDetails(combined);
+    const incidentDateTime = extractIncidentDateTime(combined, article.published_at);
     const record = applyLandmarkMatch({
       title: article.title,
       snippet: article.snippet,
@@ -238,6 +240,9 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
         coordinates: geo.geocode_confidence || 0,
       },
       published_at: article.published_at || new Date().toISOString(),
+      incident_at: incidentDateTime?.incident_at || null,
+      incident_time_source: incidentDateTime?.source || null,
+      incident_time_evidence: incidentDateTime?.evidence || null,
       victim_count: extractVictimCount(combined),
       vehicle_types: details.vehicleTypes,
       injured_count: details.injuredCount,
