@@ -32,8 +32,9 @@ function record(id, overrides = {}) {
 }
 
 test("uses verified relationships for canonical incident identity", () => {
-  assert.equal(getCanonicalIncidentKey(record("scrape-a", { relatedIncidentId: "INC-1" })), "official_incident:INC-1");
-  assert.equal(getCanonicalIncidentKey(record("scrape-b", { scraped_incident_id: "SCRAPED-1" })), "scraped_incident:SCRAPED-1");
+  assert.equal(getCanonicalIncidentKey(record("dispatch-a", { incidentId: "INC-1", responseId: "DSP-1", sourceKind: "mdrrmo" })), "official_incident:INC-1");
+  assert.equal(getCanonicalIncidentKey(record("scrape-a", { relatedIncidentId: "INC-1", sourceKind: "reviewed_scraped", scraperStatus: "approved" })), "record:scrape-a");
+  assert.equal(getCanonicalIncidentKey(record("scrape-b", { scraped_incident_id: "SCRAPED-1", sourceKind: "reviewed_scraped", scraperStatus: "approved" })), "scraped_incident:SCRAPED-1");
   assert.equal(getCanonicalIncidentKey(record("raw-only")), "record:raw-only");
 });
 
@@ -46,17 +47,21 @@ test("does not fuzzy-merge separate crashes that share date and barangay", () =>
   assert.equal(areas[0].unique_incident_count, 2);
 });
 
-test("counts linked dispatch, PCR, and scraped report once", () => {
-  const areas = calculateAccidentProneAreas([
+test("counts linked official dispatch and PCR once without adding linked scraped news", () => {
+  const records = [
     record("dispatch", { incidentId: "INC-77", responseId: "DSP-1", sourceKind: "mdrrmo" }),
     record("pcr", { incident_id: "INC-77", pcrId: "PCR-1", sourceKind: "mdrrmo" }),
     record("news", { relatedIncidentId: "INC-77", sourceKind: "reviewed_scraped", scraperStatus: "approved", publicVisible: true }),
-  ]);
+  ];
+  const officialAreas = calculateOfficialAccidentProneAreas(records);
+  const combinedAreas = calculateAccidentProneAreas(records);
 
-  assert.equal(areas[0].unique_incident_count, 1);
-  assert.equal(areas[0].recommended_risk_level, "Caution");
-  assert.equal(areas[0].risk_level, "Caution");
-  assert.ok(areas[0].legacy_risk_level);
+  assert.equal(officialAreas[0].unique_incident_count, 1);
+  assert.equal(officialAreas[0].total_incidents, 1);
+  assert.equal(officialAreas[0].web_scraped_verified_count, 0);
+  assert.equal(combinedAreas[0].unique_incident_count, 2);
+  assert.equal("legacy_risk_level" in officialAreas[0], false);
+  assert.equal("total_risk_score" in officialAreas[0], false);
 });
 
 test("separates official accident-prone areas from news caution areas", () => {

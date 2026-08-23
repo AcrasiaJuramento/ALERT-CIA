@@ -155,8 +155,8 @@ function routeSafetyProfile(route, alerts = [], baseRoute = null) {
   const safetyScore = rerouteAlerts.reduce((total, alert) => {
     const hierarchyPenalty = routeRiskPriority(alert) * 100;
     const proximityPenalty = Math.max(0, 1 - Number(alert.distance || 0)) * 10;
-    const riskScorePenalty = Number(alert.riskScore || 0);
-    return total + hierarchyPenalty + proximityPenalty + riskScorePenalty;
+    const dangerPenalty = Number(alert.dangerScore ?? alert.riskScore ?? 0);
+    return total + hierarchyPenalty + proximityPenalty + dangerPenalty;
   }, 0);
 
   return {
@@ -350,7 +350,7 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, cautionA
         type: 'accident-prone-area',
         severity: riskSeverity(area),
         riskLevel: area.risk_level,
-        riskScore: area.severity_burden ?? area.total_risk_score,
+        dangerScore: area.severity_burden ?? 0,
         affectsReroute: true,
         allowSaferRoute: true,
         riskRadiusKm: riskRadiusKm(area),

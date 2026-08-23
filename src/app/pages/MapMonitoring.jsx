@@ -1391,8 +1391,7 @@ export default function MapMonitoring() {
                       <span>Accidents <strong className="text-slate-100">{area.unique_incident_count ?? area.total_incidents}</strong></span>
                       <span>Confidence <strong className="text-slate-100">{area.evidence_confidence || 'Low'}</strong></span>
                     </div>
-                    <div className="mt-1 grid grid-cols-3 gap-2 text-[10px] text-slate-500">
-                      <span>Legacy <strong className="text-slate-100">{area.legacy_total_risk_score ?? area.total_risk_score}</strong></span>
+                    <div className="mt-1 grid grid-cols-2 gap-2 text-[10px] text-slate-500">
                       <span>MDRRMO <strong className="text-slate-100">{area.mdrrmo_incident_count}</strong></span>
                       <span>Web <strong className="text-slate-100">{area.web_scraped_verified_count}</strong></span>
                     </div>

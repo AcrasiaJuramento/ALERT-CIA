@@ -1352,7 +1352,8 @@ export default function Analytics() {
       peakTime: timeSummary[0]?.name || 'Unspecified',
       mostCommonIncident: weightedArea?.most_common_incident_type || toTitleCase(incidentSummary[0]?.name || barangay.mostCommonIncidentType),
       riskLevel: weightedArea?.risk_level || getRiskLevel({ count: barangay.count, critical, high }, maxBarangayCount),
-      riskScore: weightedArea?.total_risk_score || 0,
+      dangerScore: weightedArea?.severity_burden || 0,
+      uniqueIncidentCount: weightedArea?.unique_incident_count || barangay.count,
     };
   }), [barangays, maxBarangayCount, spatioFiltered, weightedRiskByBarangay]);
   const timeOfDayData = useMemo(() => timePeriods.map((period) => ({

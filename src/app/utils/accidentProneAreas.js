@@ -254,34 +254,26 @@ function getRecordReliability(record = {}, { includePending = false } = {}) {
 }
 
 export function getCanonicalIncidentKey(record = {}) {
-  const relationships = [
-    ['official_incident', record.relatedIncidentId || record.related_incident_id || record.incidentId || record.incident_id || record.officialIncidentId || record.official_incident_id],
-    ['scraped_incident', record.scrapedIncidentId || record.scraped_incident_id],
-    ['duplicate', record.duplicateKey || record.duplicate_key],
-    ['pcr', record.sourcePcrId || record.source_pcr_id || record.pcrId || record.pcr_id],
-    ['response', record.responseId || record.response_id || record.dispatchResponseId || record.dispatch_response_id],
-    ['dispatch', record.dispatchId || record.dispatch_id],
-  ];
+  const sourceType = readSourceType(record);
+  const officialRelationships = sourceType === 'mdrrmo' && isPcrDispatchRecord(record)
+    ? [
+      ['official_incident', record.relatedIncidentId || record.related_incident_id || record.incidentId || record.incident_id || record.officialIncidentId || record.official_incident_id],
+      ['pcr', record.sourcePcrId || record.source_pcr_id || record.pcrId || record.pcr_id],
+      ['response', record.responseId || record.response_id || record.dispatchResponseId || record.dispatch_response_id],
+      ['dispatch', record.dispatchId || record.dispatch_id],
+    ]
+    : [];
+  const scrapedRelationships = sourceType === 'scraped'
+    ? [
+      ['scraped_incident', record.scrapedIncidentId || record.scraped_incident_id],
+      ['duplicate', record.duplicateKey || record.duplicate_key],
+    ]
+    : [];
+  const relationships = [...officialRelationships, ...scrapedRelationships];
   const match = relationships.find(([, value]) => value !== undefined && value !== null && value !== '');
   if (match) return `${match[0]}:${String(match[1])}`;
   const fallback = record.id || record.recordId || record.record_id || record.scraperRecordId || record.scraper_record_id || record.sourceUrl || record.source_url;
   return fallback ? `record:${String(fallback)}` : null;
-}
-
-function frequencyScore(count) {
-  if (count >= 6) return 6;
-  if (count >= 4) return 4;
-  if (count >= 2) return 2;
-  return 0;
-}
-
-function recencyScore(latestDate) {
-  if (!latestDate) return 0;
-  const ageDays = (Date.now() - latestDate.getTime()) / 86400000;
-  if (ageDays <= 7) return 3;
-  if (ageDays <= 30) return 2;
-  if (ageDays <= 90) return 1;
-  return 0;
 }
 
 function monthsBetween(startDate, endDate) {
@@ -358,13 +350,6 @@ function evidenceConfidence(records = [], diagnostics = []) {
     return { level: 'Moderate', reasons: ['All eligible incidents are verified, duplicate links are resolved, and at least 50% have precise locations.'] };
   }
   return { level: 'Low', reasons: reasons.length ? reasons : ['Evidence is limited or incomplete.'] };
-}
-
-function classifyRisk(score) {
-  if (score >= 9) return 'Critical';
-  if (score >= 6) return 'High';
-  if (score >= 3) return 'Moderate';
-  return 'Low';
 }
 
 function passFilters(record = {}, filters = {}) {
@@ -558,14 +543,6 @@ export function calculateAccidentProneAreas(records = [], {
     const confidence = evidenceConfidence(group.eligibleRecords, group.diagnostics);
     const mostCommonIncidentType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Unspecified';
     const peakTimeKey = Object.entries(timeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'unspecified';
-    const scores = {
-      frequencyScore: frequencyScore(count),
-      severityScore: highestSeverityScore,
-      recencyScore: recencyScore(latestDate),
-      sourceReliabilityScore: Math.min(Math.round(group.sourceReliabilityScore * 10) / 10, 4),
-    };
-    const totalRiskScore = scores.frequencyScore + scores.severityScore + scores.recencyScore + scores.sourceReliabilityScore;
-    const riskLevel = classifyRisk(totalRiskScore);
     const pointHotspotEligible = group.pointEligibleCount > 0;
     const representativePointRecord = [...group.pointEligibleRecords].sort(recordRiskSort)[0];
     const representativePoint = representativePointRecord ? getIncidentLatLng(representativePointRecord) : null;
@@ -602,13 +579,6 @@ export function calculateAccidentProneAreas(records = [], {
       provisional_message: availableDataMonths < 36 ? `Provisional classification based on ${availableDataMonths} months of available incident data.` : null,
       most_common_incident_type: mostCommonIncidentType,
       peak_time: toTitleCase(peakTimeKey),
-      frequency_score: scores.frequencyScore,
-      severity_score: scores.severityScore,
-      recency_score: scores.recencyScore,
-      source_reliability_score: scores.sourceReliabilityScore,
-      total_risk_score: Math.round(totalRiskScore * 10) / 10,
-      legacy_total_risk_score: Math.round(totalRiskScore * 10) / 10,
-      legacy_risk_level: riskLevel,
       risk_level: recommendedRiskLevel,
       risk_label: formatRiskLevel(recommendedRiskLevel),
       recommended_risk_level: recommendedRiskLevel,

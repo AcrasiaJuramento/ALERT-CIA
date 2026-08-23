@@ -327,7 +327,7 @@ export function LeafletIncidentMap({
   const riskHeatPoints = useMemo(() => [...pointCautionAreas, ...pointAccidentProneAreas].map(area => ({
     lat: Number(area.latitude),
     lng: Number(area.longitude),
-    intensity: Math.min(Math.max(Number(area.severity_burden ?? area.total_risk_score ?? 1) / 12, area.zone_type === 'news_caution_area' ? 0.12 : 0.25), area.zone_type === 'news_caution_area' ? 0.55 : 1),
+    intensity: Math.min(Math.max(Number(area.severity_burden ?? 1) / 12, area.zone_type === 'news_caution_area' ? 0.12 : 0.25), area.zone_type === 'news_caution_area' ? 0.55 : 1),
   })), [pointAccidentProneAreas, pointCautionAreas]);
 
   return (
