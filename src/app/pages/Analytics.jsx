@@ -116,60 +116,6 @@ function average(values = []) {
   return clean.reduce((sum, value) => sum + value, 0) / clean.length;
 }
 
-function formatDelta(value, unit = '') {
-  if (!Number.isFinite(value) || value === 0) return 'No change';
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${Math.round(value * 10) / 10}${unit}`;
-}
-
-function dateRangeForFilter(range, customRange = {}, now = new Date()) {
-  const end = new Date(now);
-  const start = new Date(now);
-  if (range === 'today') {
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === 'week') {
-    start.setDate(now.getDate() - 6);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === 'month') {
-    start.setDate(1);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === 'year') {
-    start.setMonth(0, 1);
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  } else if (range === 'custom' && customRange.start && customRange.end) {
-    const customStart = new Date(customRange.start);
-    const customEnd = new Date(customRange.end);
-    customStart.setHours(0, 0, 0, 0);
-    customEnd.setHours(23, 59, 59, 999);
-    return { start: customStart, end: customEnd };
-  } else {
-    return null;
-  }
-  return { start, end };
-}
-
-function previousDateRange(range, customRange = {}) {
-  const current = dateRangeForFilter(range, customRange);
-  if (!current) return null;
-  const duration = current.end.getTime() - current.start.getTime() + 1;
-  return {
-    start: new Date(current.start.getTime() - duration),
-    end: new Date(current.start.getTime() - 1),
-  };
-}
-
-function filterItemsByDateWindow(items = [], window = null) {
-  if (!window) return [];
-  return items.filter(item => {
-    const date = new Date(item.date);
-    return Number.isFinite(date.getTime()) && date >= window.start && date <= window.end;
-  });
-}
-
 function primaryLocationName(item = {}) {
   return String(item.barangay || item.municipality || item.placeOfIncident || item.location || '').trim();
 }
@@ -568,34 +514,6 @@ function DataCoverageBar({ incidents, dispatches, pcrReports, mvcRecords, mvcWit
   );
 }
 
-function ComparisonStrip({ comparison }) {
-  const items = [
-    ['Incidents', comparison.available ? formatDelta(comparison.incidents) : 'No period', comparison.incidents > 0 ? 'text-red-300' : comparison.incidents < 0 ? 'text-green-300' : 'text-muted-foreground'],
-    ['Avg Response', comparison.available ? formatDelta(comparison.avgResponseMinutes, ' min') : 'No period', comparison.avgResponseMinutes > 0 ? 'text-amber-300' : comparison.avgResponseMinutes < 0 ? 'text-green-300' : 'text-muted-foreground'],
-    ['Submitted PCRs', comparison.available ? formatDelta(comparison.submittedPcr) : 'No period', comparison.submittedPcr > 0 ? 'text-green-300' : comparison.submittedPcr < 0 ? 'text-amber-300' : 'text-muted-foreground'],
-    ['MVC Records', comparison.available ? formatDelta(comparison.mvc) : 'No period', comparison.mvc > 0 ? 'text-amber-300' : comparison.mvc < 0 ? 'text-green-300' : 'text-muted-foreground'],
-  ];
-
-  return (
-    <section className="rounded-lg border border-border bg-card p-3 shadow-sm">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-bold text-foreground">Previous Period Comparison</h2>
-          <p className="text-xs text-muted-foreground">Same length of time immediately before the selected range.</p>
-        </div>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {items.map(([label, value, tone]) => (
-          <div key={label} className="rounded-md border border-border bg-secondary/30 px-3 py-2">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
-            <div className={`mt-1 text-lg font-bold ${tone}`}>{value}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function ActionableInsights({ insights }) {
   return (
     <section className="rounded-lg border border-border bg-card p-3 shadow-sm">
@@ -738,7 +656,6 @@ function OverviewSection({
   traumaCount,
   mvcAccidentRecords,
   mvcWithCrashDetails,
-  comparison,
   actionableInsights,
   onOpenTab,
 }) {
@@ -779,8 +696,6 @@ function OverviewSection({
         <MetricCard label="Submitted PCRs" value={submittedPcrCount} helper={`${filteredPcrReports.length} PCR records in range`} icon={CheckCircle2} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
         <MetricCard label="Medical / Trauma" value={`${medicalCount}/${traumaCount}`} helper={`Avg scene ${formatMinutes(avgSceneMinutes)}`} icon={HeartPulse} tone="border-orange-500/20 bg-orange-500/10 text-orange-400" />
       </div>
-
-      <ComparisonStrip comparison={comparison} />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <BarangayHeatmap
@@ -1474,19 +1389,6 @@ export default function Analytics() {
     dateTimeFrom(dispatch.date, dispatch.arrivalScene),
     dateTimeFrom(dispatch.date, dispatch.departureScene),
   ))), [filteredDispatches]);
-  const previousWindow = useMemo(() => previousDateRange(range, customRange), [range, customRange]);
-  const previousFiltered = useMemo(() => filterByLocationScope(filterItemsByDateWindow(analyticsIncidents, previousWindow), locationScope), [analyticsIncidents, locationScope, previousWindow]);
-  const previousFilteredDispatches = useMemo(() => filterByLocationScope(filterItemsByDateWindow(analyticsDispatches, previousWindow), locationScope), [analyticsDispatches, locationScope, previousWindow]);
-  const previousFilteredPcrReports = useMemo(() => filterByLocationScope(filterItemsByDateWindow(analyticsPcrReports, previousWindow), locationScope), [analyticsPcrReports, locationScope, previousWindow]);
-  const previousSubmittedPcrCount = useMemo(() => previousFilteredPcrReports.filter((item) => submittedStatuses.has(item.status)).length, [previousFilteredPcrReports]);
-  const previousAvgResponseMinutes = useMemo(() => average(previousFilteredDispatches.map(dispatch => minutesBetween(
-    dateTimeFrom(dispatch.date, dispatch.dispatchedTime || dispatch.timeOfIncident),
-    dateTimeFrom(dispatch.date, dispatch.arrivalScene),
-  ))), [previousFilteredDispatches]);
-  const previousMvcCount = useMemo(
-    () => previousFiltered.filter(isMvcIncident).length + previousFilteredPcrReports.filter(hasCrashData).length,
-    [previousFiltered, previousFilteredPcrReports],
-  );
   const monthlyTotals = useMemo(() => months.map((month, index) => ({
     month: month.slice(0, 3),
     incidents: analyticsIncidents.filter(item => item.month === index).length,
@@ -1540,15 +1442,6 @@ export default function Analytics() {
   const helmetStats = useMemo(() => summarizeBy(mvcAccidentRecords, report => normalizeYesNo(report.crash?.helmet)), [mvcAccidentRecords]);
   const licenseStats = useMemo(() => summarizeBy(mvcAccidentRecords, report => normalizeYesNo(report.crash?.license)), [mvcAccidentRecords]);
   const mvcWithCrashDetails = useMemo(() => mvcAccidentRecords.filter(record => record.hasLinkedPcrCrash).length, [mvcAccidentRecords]);
-  const comparison = useMemo(() => ({
-    available: Boolean(previousWindow),
-    incidents: filtered.length - previousFiltered.length,
-    avgResponseMinutes: Number.isFinite(avgResponseMinutes) && Number.isFinite(previousAvgResponseMinutes)
-      ? avgResponseMinutes - previousAvgResponseMinutes
-      : 0,
-    submittedPcr: submittedPcrCount - previousSubmittedPcrCount,
-    mvc: mvcAccidentRecords.length - previousMvcCount,
-  }), [avgResponseMinutes, filtered.length, mvcAccidentRecords.length, previousAvgResponseMinutes, previousFiltered.length, previousMvcCount, previousSubmittedPcrCount, previousWindow, submittedPcrCount]);
   const mvcCompletionRows = useMemo(() => [
     ['Role', record => normalizeCrashRole(record.crash?.role) !== 'No Role Recorded'],
     ['Alcohol Breath', record => normalizeYesNo(record.crash?.alcohol) !== 'No Data'],
@@ -1723,7 +1616,6 @@ export default function Analytics() {
           traumaCount={traumaCount}
           mvcAccidentRecords={mvcAccidentRecords}
           mvcWithCrashDetails={mvcWithCrashDetails}
-          comparison={comparison}
           actionableInsights={actionableInsights}
           onOpenTab={setActiveTab}
         />

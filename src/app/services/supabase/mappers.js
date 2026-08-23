@@ -331,6 +331,13 @@ export function pcrToApp(row = {}) {
   const response = responseToApp(row.response || row.responses || row);
   const notesBlob = parseNotesBlob(row.notes);
   const extended = notesBlob.extended;
+  const dispatch = row.dispatch || row.dispatch_forms || {};
+  const dispatchTime = extended.dispatchTime || extended.timeline?.dispatchTime || dispatch.dispatch_time || "";
+  const arrivalScene = extended.arrivalScene || extended.timeline?.arrivalScene || dispatch.arrival_scene_time || "";
+  const departureScene = extended.departureScene || extended.timeline?.departureScene || dispatch.departure_scene_time || "";
+  const arrivalHospital = extended.arrivalHospital || extended.timeline?.arrivalHospital || dispatch.arrival_hospital_time || "";
+  const departureHospital = extended.departureHospital || extended.timeline?.departureHospital || dispatch.departure_hospital_time || "";
+  const backToBase = row.back_to_base_time || extended.backToBase || extended.timeline?.backToBase || dispatch.arrival_office_time || "";
   const displayLocation = displayLocationText(
     response.barangay,
     extended.barangay,
@@ -385,6 +392,22 @@ export function pcrToApp(row = {}) {
     adminReviewedAt: row.admin_reviewed_at || "",
     returnRemarks: row.return_remarks || "",
     status: fromDbPCRStatus(row.status),
+    dispatchTime,
+    dispatchedTime: dispatchTime,
+    arrivalScene,
+    departureScene,
+    arrivalHospital,
+    departureHospital,
+    backToBase,
+    timeline: {
+      ...(extended.timeline || {}),
+      dispatchTime,
+      arrivalScene,
+      departureScene,
+      arrivalHospital,
+      departureHospital,
+      backToBase,
+    },
     triage: row.triage || extended.triage || "",
     chiefComplaint: row.chief_complaint || response.chiefComplaint || extended.chiefComplaint || "",
     emergencyTypes: row.emergency_types?.length ? row.emergency_types : extended.emergencyTypes || [],
@@ -396,7 +419,6 @@ export function pcrToApp(row = {}) {
     receivedBy: row.received_by || extended.receivedBy || "",
     transferReason: row.transfer_reason || extended.transferReason || "",
     notes: notesBlob.text,
-    backToBase: row.back_to_base_time || extended.backToBase || "",
     completedAt: row.completed_at || "",
     submittedAt: row.submitted_at || "",
     createdAt: row.created_at || response.createdAt || "",

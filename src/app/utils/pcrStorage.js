@@ -72,6 +72,8 @@ export function synchronizePCR(record) {
     interventionDetails: record.interventionDetails || template.interventionDetails,
     attachments: record.attachments || template.attachments,
   };
+  next.dispatchTime = next.dispatchTime || next.dispatchedTime || next.timeline?.dispatchTime || "";
+  next.dispatchedTime = next.dispatchedTime || next.dispatchTime;
   ["dateOfIncident", "timeOfIncident", "placeOfIncident", "dispatchTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase"].forEach(key => {
     next.timeline[key] = next.timeline[key] || next[key] || "";
     next[key] = next.timeline[key] ?? next[key] ?? "";

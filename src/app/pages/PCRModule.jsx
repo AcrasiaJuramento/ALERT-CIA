@@ -190,6 +190,11 @@ function timeFromTimestamp(value) {
   return date.toTimeString().slice(0, 5);
 }
 
+function timelineTime(...values) {
+  const value = values.find(item => String(item || "").trim());
+  return value ? timeFromTimestamp(value) : "";
+}
+
 function selectedIncidentTypes(dispatch = {}) {
   if (Array.isArray(dispatch.natureTypes)) return dispatch.natureTypes;
   return String(dispatch.typeOfIncident || "")
@@ -205,9 +210,15 @@ function pcrSeedFromDispatch(dispatch = {}, pcrShell = {}, freshPcr = createPCR(
   const seededTraumaTypes = traumaTypes.filter(type => selectedTypes.includes(type));
   if (selectedTypes.includes("Medical") && !seededEmergencyTypes.includes("Medical")) seededEmergencyTypes.unshift("Medical");
   if (selectedTypes.some(type => traumaTypes.includes(type)) && !seededTraumaTypes.includes("Trauma")) seededTraumaTypes.unshift("Trauma");
-  const dispatchTime = pcrShell.dispatchTime
-    || pcrShell.timeline?.dispatchTime
-    || timeFromTimestamp(dispatch.acceptedAt || dispatch.sentAt || dispatch.dispatchedTime || dispatch.dispatchTime);
+  const dispatchTime = timelineTime(
+    dispatch.dispatchedTime,
+    dispatch.dispatchTime,
+    dispatch.timeline?.dispatchTime,
+    pcrShell.dispatchTime,
+    pcrShell.timeline?.dispatchTime,
+    dispatch.acceptedAt,
+    dispatch.sentAt,
+  );
   const incidentDate = dispatch.dateOfIncident || dispatch.date || freshPcr.dateOfIncident;
   const incidentTime = dispatch.timeOfIncident || freshPcr.timeOfIncident;
   const incidentPlace = dispatch.placeOfIncident || dispatch.locationText || freshPcr.placeOfIncident;
@@ -237,16 +248,18 @@ function pcrSeedFromDispatch(dispatch = {}, pcrShell = {}, freshPcr = createPCR(
     longitude: dispatch.longitude ?? "",
     locationGeography: dispatch.locationGeography || "",
     dispatchTime,
+    arrivalScene: timelineTime(dispatch.arrivalScene, dispatch.timeline?.arrivalScene, pcrShell.arrivalScene, pcrShell.timeline?.arrivalScene),
+    departureScene: timelineTime(dispatch.departureScene, dispatch.timeline?.departureScene, pcrShell.departureScene, pcrShell.timeline?.departureScene),
     timeline: {
       dateOfIncident: incidentDate,
       timeOfIncident: incidentTime,
       placeOfIncident: incidentPlace,
       dispatchTime,
-      arrivalScene: dispatch.arrivalScene || "",
-      departureScene: dispatch.departureScene || "",
-      arrivalHospital: dispatch.arrivalHospital || "",
-      departureHospital: dispatch.departureHospital || "",
-      backToBase: dispatch.backToBase || "",
+      arrivalScene: timelineTime(dispatch.arrivalScene, dispatch.timeline?.arrivalScene, pcrShell.arrivalScene, pcrShell.timeline?.arrivalScene),
+      departureScene: timelineTime(dispatch.departureScene, dispatch.timeline?.departureScene, pcrShell.departureScene, pcrShell.timeline?.departureScene),
+      arrivalHospital: timelineTime(dispatch.arrivalHospital, dispatch.timeline?.arrivalHospital, pcrShell.arrivalHospital, pcrShell.timeline?.arrivalHospital),
+      departureHospital: timelineTime(dispatch.departureHospital, dispatch.timeline?.departureHospital, pcrShell.departureHospital, pcrShell.timeline?.departureHospital),
+      backToBase: timelineTime(dispatch.backToBase, dispatch.timeline?.backToBase, pcrShell.backToBase, pcrShell.timeline?.backToBase),
     },
     patientName: patient.name || dispatch.patientName || "",
     age: patient.age ?? dispatch.age ?? "",
@@ -394,6 +407,18 @@ export default function PCRModule() {
               dispatchId: dispatch.dispatchId || dispatch.id,
               responseId: dispatch.responseId,
               responseNumber: dispatch.responseNumber || pcrShell?.responseNumber || freshPcr.responseNumber,
+              dispatchTime: dispatchSeed.dispatchTime,
+              arrivalScene: dispatchSeed.arrivalScene,
+              departureScene: dispatchSeed.departureScene,
+              timeline: {
+                ...(pcrShell?.timeline || {}),
+                dispatchTime: dispatchSeed.dispatchTime,
+                arrivalScene: dispatchSeed.arrivalScene,
+                departureScene: dispatchSeed.departureScene,
+                arrivalHospital: dispatchSeed.timeline?.arrivalHospital,
+                departureHospital: dispatchSeed.timeline?.departureHospital,
+                backToBase: dispatchSeed.timeline?.backToBase,
+              },
               patients: dispatch.patients,
               patientId: pcrShell?.patientId || dispatch.patients?.[0]?.id || dispatch.patientId || null,
             })));
