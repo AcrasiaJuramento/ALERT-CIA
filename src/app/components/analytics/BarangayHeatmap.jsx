@@ -617,8 +617,12 @@ export function BarangayHeatmap({
     heatmap: true,
     criticalZones: true,
   },
+  selectedName: controlledSelectedName,
+  onSelectName: controlledOnSelectName,
 }) {
-  const [selectedName, setSelectedName] = useState('');
+  const [internalSelectedName, setInternalSelectedName] = useState('');
+  const selectedName = controlledSelectedName ?? internalSelectedName;
+  const setSelectedName = controlledOnSelectName || setInternalSelectedName;
 
   const visibleIncidents = useMemo(() => (
     range === 'custom'

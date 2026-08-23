@@ -6,12 +6,15 @@ import {
   MapPin, X, ExternalLink, ChevronUp, Trash2
 } from 'lucide-react';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
-import { listAdvisories, listIncidents, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, rejectScraperRecord, supabase } from '../services/supabase';
+import { addOfficerVerifiedLandmarkFromCorrection, correctScraperRecordLocation, listAdvisories, listBarangays, listIncidents, listLandmarks, listOfficerScrapedMapIncidents, listPCRMapIncidents, promoteScraperRecordToIncident, rejectScraperRecord, supabase } from '../services/supabase';
 import { cancelScraperJob, getScraperJobState, startScraperJob, subscribeScraperJob } from '../services/scraperJobService';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { hasValidLatLng, isWithinEchagueMapArea, isWithinIsabelaMapArea } from '../utils/mapData';
 import { formatDateAndTime } from '../utils/dateFormat';
 import { ISABELA_MUNICIPALITIES } from '../data/isabelaMunicipalities';
+import IncidentLocationPicker from '../components/IncidentLocationPicker';
+import { resolveIsabelaBarangayGeometry, resolveIsabelaMunicipalityGeometry } from '../data/isabelaBarangayGeometry';
+import { resolveNewsCorrectionLocation } from '../utils/newsLocationResolution';
 import {
   calculateNewsCautionAreas,
   calculateOfficialAccidentProneAreas,
@@ -174,6 +177,321 @@ function dedupeMapRecords(records = []) {
   return [...byKey.values()];
 }
 
+function coordinateInput(value) {
+  return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) ? String(value) : '';
+}
+
+function municipalityLookup(value) {
+  return String(value || '').replace(/\b(?:city|municipality)\b/gi, '').trim();
+}
+
+function oldMunicipality(record = {}) {
+  return record.verifiedMunicipality || record.extractedMunicipality || record.municipality || getRecordMunicipality(record) || '';
+}
+
+function oldBarangay(record = {}) {
+  return record.verifiedBarangay || record.extractedBarangay || record.barangay || '';
+}
+
+function oldPurokSitio(record = {}) {
+  return record.verifiedPurokSitio || record.extractedPurokSitio || record.purokSitio || record.rawPayload?.location?.purokSitio || '';
+}
+
+function oldRoad(record = {}) {
+  return record.verifiedRoadPlace || record.rawPayload?.location?.road || record.road || record.roadPlace || '';
+}
+
+function oldLatitude(record = {}) {
+  return coordinateInput(record.lat ?? record.latitude);
+}
+
+function oldLongitude(record = {}) {
+  return coordinateInput(record.lon ?? record.lng ?? record.longitude);
+}
+
+const landmarkCategories = [
+  'road',
+  'highway',
+  'street',
+  'intersection',
+  'bridge',
+  'terminal',
+  'school',
+  'church',
+  'hospital',
+  'clinic',
+  'barangay hall',
+  'government office',
+  'police station',
+  'fire station',
+  'fuel station',
+  'market',
+  'commercial establishment',
+  'other',
+];
+
+function compactAlias(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').replace(/\s+,/g, ',').trim();
+}
+
+function aliasVariants(value = '') {
+  const clean = compactAlias(value);
+  if (!clean) return [];
+  return [
+    clean,
+    clean.replace(/\bHighway\b/gi, 'Hwy'),
+    clean.replace(/\bRoad\b/gi, 'Rd'),
+    clean.replace(/\bStreet\b/gi, 'St'),
+    clean.replace(/\bAvenue\b/gi, 'Ave'),
+    clean.replace(/,\s*Isabela(?:,\s*Philippines)?$/i, ''),
+    clean.replace(/,\s*Philippines$/i, ''),
+  ].map(compactAlias).filter(Boolean);
+}
+
+function probableLandmarkAliases(form = {}, record = {}) {
+  const base = [
+    form.landmarkName,
+    form.road,
+    form.purokSitio,
+    record.rawPayload?.location?.landmark,
+    record.rawLocationText,
+    record.location,
+    [form.road, form.barangay].filter(Boolean).join(', '),
+    [form.road, form.municipality].filter(Boolean).join(', '),
+    [form.road, form.barangay, form.municipality].filter(Boolean).join(', '),
+  ].flatMap(aliasVariants);
+  const primary = compactAlias(form.landmarkName || form.road);
+  return [...new Set(base)]
+    .filter(alias => alias && alias.toLowerCase() !== primary.toLowerCase())
+    .slice(0, 8)
+    .join(', ');
+}
+
+function inferLandmarkCategory(form = {}) {
+  const text = `${form.landmarkName || ''} ${form.road || ''}`.toLowerCase();
+  if (/\b(?:highway|hwy)\b/.test(text)) return 'highway';
+  if (/\b(?:street|st\.?)\b/.test(text)) return 'street';
+  if (/\b(?:road|rd\.?)\b/.test(text)) return 'road';
+  if (/\bbridge\b/.test(text)) return 'bridge';
+  if (/\bintersection\b|\bcrossing\b|\bjunction\b/.test(text)) return 'intersection';
+  return 'other';
+}
+
+function ScrapedLocationCorrectionModal({ record, saving, onCancel, onSave }) {
+  const [form, setForm] = useState({
+    municipality: oldMunicipality(record),
+    barangay: oldBarangay(record),
+    purokSitio: oldPurokSitio(record),
+    road: oldRoad(record),
+    latitude: oldLatitude(record),
+    longitude: oldLongitude(record),
+    accuracy: record.locationConfidence?.accuracy || 'barangay_only',
+    source: record.locationConfidence?.source || 'barangay_centroid',
+    reason: record.locationConfidence?.reason || '',
+    saveLandmark: false,
+    landmarkName: record.rawPayload?.location?.landmark || '',
+    landmarkCategory: inferLandmarkCategory({
+      landmarkName: record.rawPayload?.location?.landmark || '',
+      road: oldRoad(record),
+    }),
+    aliases: '',
+  });
+  const [resolution, setResolution] = useState(null);
+  const [resolving, setResolving] = useState(true);
+  const [aliasesEdited, setAliasesEdited] = useState(false);
+  const update = (key, value) => setForm(current => {
+    const next = { ...current, [key]: value };
+    const aliasSourceChanged = ['landmarkName', 'road', 'purokSitio', 'barangay', 'municipality'].includes(key);
+    if (!aliasesEdited && next.saveLandmark && (key === 'saveLandmark' || aliasSourceChanged)) {
+      next.aliases = probableLandmarkAliases(next, record);
+    }
+    return next;
+  });
+  const updateAccuracy = (value) => {
+    const source = value === 'near_exact' ? 'manual_exact' : value === 'road_level' ? 'road' : value === 'unmapped' ? 'unmapped' : 'barangay_centroid';
+    setForm(current => ({ ...current, accuracy: value, source }));
+  };
+
+  useEffect(() => {
+    let active = true;
+    async function resolveStartingLocation() {
+      setResolving(true);
+      const municipality = municipalityLookup(record.verifiedMunicipality || record.extractedMunicipality);
+      const [landmarkResult, barangayResult] = await Promise.allSettled([
+        listLandmarks({ municipality, limit: 500 }),
+        listBarangays({ activeOnly: false, municipality }),
+      ]);
+      const next = await resolveNewsCorrectionLocation(record, {
+        landmarks: settledValue(landmarkResult, []),
+        barangays: settledValue(barangayResult, []),
+        resolveBarangay: resolveIsabelaBarangayGeometry,
+        resolveMunicipality: resolveIsabelaMunicipalityGeometry,
+      });
+      if (!active) return;
+      setResolution(next);
+      setForm(current => ({
+        ...current,
+        municipality: current.municipality || next.municipality || '',
+        barangay: current.barangay || next.barangay || '',
+        purokSitio: current.purokSitio || next.purokSitio || '',
+        road: current.road || next.road || '',
+        latitude: coordinateInput(next.latitude) || current.latitude,
+        longitude: coordinateInput(next.longitude) || current.longitude,
+        accuracy: next.accuracy,
+        source: next.source,
+        reason: next.label,
+        landmarkName: current.landmarkName || next.matchedRecord?.name || '',
+        landmarkCategory: current.landmarkCategory === 'other' ? inferLandmarkCategory({ ...current, road: current.road || next.road || '' }) : current.landmarkCategory,
+      }));
+      setResolving(false);
+    }
+    resolveStartingLocation().catch(() => {
+      if (active) setResolving(false);
+    });
+    return () => { active = false; };
+  }, [record]);
+
+  const updatePin = location => {
+    const manuallyAdjusted = Boolean(location.pinAdjusted);
+    setForm(current => ({
+      ...current,
+      municipality: location.municipality || current.municipality,
+      barangay: location.barangay || current.barangay,
+      latitude: coordinateInput(location.latitude),
+      longitude: coordinateInput(location.longitude),
+      accuracy: manuallyAdjusted ? 'near_exact' : current.accuracy,
+      source: manuallyAdjusted ? 'manual_exact' : current.source,
+      reason: manuallyAdjusted ? 'Officer selected the incident pin manually from Map Monitoring.' : current.reason,
+    }));
+    if (manuallyAdjusted) {
+      setResolution(current => ({
+        ...(current || {}),
+        latitude: location.latitude,
+        longitude: location.longitude,
+        accuracy: 'near_exact',
+        source: 'manual_exact',
+        label: 'Officer-selected exact incident location',
+        approximate: false,
+      }));
+    }
+  };
+
+  const pickerLocationText = [form.road, form.purokSitio, form.barangay, form.municipality, 'Isabela'].filter(Boolean).join(', ') || record.rawLocationText || record.location;
+  const suggestedAliases = useMemo(() => probableLandmarkAliases(form, record), [form, record]);
+  const oldDetails = [
+    ['Municipality', oldMunicipality(record) || 'Not recorded'],
+    ['Barangay', oldBarangay(record) || 'Not recorded'],
+    ['Purok / Sitio', oldPurokSitio(record) || 'Not recorded'],
+    ['Road / Landmark', oldRoad(record) || record.rawLocationText || record.location || 'Not recorded'],
+    ['Coordinates', oldLatitude(record) && oldLongitude(record) ? `${oldLatitude(record)}, ${oldLongitude(record)}` : 'Not recorded'],
+  ];
+
+  return (
+    <div className="fixed inset-0 z-[6000] flex items-center justify-center bg-black/70 p-4">
+      <section className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#071726] text-slate-100 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-slate-800 p-4">
+          <div className="min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-wide text-blue-300">Re-map scraped news location</div>
+            <h2 className="mt-1 truncate text-base font-bold">{record.title || 'Scraped news report'}</h2>
+            <p className="mt-1 text-xs text-slate-400">Move the pin or refine the address. Saving updates this map record directly.</p>
+          </div>
+          <button type="button" onClick={onCancel} aria-label="Close re-map dialog" className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 overflow-y-auto p-4">
+          <div className="mb-3 rounded-xl border border-slate-700 bg-slate-950/40 p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Current saved map details</div>
+            <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-5">
+              {oldDetails.map(([label, value]) => (
+                <div key={label} className="min-w-0 rounded-lg bg-slate-900/70 p-2">
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+                  <div className="mt-1 truncate font-semibold text-slate-100">{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-2 md:grid-cols-4">
+            {['municipality', 'barangay', 'purokSitio', 'road'].map(key => (
+              <input
+                key={key}
+                value={form[key]}
+                onChange={event => update(key, event.target.value)}
+                placeholder={key === 'purokSitio' ? 'Purok / Sitio' : key === 'road' ? 'Road / landmark' : key}
+                className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500"
+              />
+            ))}
+          </div>
+
+          <div className="mt-3">
+            {resolving ? (
+              <div className="flex min-h-80 items-center justify-center rounded-xl border border-slate-800 bg-slate-950/60 text-xs text-slate-400">
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin text-blue-400" />Resolving the best available article location...
+              </div>
+            ) : (
+              <IncidentLocationPicker
+                scope="isabela"
+                value={form}
+                locationText={pickerLocationText}
+                locationNotice={resolution?.label || 'Location needs manual confirmation'}
+                approximate={resolution?.approximate !== false}
+                onChange={updatePin}
+                height={360}
+              />
+            )}
+          </div>
+
+          <div className="mt-3 grid gap-2 md:grid-cols-4">
+            <input value={form.latitude} onChange={event => update('latitude', event.target.value)} placeholder="Latitude" className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500" />
+            <input value={form.longitude} onChange={event => update('longitude', event.target.value)} placeholder="Longitude" className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500" />
+            <select value={form.accuracy} onChange={event => updateAccuracy(event.target.value)} className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500">
+              <option value="near_exact">Exact / landmark-based</option>
+              <option value="road_level">Road / purok / sitio level</option>
+              <option value="barangay_only">Approximate barangay only</option>
+              <option value="unmapped">Unmapped / conflicting</option>
+            </select>
+            <input value={form.reason} onChange={event => update('reason', event.target.value)} placeholder="Correction note" className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500" />
+          </div>
+
+          <label className="mt-3 flex min-h-10 items-center gap-2 rounded-lg border border-slate-700 bg-slate-950/50 px-3 text-xs text-slate-300">
+            <input type="checkbox" checked={form.saveLandmark} onChange={event => update('saveLandmark', event.target.checked)} className="accent-blue-600" />
+            Add to the verified Location Matching registry
+          </label>
+          {form.saveLandmark && (
+            <div className="mt-2 grid gap-2 md:grid-cols-4">
+              <input value={form.landmarkName} onChange={event => update('landmarkName', event.target.value)} placeholder="Landmark name" className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500" />
+              <select value={form.landmarkCategory} onChange={event => update('landmarkCategory', event.target.value)} className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500">
+                {landmarkCategories.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <input
+                value={form.aliases}
+                onChange={event => {
+                  setAliasesEdited(true);
+                  update('aliases', event.target.value);
+                }}
+                placeholder={suggestedAliases || 'Aliases, comma separated'}
+                className="h-10 rounded-lg border border-slate-700 bg-slate-950/70 px-3 text-xs text-slate-100 outline-none focus:border-blue-500 md:col-span-2"
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-800 p-4">
+          <button type="button" onClick={onCancel} className="rounded-lg border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white">Cancel</button>
+          <button type="button" onClick={() => onSave(form)} disabled={saving || resolving} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-60">
+            {saving && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+            Save Re-map
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function MapMonitoring() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -210,6 +528,9 @@ export default function MapMonitoring() {
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const [linkingRecordId, setLinkingRecordId] = useState(null);
   const [removingRecordId, setRemovingRecordId] = useState(null);
+  const [remappingRecord, setRemappingRecord] = useState(null);
+  const [remappingRecordId, setRemappingRecordId] = useState(null);
+  const [focusedRemappedLocation, setFocusedRemappedLocation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const scraperRefreshing = scraperJob.running;
@@ -357,9 +678,46 @@ export default function MapMonitoring() {
     }
   };
 
-  const openScrapedLocationReview = (record) => {
+  const openScrapedLocationRemap = (record) => {
     if (!isRelocatableScrapedMapRecord(record)) return;
-    navigate(`/admin/scraper-review?record=${encodeURIComponent(record.recordId)}&correct=1`);
+    setMapError('');
+    setRemappingRecord(record);
+  };
+
+  const saveScrapedLocationRemap = async (form) => {
+    if (!remappingRecord?.recordId) return;
+    setMapError('');
+    setRemappingRecordId(remappingRecord.recordId);
+    try {
+      const updated = await correctScraperRecordLocation(remappingRecord.recordId, form);
+      if (form.saveLandmark) {
+        await addOfficerVerifiedLandmarkFromCorrection(remappingRecord, form);
+      }
+      const updatedMapRecord = {
+        ...updated,
+        id: updated.id,
+        recordId: updated.id,
+        scraperRecordId: updated.id,
+        sourceKind: remappingRecord.sourceKind || 'scraped',
+      };
+      setScrapedIncidents(current => current.map(item => (
+        item.recordId === remappingRecord.recordId || item.id === remappingRecord.id
+          ? { ...item, ...updatedMapRecord }
+          : item
+      )));
+      setSelectedIncident(updatedMapRecord.id);
+      setFocusedRemappedLocation({
+        latLng: [Number(updatedMapRecord.lat), Number(updatedMapRecord.lon)],
+      });
+      setMapLayers(current => ({ ...current, incidents: true, unverifiedScraped: true, verifiedScraped: true }));
+      setRemappingRecord(null);
+      setReloadKey(key => key + 1);
+      setMapError('Scraped news location re-mapped successfully.');
+    } catch (error) {
+      setMapError(error.message || 'Unable to save the new scraped news location.');
+    } finally {
+      setRemappingRecordId(null);
+    }
   };
 
   const riskFilters = useMemo(() => ({
@@ -425,6 +783,7 @@ export default function MapMonitoring() {
   const focusedRiskArea = useMemo(() => selectedAccidentProneArea ? ({
     latLng: [Number(selectedAccidentProneArea.latitude), Number(selectedAccidentProneArea.longitude)],
   }) : null, [selectedAccidentProneArea]);
+  const focusedLocation = focusedRemappedLocation || focusedRiskArea;
   const highRiskAreas = accidentProneAreas;
   const highCautionAreas = cautionAreas.filter(area => ['High', 'Critical'].includes(area.risk_level));
   const activeIncidents = mapIncidents.filter(i => !isIncidentCompleted(i.status));
@@ -490,9 +849,12 @@ export default function MapMonitoring() {
           spreadOverlappingMarkers
           scope={mapScope}
           fitScopeView={mapScope === 'echague'}
-          focusedLocation={focusedRiskArea}
+          focusedLocation={focusedLocation}
           selectedAccidentProneAreaId={selectedAccidentProneAreaId}
-          onAccidentProneAreaClick={(area) => setSelectedAccidentProneAreaId(area.area_id)}
+          onAccidentProneAreaClick={(area) => {
+            setFocusedRemappedLocation(null);
+            setSelectedAccidentProneAreaId(area.area_id);
+          }}
         />
 
         <div className="absolute left-4 right-4 top-4 z-[500] flex flex-wrap items-start justify-between gap-3 pointer-events-none">
@@ -650,6 +1012,7 @@ export default function MapMonitoring() {
               <button
                 key={area.area_id}
                 onClick={() => {
+                  setFocusedRemappedLocation(null);
                   setSelectedAccidentProneAreaId(area.area_id);
                   setMapLayers(current => ({ ...current, accidentProneAreas: true, criticalZones: true }));
                 }}
@@ -696,6 +1059,7 @@ export default function MapMonitoring() {
                 <button
                   key={area.area_id}
                   onClick={() => {
+                    setFocusedRemappedLocation(null);
                     setSelectedAccidentProneAreaId(area.area_id);
                     setMapLayers(current => ({ ...current, accidentProneAreas: true, criticalZones: true }));
                     setMobileRiskNavOpen(false);
@@ -882,12 +1246,13 @@ export default function MapMonitoring() {
                   {isRelocatableScrapedMapRecord(selectedInc) && (
                     <button
                       type="button"
-                      onClick={() => openScrapedLocationReview(selectedInc)}
+                      onClick={() => openScrapedLocationRemap(selectedInc)}
+                      disabled={remappingRecordId === selectedInc.recordId}
                       className="flex items-center gap-1 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-300 transition-all hover:bg-blue-500/20"
                       title="Re-map this scraped news location"
                     >
                       <MapPin className="h-3 w-3" />
-                      Re-map
+                      {remappingRecordId === selectedInc.recordId ? 'Saving...' : 'Re-map'}
                     </button>
                   )}
                   {isRemovableScrapedMapRecord(selectedInc) && (
@@ -915,6 +1280,15 @@ export default function MapMonitoring() {
           </div>
         )}
       </div>
+
+      {remappingRecord && (
+        <ScrapedLocationCorrectionModal
+          record={remappingRecord}
+          saving={remappingRecordId === remappingRecord.recordId}
+          onCancel={() => setRemappingRecord(null)}
+          onSave={saveScrapedLocationRemap}
+        />
+      )}
 
       {/* Right Incidents Panel */}
       <div

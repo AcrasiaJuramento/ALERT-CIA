@@ -77,16 +77,46 @@ export function summarizeBy(items, keyGetter) {
   }, CACHE_TTL.ANALYTICS);
 }
 
+function cleanLocationName(value = '') {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function isMissingLocationName(value = '') {
+  const normalized = cleanLocationName(value).toLowerCase();
+  return !normalized || normalized === 'unspecified' || normalized === 'no data' || normalized === 'unknown';
+}
+
+function isEchagueBarangayName(value = '', barangays = ECHAGUE_BARANGAYS) {
+  if (isMissingLocationName(value)) return false;
+  const matched = matchBarangayName(value, barangays);
+  return barangays.includes(matched);
+}
+
+export function formatBarangayAnalyticsLabel(value = '', { outsideEchague = false } = {}) {
+  const clean = cleanLocationName(value);
+  if (isMissingLocationName(clean)) return 'No location data';
+  return outsideEchague ? `${clean} (outside Echague)` : clean;
+}
+
+function getAnalyticsLocationName(item = {}) {
+  const barangay = cleanLocationName(item.barangay);
+  if (!isMissingLocationName(barangay)) return barangay;
+  const municipality = cleanLocationName(item.municipality || item.verifiedMunicipality || item.extractedMunicipality);
+  return isMissingLocationName(municipality) ? '' : municipality;
+}
+
 export function getBarangayStats(items, barangays = ECHAGUE_BARANGAYS) {
-  return getOrSetCache(`analytics:barangay:${itemsCacheKey(items)}:${barangays.length}`, () => {
+  return getOrSetCache(`analytics:barangay:${itemsCacheKey(items)}:${barangays.length}:outside-v1`, () => {
     const total = items.length || 1;
-    return barangays
+    const echagueRows = barangays
       .map((barangay) => {
         const barangayIncidents = items.filter((item) => matchBarangayName(item.barangay, barangays) === barangay);
         const categories = summarizeBy(barangayIncidents, 'classification');
         const priorities = summarizeBy(barangayIncidents, 'priority');
         return {
           name: barangay,
+          sourceName: barangay,
+          outsideEchague: false,
           count: barangayIncidents.length,
           percent: Math.round((barangayIncidents.length / total) * 100),
           trend: barangayIncidents.length >= 2 ? 'up' : barangayIncidents.length === 1 ? 'stable' : 'down',
@@ -99,8 +129,60 @@ export function getBarangayStats(items, barangays = ECHAGUE_BARANGAYS) {
           mostCommonIncidentType: categories[0]?.name || 'No incidents',
           latest: [...barangayIncidents].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)).slice(0, 4),
         };
-      })
-      .sort((a, b) => b.count - a.count);
+      });
+
+    const outsideGroups = items.reduce((groups, item) => {
+      const locationName = getAnalyticsLocationName(item);
+      if (isMissingLocationName(locationName) || isEchagueBarangayName(locationName, barangays)) return groups;
+      const key = cleanLocationName(locationName);
+      const current = groups.get(key) || [];
+      current.push(item);
+      groups.set(key, current);
+      return groups;
+    }, new Map());
+
+    const outsideRows = [...outsideGroups.entries()].map(([locationName, locationIncidents]) => {
+      const categories = summarizeBy(locationIncidents, 'classification');
+      const priorities = summarizeBy(locationIncidents, 'priority');
+      return {
+        name: formatBarangayAnalyticsLabel(locationName, { outsideEchague: true }),
+        sourceName: locationName,
+        outsideEchague: true,
+        count: locationIncidents.length,
+        percent: Math.round((locationIncidents.length / total) * 100),
+        trend: locationIncidents.length >= 2 ? 'up' : 'stable',
+        categories,
+        priorities,
+        critical: locationIncidents.filter((item) => item.priority === 'Critical').length,
+        high: locationIncidents.filter((item) => item.priority === 'High').length,
+        medium: locationIncidents.filter((item) => item.priority === 'Medium').length,
+        low: locationIncidents.filter((item) => item.priority === 'Low').length,
+        mostCommonIncidentType: categories[0]?.name || 'No incidents',
+        latest: [...locationIncidents].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)).slice(0, 4),
+      };
+    });
+
+    const missingIncidents = items.filter(item => isMissingLocationName(getAnalyticsLocationName(item)));
+    const missingRows = missingIncidents.length ? [{
+      name: 'No location data',
+      sourceName: '',
+      outsideEchague: false,
+      missingLocation: true,
+      count: missingIncidents.length,
+      percent: Math.round((missingIncidents.length / total) * 100),
+      trend: missingIncidents.length >= 2 ? 'up' : 'stable',
+      categories: summarizeBy(missingIncidents, 'classification'),
+      priorities: summarizeBy(missingIncidents, 'priority'),
+      critical: missingIncidents.filter((item) => item.priority === 'Critical').length,
+      high: missingIncidents.filter((item) => item.priority === 'High').length,
+      medium: missingIncidents.filter((item) => item.priority === 'Medium').length,
+      low: missingIncidents.filter((item) => item.priority === 'Low').length,
+      mostCommonIncidentType: summarizeBy(missingIncidents, 'classification')[0]?.name || 'No incidents',
+      latest: [...missingIncidents].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)).slice(0, 4),
+    }] : [];
+
+    return [...echagueRows, ...outsideRows, ...missingRows]
+      .sort((a, b) => b.count - a.count || Number(b.outsideEchague) - Number(a.outsideEchague) || a.name.localeCompare(b.name));
   }, CACHE_TTL.ANALYTICS);
 }
 

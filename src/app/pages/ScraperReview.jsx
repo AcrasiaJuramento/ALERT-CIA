@@ -146,6 +146,74 @@ function municipalityLookup(value) {
   return String(value || '').replace(/\b(?:city|municipality)\b/gi, '').trim();
 }
 
+const landmarkCategories = [
+  "road",
+  "highway",
+  "street",
+  "intersection",
+  "bridge",
+  "terminal",
+  "school",
+  "church",
+  "hospital",
+  "clinic",
+  "barangay hall",
+  "government office",
+  "police station",
+  "fire station",
+  "fuel station",
+  "market",
+  "commercial establishment",
+  "other",
+];
+
+function compactAlias(value = "") {
+  return String(value || "").replace(/\s+/g, " ").replace(/\s+,/g, ",").trim();
+}
+
+function aliasVariants(value = "") {
+  const clean = compactAlias(value);
+  if (!clean) return [];
+  return [
+    clean,
+    clean.replace(/\bHighway\b/gi, "Hwy"),
+    clean.replace(/\bRoad\b/gi, "Rd"),
+    clean.replace(/\bStreet\b/gi, "St"),
+    clean.replace(/\bAvenue\b/gi, "Ave"),
+    clean.replace(/,\s*Isabela(?:,\s*Philippines)?$/i, ""),
+    clean.replace(/,\s*Philippines$/i, ""),
+  ].map(compactAlias).filter(Boolean);
+}
+
+function probableLandmarkAliases(form = {}, record = {}) {
+  const base = [
+    form.landmarkName,
+    form.road,
+    form.purokSitio,
+    record.rawPayload?.location?.landmark,
+    record.rawLocationText,
+    record.location,
+    [form.road, form.barangay].filter(Boolean).join(", "),
+    [form.road, form.municipality].filter(Boolean).join(", "),
+    [form.road, form.barangay, form.municipality].filter(Boolean).join(", "),
+  ].flatMap(aliasVariants);
+  const primary = compactAlias(form.landmarkName || form.road);
+  return [...new Set(base)]
+    .filter(alias => alias && alias.toLowerCase() !== primary.toLowerCase())
+    .slice(0, 8)
+    .join(", ");
+}
+
+function inferLandmarkCategory(form = {}) {
+  const text = `${form.landmarkName || ""} ${form.road || ""}`.toLowerCase();
+  if (/\b(?:highway|hwy)\b/.test(text)) return "highway";
+  if (/\b(?:street|st\.?)\b/.test(text)) return "street";
+  if (/\b(?:road|rd\.?)\b/.test(text)) return "road";
+  if (/\bbridge\b/.test(text)) return "bridge";
+  if (/\bintersection\b|\bcrossing\b|\bjunction\b/.test(text)) return "intersection";
+  return "other";
+}
+
 function CorrectionPanel({ record, onCancel, onSave }) {
   const [form, setForm] = useState({
     municipality: record.verifiedMunicipality || record.extractedMunicipality || "",
@@ -159,12 +227,23 @@ function CorrectionPanel({ record, onCancel, onSave }) {
     reason: record.locationConfidence?.reason || "",
     saveLandmark: false,
     landmarkName: record.rawPayload?.location?.landmark || "",
-    landmarkCategory: "other",
+    landmarkCategory: inferLandmarkCategory({
+      landmarkName: record.rawPayload?.location?.landmark || "",
+      road: record.verifiedRoadPlace || record.rawPayload?.location?.road || "",
+    }),
     aliases: "",
   });
   const [resolution, setResolution] = useState(null);
   const [resolving, setResolving] = useState(true);
-  const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
+  const [aliasesEdited, setAliasesEdited] = useState(false);
+  const update = (key, value) => setForm(current => {
+    const next = { ...current, [key]: value };
+    const aliasSourceChanged = ["landmarkName", "road", "purokSitio", "barangay", "municipality"].includes(key);
+    if (!aliasesEdited && next.saveLandmark && (key === "saveLandmark" || aliasSourceChanged)) {
+      next.aliases = probableLandmarkAliases(next, record);
+    }
+    return next;
+  });
   const updateAccuracy = (value) => {
     const source = value === "near_exact" ? "manual_exact" : value === "road_level" ? "road" : value === "unmapped" ? "unmapped" : "barangay_centroid";
     setForm(current => ({ ...current, accuracy: value, source }));
@@ -202,6 +281,7 @@ function CorrectionPanel({ record, onCancel, onSave }) {
         source: next.source,
         reason: next.label,
         landmarkName: current.landmarkName || next.matchedRecord?.name || "",
+        landmarkCategory: current.landmarkCategory === "other" ? inferLandmarkCategory({ ...current, road: current.road || next.road || "" }) : current.landmarkCategory,
       }));
       setResolving(false);
     }
@@ -237,6 +317,8 @@ function CorrectionPanel({ record, onCancel, onSave }) {
   };
 
   const pickerLocationText = [form.road, form.purokSitio, form.barangay, form.municipality, "Isabela"].filter(Boolean).join(", ") || record.rawLocationText || record.location;
+  const suggestedAliases = useMemo(() => probableLandmarkAliases(form, record), [form, record]);
+
   return (
     <div className="mt-3 grid gap-2 rounded-lg border border-blue-500/20 bg-blue-500/10 p-3 md:grid-cols-4">
       {["municipality", "barangay", "purokSitio", "road"].map(key => (
@@ -282,11 +364,19 @@ function CorrectionPanel({ record, onCancel, onSave }) {
         <>
           <input value={form.landmarkName} onChange={event => update("landmarkName", event.target.value)} placeholder="Landmark name" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" />
           <select value={form.landmarkCategory} onChange={event => update("landmarkCategory", event.target.value)} className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs">
-            {["school", "church", "hospital", "clinic", "barangay hall", "government office", "police station", "fire station", "fuel station", "market", "bridge", "terminal", "commercial establishment", "intersection", "other"].map(category => (
+            {landmarkCategories.map(category => (
               <option key={category} value={category}>{category}</option>
             ))}
           </select>
-          <input value={form.aliases} onChange={event => update("aliases", event.target.value)} placeholder="Aliases, comma separated" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs md:col-span-2" />
+          <input
+            value={form.aliases}
+            onChange={event => {
+              setAliasesEdited(true);
+              update("aliases", event.target.value);
+            }}
+            placeholder={suggestedAliases || "Aliases, comma separated"}
+            className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs md:col-span-2"
+          />
         </>
       )}
       <div className="flex gap-2 md:col-span-4">

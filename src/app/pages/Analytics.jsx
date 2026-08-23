@@ -2,15 +2,16 @@ import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Activity, AlertTriangle, CheckCircle2, Clock, FilePlus2, FileText, HeartPulse, Layers3, MapPinned, ShieldCheck, TrendingDown, TrendingUp,
-  Radio,
+  Radio, X,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import {
-  filterIncidentsByRange, filterOptions, getBarangayStats, summarizeBy,
+  filterIncidentsByRange, filterOptions, formatBarangayAnalyticsLabel, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
+import { ECHAGUE_BARANGAYS, matchBarangayName } from '../data/gisConfig';
 import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRReports } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
@@ -57,11 +58,26 @@ const riskTone = {
   Minimal: 'text-slate-400 bg-secondary/50 border-border',
 };
 
-const sectionLinks = [
+const analyticsTabs = [
+  ['overview', 'Overview'],
   ['spatial', 'Map'],
   ['operations', 'Operations'],
   ['mvc', 'MVC Safety'],
   ['pcr', 'PCR'],
+];
+
+const locationScopeOptions = [
+  { value: 'all', label: 'All Locations' },
+  { value: 'echague', label: 'Echague Only' },
+  { value: 'outside', label: 'Outside Echague' },
+  { value: 'missing', label: 'No Location Data' },
+];
+
+const teamFamilies = ['Alpha', 'Bravo', 'Charlie'];
+const standardTeamNames = [
+  ...Array.from({ length: 8 }, (_, index) => `Alpha Run ${index + 1}`),
+  ...Array.from({ length: 8 }, (_, index) => `Bravo Run ${index + 1}`),
+  ...Array.from({ length: 3 }, (_, index) => `Charlie Run ${index + 1}`),
 ];
 
 function getTimeOfDay(time = '') {
@@ -98,6 +114,101 @@ function average(values = []) {
   const clean = values.filter(value => Number.isFinite(value));
   if (!clean.length) return null;
   return clean.reduce((sum, value) => sum + value, 0) / clean.length;
+}
+
+function formatDelta(value, unit = '') {
+  if (!Number.isFinite(value) || value === 0) return 'No change';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${Math.round(value * 10) / 10}${unit}`;
+}
+
+function dateRangeForFilter(range, customRange = {}, now = new Date()) {
+  const end = new Date(now);
+  const start = new Date(now);
+  if (range === 'today') {
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  } else if (range === 'week') {
+    start.setDate(now.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  } else if (range === 'month') {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  } else if (range === 'year') {
+    start.setMonth(0, 1);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  } else if (range === 'custom' && customRange.start && customRange.end) {
+    const customStart = new Date(customRange.start);
+    const customEnd = new Date(customRange.end);
+    customStart.setHours(0, 0, 0, 0);
+    customEnd.setHours(23, 59, 59, 999);
+    return { start: customStart, end: customEnd };
+  } else {
+    return null;
+  }
+  return { start, end };
+}
+
+function previousDateRange(range, customRange = {}) {
+  const current = dateRangeForFilter(range, customRange);
+  if (!current) return null;
+  const duration = current.end.getTime() - current.start.getTime() + 1;
+  return {
+    start: new Date(current.start.getTime() - duration),
+    end: new Date(current.start.getTime() - 1),
+  };
+}
+
+function filterItemsByDateWindow(items = [], window = null) {
+  if (!window) return [];
+  return items.filter(item => {
+    const date = new Date(item.date);
+    return Number.isFinite(date.getTime()) && date >= window.start && date <= window.end;
+  });
+}
+
+function primaryLocationName(item = {}) {
+  return String(item.barangay || item.municipality || item.placeOfIncident || item.location || '').trim();
+}
+
+function locationScopeForItem(item = {}) {
+  const name = primaryLocationName(item);
+  if (!name || name === 'Unspecified' || name === 'No location data') return 'missing';
+  const matched = matchBarangayName(name, ECHAGUE_BARANGAYS);
+  return ECHAGUE_BARANGAYS.includes(matched) ? 'echague' : 'outside';
+}
+
+function filterByLocationScope(items = [], scope = 'all') {
+  if (scope === 'all') return items;
+  return items.filter(item => locationScopeForItem(item) === scope);
+}
+
+function teamName(record = {}) {
+  return String(record.team || record.respondingTeam || '').trim() || 'Unassigned';
+}
+
+function parseTeamRun(name = '') {
+  const match = String(name).trim().match(/^(Alpha|Bravo|Charlie)\s+Run\s+(\d+)$/i);
+  if (!match) return { family: 'Other', run: null };
+  return { family: toTitleCase(match[1]), run: Number(match[2]) };
+}
+
+function buildRecordSummary(record = {}) {
+  return {
+    id: record.id || record.responseId || record.responseNumber || `${record.date}-${record.time}-${primaryLocationName(record)}`,
+    date: record.date || record.dateOfIncident || record.submittedAt || '',
+    time: record.time || record.timeOfIncident || record.dispatchedTime || '',
+    title: record.classification || record.type || record.incidentType || record.status || 'Record',
+    location: primaryLocationName(record) || 'No location data',
+    priority: record.priority || record.triage || record.status || '',
+  };
+}
+
+function completionPercent(total, complete) {
+  return total ? Math.round((complete / total) * 100) : 0;
 }
 
 function formatMinutes(value) {
@@ -199,6 +310,11 @@ function pcrBarangay(report = {}) {
   return String(value || '').trim() || 'Unspecified';
 }
 
+function pcrMunicipality(report = {}) {
+  const value = report.municipality || report.barangay?.municipality || report.response?.barangay?.municipality || report.response?.municipality;
+  return String(value || '').trim();
+}
+
 function pcrLocationText(report = {}) {
   return report.locationText || report.placeOfIncident || report.address || pcrBarangay(report);
 }
@@ -227,6 +343,7 @@ function pcrReportToAnalyticsIncident(report = {}) {
     priority: priorityFromPcrTriage(report),
     severity: priorityFromPcrTriage(report),
     barangay: pcrBarangay(report),
+    municipality: pcrMunicipality(report),
     date,
     time,
     timeOfDay: getTimeOfDay(time),
@@ -313,7 +430,7 @@ function DateFilters({ range, setRange, customRange, setCustomRange }) {
   );
 }
 
-function RankingTable({ rows }) {
+function RankingTable({ rows, selectedName = '', onSelectRow }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -334,8 +451,17 @@ function RankingTable({ rows }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.name} className="border-b border-border/60">
-              <td className="px-4 py-2 text-foreground">{row.name}</td>
+            <tr
+              key={row.name}
+              className={`border-b border-border/60 transition-colors ${selectedName === row.name ? 'bg-blue-500/10' : onSelectRow ? 'hover:bg-secondary/45' : ''}`}
+            >
+              <td className="px-4 py-2 text-foreground">
+                {onSelectRow ? (
+                  <button type="button" onClick={() => onSelectRow(row)} className="text-left font-semibold text-blue-300 hover:text-blue-200">
+                    {row.name}
+                  </button>
+                ) : row.name}
+              </td>
               <td className="px-3 py-2 text-right font-semibold text-foreground">{row.count}</td>
               <td className="px-3 py-2 text-right text-muted-foreground">{row.percent}%</td>
               {timePeriods.map((period) => (
@@ -395,17 +521,22 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-function SectionNav() {
+function SectionNav({ activeTab, onChange }) {
   return (
     <div className="mb-5 flex max-w-full gap-2 overflow-x-auto rounded-lg border border-border bg-card p-2 text-xs shadow-sm">
-      {sectionLinks.map(([id, label]) => (
-        <a
+      {analyticsTabs.map(([id, label]) => (
+        <button
           key={id}
-          href={`#analytics-${id}`}
-          className="whitespace-nowrap rounded-md border border-border bg-secondary/40 px-3 py-2 font-semibold text-muted-foreground transition-colors hover:border-blue-500/40 hover:text-foreground"
+          type="button"
+          onClick={() => onChange(id)}
+          className={`whitespace-nowrap rounded-md border px-3 py-2 font-semibold transition-colors ${
+            activeTab === id
+              ? 'border-blue-500/40 bg-blue-600 text-white shadow-sm'
+              : 'border-border bg-secondary/40 text-muted-foreground hover:border-blue-500/40 hover:text-foreground'
+          }`}
         >
           {label}
-        </a>
+        </button>
       ))}
     </div>
   );
@@ -421,13 +552,142 @@ function DataCoverageBar({ incidents, dispatches, pcrReports, mvcRecords, mvcWit
   ];
 
   return (
-    <div className="mb-5 grid gap-2 rounded-lg border border-border bg-card p-3 shadow-sm sm:grid-cols-2 xl:grid-cols-5">
-      {items.map(([label, value]) => (
-        <div key={label} className="rounded-md bg-secondary/35 px-3 py-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
-          <div className="mt-1 text-lg font-bold leading-none text-foreground">{value}</div>
+    <details className="mb-5 rounded-lg border border-border bg-card shadow-sm">
+      <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground">
+        Data coverage
+      </summary>
+      <div className="grid gap-2 border-t border-border p-3 sm:grid-cols-2 xl:grid-cols-5">
+        {items.map(([label, value]) => (
+          <div key={label} className="rounded-md bg-secondary/35 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+            <div className="mt-1 text-lg font-bold leading-none text-foreground">{value}</div>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function ComparisonStrip({ comparison }) {
+  const items = [
+    ['Incidents', comparison.available ? formatDelta(comparison.incidents) : 'No period', comparison.incidents > 0 ? 'text-red-300' : comparison.incidents < 0 ? 'text-green-300' : 'text-muted-foreground'],
+    ['Avg Response', comparison.available ? formatDelta(comparison.avgResponseMinutes, ' min') : 'No period', comparison.avgResponseMinutes > 0 ? 'text-amber-300' : comparison.avgResponseMinutes < 0 ? 'text-green-300' : 'text-muted-foreground'],
+    ['Submitted PCRs', comparison.available ? formatDelta(comparison.submittedPcr) : 'No period', comparison.submittedPcr > 0 ? 'text-green-300' : comparison.submittedPcr < 0 ? 'text-amber-300' : 'text-muted-foreground'],
+    ['MVC Records', comparison.available ? formatDelta(comparison.mvc) : 'No period', comparison.mvc > 0 ? 'text-amber-300' : comparison.mvc < 0 ? 'text-green-300' : 'text-muted-foreground'],
+  ];
+
+  return (
+    <section className="rounded-lg border border-border bg-card p-3 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-bold text-foreground">Previous Period Comparison</h2>
+          <p className="text-xs text-muted-foreground">Same length of time immediately before the selected range.</p>
         </div>
-      ))}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {items.map(([label, value, tone]) => (
+          <div key={label} className="rounded-md border border-border bg-secondary/30 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{label}</div>
+            <div className={`mt-1 text-lg font-bold ${tone}`}>{value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ActionableInsights({ insights }) {
+  return (
+    <section className="rounded-lg border border-border bg-card p-3 shadow-sm">
+      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-sm font-bold text-foreground">Actionable Insights</h2>
+          <p className="text-xs text-muted-foreground">Priority signals with direct drill-downs.</p>
+        </div>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {insights.length} item{insights.length === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {insights.map((item) => (
+          <button
+            key={item.title}
+            type="button"
+            onClick={item.onClick}
+            className="group flex min-h-32 w-full flex-col justify-between rounded-lg border border-border bg-secondary/25 p-3 text-left transition-colors hover:border-blue-500/40 hover:bg-blue-500/10"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.title}</div>
+                <div className="mt-1 truncate text-base font-bold text-foreground">{item.value}</div>
+              </div>
+              <span className={`shrink-0 rounded-md border px-2 py-1 text-[10px] font-semibold ${item.tone || 'border-blue-500/25 bg-blue-500/10 text-blue-300'}`}>
+                {item.badge}
+              </span>
+            </div>
+            <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.helper}</p>
+            <div className="mt-3 inline-flex items-center text-[10px] font-semibold uppercase tracking-wide text-blue-300 transition-colors group-hover:text-blue-200">
+              Open drill-down
+            </div>
+          </button>
+        ))}
+        {!insights.length && (
+          <div className="rounded-lg border border-border bg-secondary/30 px-3 py-6 text-center text-xs text-muted-foreground md:col-span-2 xl:col-span-4">
+            No action items for the current filters.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function DrilldownDrawer({ drilldown, onClose }) {
+  if (!drilldown) return null;
+  const records = drilldown.records || [];
+  return (
+    <div className="pointer-events-none fixed inset-0 z-[80]" role="dialog" aria-modal="false">
+      <div className="pointer-events-auto absolute bottom-5 right-5 top-24 flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-border bg-secondary/20 px-4 py-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-300">Drill-down</div>
+            <h2 className="mt-1 truncate text-sm font-bold text-foreground">{drilldown.title}</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{drilldown.subtitle}</p>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Close drilldown">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="border-b border-border px-4 py-2 text-xs font-semibold text-muted-foreground">
+          {records.length} matching record{records.length === 1 ? '' : 's'}
+        </div>
+        <div className="flex-1 overflow-y-auto p-3">
+          <div className="space-y-2">
+            {records.map((record) => {
+              const item = buildRecordSummary(record);
+              return (
+                <div key={item.id} className="rounded-lg border border-border bg-secondary/25 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold text-foreground">{toTitleCase(item.title)}</div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">{item.location}</div>
+                    </div>
+                    <div className="shrink-0 text-right text-[10px] font-semibold text-muted-foreground">
+                      <div>{item.date || 'No date'}</div>
+                      <div>{item.time || 'No time'}</div>
+                    </div>
+                  </div>
+                  {item.priority && <div className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-blue-300">{item.priority}</div>}
+                </div>
+              );
+            })}
+            {!records.length && (
+              <div className="rounded-lg border border-border bg-secondary/30 px-3 py-8 text-center text-xs text-muted-foreground">
+                No matching records to show.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -463,6 +723,108 @@ function MapLayerToggles({ value, onChange }) {
   );
 }
 
+function OverviewSection({
+  filtered,
+  filteredDispatches,
+  filteredPcrReports,
+  spatioFiltered,
+  summary,
+  range,
+  customRange,
+  avgResponseMinutes,
+  avgSceneMinutes,
+  submittedPcrCount,
+  medicalCount,
+  traumaCount,
+  mvcAccidentRecords,
+  mvcWithCrashDetails,
+  comparison,
+  actionableInsights,
+  onOpenTab,
+}) {
+  const crashDetailPercent = mvcAccidentRecords.length
+    ? Math.round((mvcWithCrashDetails / mvcAccidentRecords.length) * 100)
+    : 0;
+  const submittedPcrPercent = filteredPcrReports.length
+    ? Math.round((submittedPcrCount / filteredPcrReports.length) * 100)
+    : 0;
+  const insightRows = [
+    {
+      title: 'Highest road-risk barangay',
+      value: summary.topBarangay,
+      helper: `${summary.topBarangayCount} matching incident${summary.topBarangayCount === 1 ? '' : 's'} in the selected range`,
+    },
+    {
+      title: 'Peak incident window',
+      value: summary.peakTime,
+      helper: summary.peakTimeRange,
+    },
+    {
+      title: 'PCR completion signal',
+      value: `${submittedPcrPercent}% submitted`,
+      helper: `${submittedPcrCount} of ${filteredPcrReports.length} verified PCR record${filteredPcrReports.length === 1 ? '' : 's'}`,
+    },
+    {
+      title: 'MVC crash detail completeness',
+      value: `${crashDetailPercent}% complete`,
+      helper: `${mvcWithCrashDetails} of ${mvcAccidentRecords.length} MVC record${mvcAccidentRecords.length === 1 ? '' : 's'} have linked crash details`,
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <MetricCard label="Total Incidents" value={filtered.length} helper="Official admin-verified records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
+        <MetricCard label="Avg Response Time" value={formatMinutes(avgResponseMinutes)} helper={`${filteredDispatches.length} dispatch records`} icon={Clock} tone="border-blue-500/20 bg-blue-500/10 text-blue-400" />
+        <MetricCard label="Submitted PCRs" value={submittedPcrCount} helper={`${filteredPcrReports.length} PCR records in range`} icon={CheckCircle2} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
+        <MetricCard label="Medical / Trauma" value={`${medicalCount}/${traumaCount}`} helper={`Avg scene ${formatMinutes(avgSceneMinutes)}`} icon={HeartPulse} tone="border-orange-500/20 bg-orange-500/10 text-orange-400" />
+      </div>
+
+      <ComparisonStrip comparison={comparison} />
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <BarangayHeatmap
+          incidents={spatioFiltered}
+          allIncidents={spatioFiltered}
+          range={range}
+          customRange={customRange}
+          title="Road Risk Overview"
+          compact
+          showDetailsPanel={false}
+          compactMapClassName="min-h-[420px]"
+          layerVisibility={{ boundary: true, incidentMarkers: true, heatmap: true, criticalZones: true }}
+        />
+
+        <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
+          <div className="mb-4">
+            <h2 className="text-base font-bold text-foreground">Key Insights</h2>
+            <p className="text-xs text-muted-foreground">The most important signals from the current filter.</p>
+          </div>
+          <div className="space-y-3">
+            {insightRows.map((item) => (
+              <div key={item.title} className="rounded-lg border border-border bg-secondary/30 p-3">
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.title}</div>
+                <div className="mt-1 text-lg font-bold text-foreground">{item.value}</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.helper}</p>
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => onOpenTab('spatial')} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500">
+              Open Map
+            </button>
+            <button type="button" onClick={() => onOpenTab('operations')} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground">
+              Operations
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <ActionableInsights insights={actionableInsights} />
+    </div>
+  );
+}
+
 function SpatioTemporalSection({
   filteredIncidents,
   enrichedBarangays,
@@ -476,6 +838,11 @@ function SpatioTemporalSection({
   setLayerVisibility,
   range,
   customRange,
+  locationScope,
+  setLocationScope,
+  selectedBarangayName,
+  setSelectedBarangayName,
+  onDrilldown,
 }) {
   return (
     <div className="mb-5 space-y-5">
@@ -491,11 +858,12 @@ function SpatioTemporalSection({
               Cross-analyze incident concentration by barangay, time window, incident class, and severity using official records stored in Supabase.
             </p>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:w-[680px] xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:w-[820px] xl:grid-cols-5">
             <FilterSelect label="Incident Type" value={filters.type} onChange={(value) => setFilters((current) => ({ ...current, type: value }))} options={filterOptionsData.types} />
             <FilterSelect label="Barangay" value={filters.barangay} onChange={(value) => setFilters((current) => ({ ...current, barangay: value }))} options={filterOptionsData.barangays} />
             <FilterSelect label="Severity" value={filters.severity} onChange={(value) => setFilters((current) => ({ ...current, severity: value }))} options={filterOptionsData.severities} />
             <FilterSelect label="Time of Day" value={filters.timeOfDay} onChange={(value) => setFilters((current) => ({ ...current, timeOfDay: value }))} options={timeOfDayOptions} />
+            <FilterSelect label="Location Scope" value={locationScope} onChange={setLocationScope} options={locationScopeOptions} />
           </div>
         </div>
 
@@ -516,6 +884,8 @@ function SpatioTemporalSection({
         customRange={customRange}
         title="Spatio-Temporal Incident Map"
         layerVisibility={layerVisibility}
+        selectedName={selectedBarangayName}
+        onSelectName={setSelectedBarangayName}
       />
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -550,7 +920,18 @@ function SpatioTemporalSection({
           <h3 className="text-sm font-semibold text-foreground">Incidents by Barangay</h3>
           <p className="text-xs text-muted-foreground">Barangay ranking with morning, afternoon, evening, midnight, peak time, and risk level</p>
         </div>
-        <RankingTable rows={enrichedBarangays} />
+        <RankingTable
+          rows={enrichedBarangays}
+          selectedName={selectedBarangayName}
+          onSelectRow={(row) => {
+            setSelectedBarangayName(row.name);
+            onDrilldown({
+              title: row.name,
+              subtitle: 'Filtered incident records for this location.',
+              records: row.records || [],
+            });
+          }}
+        />
       </div>
     </div>
   );
@@ -761,6 +1142,78 @@ function PerformanceTable({ rows }) {
   );
 }
 
+function TeamRunAnalyticsCard({ rows, familyRows }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">Responding Team Run Analytics</h3>
+          <p className="text-xs text-muted-foreground">Alpha, Bravo, and Charlie workload by run number.</p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-semibold text-muted-foreground">
+          {familyRows.map((row) => (
+            <div key={row.family} className="rounded-md border border-border bg-secondary/30 px-2 py-1">
+              <span className="block text-foreground">{row.dispatches}</span>
+              {row.family}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="border-b border-border text-muted-foreground">
+              <th className="px-3 py-2 text-left font-medium">Team</th>
+              <th className="px-3 py-2 text-left font-medium">Group</th>
+              <th className="px-3 py-2 text-right font-medium">Dispatches</th>
+              <th className="px-3 py-2 text-right font-medium">PCR Submitted</th>
+              <th className="px-3 py-2 text-right font-medium">Avg Response</th>
+              <th className="px-3 py-2 text-right font-medium">Avg Scene</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(row => (
+              <tr key={row.name} className="border-b border-border/60">
+                <td className="px-3 py-2 font-semibold text-foreground">{row.name}</td>
+                <td className="px-3 py-2 text-muted-foreground">{row.family}{row.run ? ` ${row.run}` : ''}</td>
+                <td className="px-3 py-2 text-right text-muted-foreground">{row.dispatches}</td>
+                <td className="px-3 py-2 text-right text-muted-foreground">{row.submittedPcr}</td>
+                <td className="px-3 py-2 text-right text-muted-foreground">{formatMinutes(row.avgResponseMinutes)}</td>
+                <td className="px-3 py-2 text-right text-muted-foreground">{formatMinutes(row.avgSceneMinutes)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function MvcCompletionCard({ rows }) {
+  return (
+    <div className="mb-5 rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-foreground">MVC Crash Field Completion</h3>
+        <p className="text-xs text-muted-foreground">Missing fields stay visible without crowding the charts.</p>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {rows.map(row => (
+          <div key={row.label} className="rounded-lg border border-border bg-secondary/30 p-3">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <span className="font-semibold text-foreground">{row.label}</span>
+              <span className="font-bold text-blue-300">{row.percent}%</span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-background">
+              <div className="h-full rounded-full bg-blue-500" style={{ width: `${row.percent}%` }} />
+            </div>
+            <div className="mt-2 text-[10px] text-muted-foreground">{row.complete} complete / {row.missing} missing</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -822,6 +1275,10 @@ export default function Analytics() {
     heatmap: true,
     criticalZones: true,
   });
+  const [activeTab, setActiveTab] = useState('overview');
+  const [locationScope, setLocationScope] = useState('all');
+  const [selectedBarangayName, setSelectedBarangayName] = useState('');
+  const [drilldown, setDrilldown] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -895,6 +1352,7 @@ export default function Analytics() {
     classification: String(incident.classification || incident.type || 'Other').toUpperCase(),
     priority: incident.priority ? `${incident.priority[0].toUpperCase()}${incident.priority.slice(1)}` : 'Medium',
     barangay: incident.barangay,
+    municipality: incident.municipality || incident.verifiedMunicipality || incident.extractedMunicipality || '',
     date: incident.date,
     time: incident.time,
     timeOfDay: getTimeOfDay(incident.time),
@@ -905,27 +1363,32 @@ export default function Analytics() {
     date: pcrAnalyticsDate(report),
     time: pcrIncidentTime(report),
     month: pcrAnalyticsDate(report) ? new Date(pcrAnalyticsDate(report)).getMonth() : 0,
+    barangay: report.barangay || report.incidentBarangay || '',
+    municipality: report.municipality || report.incidentMunicipality || '',
     triage: normalizeAnalyticsLabel(report.triage, 'No Triage Recorded'),
     status: normalizeAnalyticsLabel(report.status, 'Draft'),
     receivingFacility: normalizeAnalyticsLabel(report.hospitalName || report.endorsedTo || report.receivedBy, 'No Facility Recorded'),
   })), [officialVerifiedPcrReports]);
-  const filteredPcrReports = useMemo(() => filterIncidentsByRange(analyticsPcrReports, range, customRange), [analyticsPcrReports, range, customRange]);
+  const dateFilteredPcrReports = useMemo(() => filterIncidentsByRange(analyticsPcrReports, range, customRange), [analyticsPcrReports, range, customRange]);
+  const filteredPcrReports = useMemo(() => filterByLocationScope(dateFilteredPcrReports, locationScope), [dateFilteredPcrReports, locationScope]);
   const analyticsDispatches = useMemo(() => officialVerifiedDispatches.map(dispatch => ({
     ...dispatch,
     date: dispatch.dateOfIncident || String(dispatch.createdAt || '').slice(0, 10),
     time: dispatch.timeOfIncident || dispatch.dispatchedTime || '',
     month: dispatch.dateOfIncident ? new Date(dispatch.dateOfIncident).getMonth() : 0,
   })), [officialVerifiedDispatches]);
-  const filteredDispatches = useMemo(() => filterIncidentsByRange(analyticsDispatches, range, customRange), [analyticsDispatches, range, customRange]);
+  const dateFilteredDispatches = useMemo(() => filterIncidentsByRange(analyticsDispatches, range, customRange), [analyticsDispatches, range, customRange]);
+  const filteredDispatches = useMemo(() => filterByLocationScope(dateFilteredDispatches, locationScope), [dateFilteredDispatches, locationScope]);
 
-  const filtered = useMemo(() => filterIncidentsByRange(analyticsIncidents, range, customRange), [analyticsIncidents, range, customRange]);
+  const dateFiltered = useMemo(() => filterIncidentsByRange(analyticsIncidents, range, customRange), [analyticsIncidents, range, customRange]);
+  const filtered = useMemo(() => filterByLocationScope(dateFiltered, locationScope), [dateFiltered, locationScope]);
   const spatioFilterOptions = useMemo(() => {
     const typeOptions = [...new Set(filtered.map((item) => item.classification).filter(Boolean))]
       .sort()
       .map((value) => ({ value, label: toTitleCase(value) }));
-    const barangayOptions = [...new Set(filtered.map((item) => item.barangay).filter(Boolean))]
+    const barangayOptions = [...new Set(filtered.map((item) => item.barangay || item.municipality).filter(Boolean))]
       .sort()
-      .map((value) => ({ value, label: value }));
+      .map((value) => ({ value, label: formatBarangayAnalyticsLabel(value, { outsideEchague: false }) }));
     const severityOptions = [...new Set(filtered.map((item) => item.priority).filter(Boolean))]
       .sort((first, second) => (priorityColors[second] ? 1 : 0) - (priorityColors[first] ? 1 : 0))
       .map((value) => ({ value, label: value }));
@@ -938,7 +1401,7 @@ export default function Analytics() {
   }, [filtered]);
   const spatioFiltered = useMemo(() => filtered.filter((item) => {
     const typeMatch = spatioFilters.type === 'all' || item.classification === spatioFilters.type;
-    const barangayMatch = spatioFilters.barangay === 'all' || item.barangay === spatioFilters.barangay;
+    const barangayMatch = spatioFilters.barangay === 'all' || item.barangay === spatioFilters.barangay || (!item.barangay && item.municipality === spatioFilters.barangay);
     const severityMatch = spatioFilters.severity === 'all' || item.priority === spatioFilters.severity;
     const timeMatch = spatioFilters.timeOfDay === 'all' || item.timeOfDay === spatioFilters.timeOfDay;
     return typeMatch && barangayMatch && severityMatch && timeMatch;
@@ -951,12 +1414,17 @@ export default function Analytics() {
     [weightedRiskAreas]
   );
   const enrichedBarangays = useMemo(() => barangays.map((barangay) => {
-    const records = spatioFiltered.filter((item) => item.barangay === barangay.name);
+    const records = spatioFiltered.filter((item) => {
+      const locationName = item.barangay || item.municipality || '';
+      return barangay.missingLocation
+        ? !locationName || locationName === 'Unspecified'
+        : locationName === (barangay.sourceName || barangay.name);
+    });
     const timeSummary = summarizeBy(records, (item) => timePeriods.find((period) => period.key === item.timeOfDay)?.label || 'Unspecified');
     const incidentSummary = summarizeBy(records, 'classification');
     const critical = records.filter((item) => item.priority === 'Critical').length;
     const high = records.filter((item) => item.priority === 'High').length;
-    const weightedArea = weightedRiskByBarangay.get(barangay.name);
+    const weightedArea = weightedRiskByBarangay.get(barangay.sourceName || barangay.name);
     const periodCounts = Object.fromEntries(timePeriods.map((period) => [
       period.key,
       records.filter((item) => item.timeOfDay === period.key).length,
@@ -964,6 +1432,7 @@ export default function Analytics() {
 
     return {
       ...barangay,
+      records,
       periodCounts,
       peakTime: timeSummary[0]?.name || 'Unspecified',
       mostCommonIncident: weightedArea?.most_common_incident_type || toTitleCase(incidentSummary[0]?.name || barangay.mostCommonIncidentType),
@@ -1005,6 +1474,19 @@ export default function Analytics() {
     dateTimeFrom(dispatch.date, dispatch.arrivalScene),
     dateTimeFrom(dispatch.date, dispatch.departureScene),
   ))), [filteredDispatches]);
+  const previousWindow = useMemo(() => previousDateRange(range, customRange), [range, customRange]);
+  const previousFiltered = useMemo(() => filterByLocationScope(filterItemsByDateWindow(analyticsIncidents, previousWindow), locationScope), [analyticsIncidents, locationScope, previousWindow]);
+  const previousFilteredDispatches = useMemo(() => filterByLocationScope(filterItemsByDateWindow(analyticsDispatches, previousWindow), locationScope), [analyticsDispatches, locationScope, previousWindow]);
+  const previousFilteredPcrReports = useMemo(() => filterByLocationScope(filterItemsByDateWindow(analyticsPcrReports, previousWindow), locationScope), [analyticsPcrReports, locationScope, previousWindow]);
+  const previousSubmittedPcrCount = useMemo(() => previousFilteredPcrReports.filter((item) => submittedStatuses.has(item.status)).length, [previousFilteredPcrReports]);
+  const previousAvgResponseMinutes = useMemo(() => average(previousFilteredDispatches.map(dispatch => minutesBetween(
+    dateTimeFrom(dispatch.date, dispatch.dispatchedTime || dispatch.timeOfIncident),
+    dateTimeFrom(dispatch.date, dispatch.arrivalScene),
+  ))), [previousFilteredDispatches]);
+  const previousMvcCount = useMemo(
+    () => previousFiltered.filter(isMvcIncident).length + previousFilteredPcrReports.filter(hasCrashData).length,
+    [previousFiltered, previousFilteredPcrReports],
+  );
   const monthlyTotals = useMemo(() => months.map((month, index) => ({
     month: month.slice(0, 3),
     incidents: analyticsIncidents.filter(item => item.month === index).length,
@@ -1058,6 +1540,25 @@ export default function Analytics() {
   const helmetStats = useMemo(() => summarizeBy(mvcAccidentRecords, report => normalizeYesNo(report.crash?.helmet)), [mvcAccidentRecords]);
   const licenseStats = useMemo(() => summarizeBy(mvcAccidentRecords, report => normalizeYesNo(report.crash?.license)), [mvcAccidentRecords]);
   const mvcWithCrashDetails = useMemo(() => mvcAccidentRecords.filter(record => record.hasLinkedPcrCrash).length, [mvcAccidentRecords]);
+  const comparison = useMemo(() => ({
+    available: Boolean(previousWindow),
+    incidents: filtered.length - previousFiltered.length,
+    avgResponseMinutes: Number.isFinite(avgResponseMinutes) && Number.isFinite(previousAvgResponseMinutes)
+      ? avgResponseMinutes - previousAvgResponseMinutes
+      : 0,
+    submittedPcr: submittedPcrCount - previousSubmittedPcrCount,
+    mvc: mvcAccidentRecords.length - previousMvcCount,
+  }), [avgResponseMinutes, filtered.length, mvcAccidentRecords.length, previousAvgResponseMinutes, previousFiltered.length, previousMvcCount, previousSubmittedPcrCount, previousWindow, submittedPcrCount]);
+  const mvcCompletionRows = useMemo(() => [
+    ['Role', record => normalizeCrashRole(record.crash?.role) !== 'No Role Recorded'],
+    ['Alcohol Breath', record => normalizeYesNo(record.crash?.alcohol) !== 'No Data'],
+    ['Helmet', record => normalizeYesNo(record.crash?.helmet) !== 'No Data'],
+    ['Driver License', record => normalizeYesNo(record.crash?.license) !== 'No Data'],
+  ].map(([label, hasValue]) => {
+    const complete = mvcAccidentRecords.filter(hasValue).length;
+    const missing = Math.max(mvcAccidentRecords.length - complete, 0);
+    return { label, complete, missing, percent: completionPercent(mvcAccidentRecords.length, complete) };
+  }), [mvcAccidentRecords]);
   const performanceRows = useMemo(() => {
     const barangayNames = [...new Set(filteredDispatches.map(dispatch => dispatch.barangay || 'Unspecified'))];
     return barangayNames.map(name => {
@@ -1079,6 +1580,95 @@ export default function Analytics() {
       };
     }).sort((first, second) => second.dispatches - first.dispatches).slice(0, 10);
   }, [filteredDispatches, filteredPcrReports]);
+  const teamPerformanceRows = useMemo(() => {
+    const observedTeamNames = [...new Set(filteredDispatches.map(teamName).filter(Boolean))];
+    const names = [...standardTeamNames, ...observedTeamNames.filter(name => !standardTeamNames.includes(name))];
+    return names.map(name => {
+      const rows = filteredDispatches.filter(dispatch => teamName(dispatch) === name);
+      const responseIds = new Set(rows.map(dispatch => dispatch.responseId).filter(Boolean));
+      const submittedPcr = filteredPcrReports.filter(report => responseIds.has(report.responseId) && submittedStatuses.has(report.status)).length;
+      const parsed = parseTeamRun(name);
+      return {
+        name,
+        family: parsed.family,
+        run: parsed.run,
+        dispatches: rows.length,
+        submittedPcr,
+        avgResponseMinutes: average(rows.map(dispatch => minutesBetween(
+          dateTimeFrom(dispatch.date, dispatch.dispatchedTime || dispatch.timeOfIncident),
+          dateTimeFrom(dispatch.date, dispatch.arrivalScene),
+        ))),
+        avgSceneMinutes: average(rows.map(dispatch => minutesBetween(
+          dateTimeFrom(dispatch.date, dispatch.arrivalScene),
+          dateTimeFrom(dispatch.date, dispatch.departureScene),
+        ))),
+      };
+    });
+  }, [filteredDispatches, filteredPcrReports]);
+  const teamFamilyRows = useMemo(() => teamFamilies.map(family => {
+    const rows = teamPerformanceRows.filter(row => row.family === family);
+    return {
+      family,
+      dispatches: rows.reduce((sum, row) => sum + row.dispatches, 0),
+    };
+  }), [teamPerformanceRows]);
+  const actionableInsights = useMemo(() => {
+    const slowestArea = [...performanceRows]
+      .filter(row => Number.isFinite(row.avgResponseMinutes))
+      .sort((first, second) => second.avgResponseMinutes - first.avgResponseMinutes)[0];
+    const outsideRecords = filtered.filter(item => locationScopeForItem(item) === 'outside');
+    const missingCrashRecords = mvcAccidentRecords.filter(record => !record.hasLinkedPcrCrash);
+    const topBarangay = enrichedBarangays[0];
+    return [
+      topBarangay && {
+        title: 'Review highest road-risk area',
+        value: topBarangay.name,
+        helper: `${topBarangay.count} filtered incident${topBarangay.count === 1 ? '' : 's'} with ${topBarangay.riskLevel || 'Minimal'} risk.`,
+        badge: 'Map',
+        onClick: () => {
+          setSelectedBarangayName(topBarangay.name);
+          setActiveTab('spatial');
+          setDrilldown({ title: topBarangay.name, subtitle: 'Incident records behind the current risk ranking.', records: topBarangay.records || [] });
+        },
+      },
+      slowestArea && {
+        title: 'Check slowest response area',
+        value: slowestArea.name,
+        helper: `Average response is ${formatMinutes(slowestArea.avgResponseMinutes)} across ${slowestArea.dispatches} dispatch${slowestArea.dispatches === 1 ? '' : 'es'}.`,
+        badge: 'Ops',
+        tone: 'border-amber-500/25 bg-amber-500/10 text-amber-300',
+        onClick: () => {
+          setActiveTab('operations');
+          setDrilldown({
+            title: slowestArea.name,
+            subtitle: 'Dispatch records for the slowest response area.',
+            records: filteredDispatches.filter(dispatch => (dispatch.barangay || 'Unspecified') === slowestArea.name),
+          });
+        },
+      },
+      missingCrashRecords.length > 0 && {
+        title: 'Complete MVC crash details',
+        value: `${missingCrashRecords.length} missing`,
+        helper: 'Fill linked PCR crash details for stronger helmet, license, alcohol, and role analytics.',
+        badge: 'MVC',
+        tone: 'border-red-500/25 bg-red-500/10 text-red-300',
+        onClick: () => {
+          setActiveTab('mvc');
+          setDrilldown({ title: 'MVC Records Missing Crash Details', subtitle: 'Records counted as MVC but missing linked PCR crash details.', records: missingCrashRecords });
+        },
+      },
+      outsideRecords.length > 0 && {
+        title: 'Validate outside-Echague locations',
+        value: `${outsideRecords.length} record${outsideRecords.length === 1 ? '' : 's'}`,
+        helper: 'Known municipalities outside Echague are labeled separately from no-location records.',
+        badge: 'Scope',
+        onClick: () => {
+          setLocationScope('outside');
+          setDrilldown({ title: 'Outside Echague Locations', subtitle: 'Filtered official incidents with known locations outside Echague.', records: outsideRecords });
+        },
+      },
+    ].filter(Boolean);
+  }, [enrichedBarangays, filtered, filteredDispatches, mvcAccidentRecords, performanceRows]);
 
   return (
     <div className="min-h-full bg-background p-5" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -1103,7 +1693,7 @@ export default function Analytics() {
       </div>
       {loading && <div className="mb-5 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Loading analytics data...</div>}
       {error && <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
-      <SectionNav />
+      <SectionNav activeTab={activeTab} onChange={setActiveTab} />
       <div className="mb-5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-xs text-blue-200">
         Analytics source: <strong>Official MDRRMO records only</strong>. Scraped or external records are excluded; incident, dispatch, and PCR analytics use admin-verified official data.
       </div>
@@ -1117,13 +1707,29 @@ export default function Analytics() {
         />
       )}
 
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <MetricCard label="Total Incidents" value={filtered.length} helper="Official admin-verified records" icon={AlertTriangle} tone="border-red-500/20 bg-red-500/10 text-red-400" />
-        <MetricCard label="Avg Response Time" value={formatMinutes(avgResponseMinutes)} helper={`${filteredDispatches.length} dispatch records`} icon={Clock} tone="border-blue-500/20 bg-blue-500/10 text-blue-400" />
-        <MetricCard label="Submitted PCRs" value={submittedPcrCount} helper={`${filteredPcrReports.length} PCR records in range`} icon={CheckCircle2} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
-        <MetricCard label="Medical / Trauma" value={`${medicalCount}/${traumaCount}`} helper={`Avg scene ${formatMinutes(avgSceneMinutes)}`} icon={HeartPulse} tone="border-orange-500/20 bg-orange-500/10 text-orange-400" />
-      </div>
+      {activeTab === 'overview' && (
+        <OverviewSection
+          filtered={filtered}
+          filteredDispatches={filteredDispatches}
+          filteredPcrReports={filteredPcrReports}
+          spatioFiltered={spatioFiltered}
+          summary={spatioSummary}
+          range={range}
+          customRange={customRange}
+          avgResponseMinutes={avgResponseMinutes}
+          avgSceneMinutes={avgSceneMinutes}
+          submittedPcrCount={submittedPcrCount}
+          medicalCount={medicalCount}
+          traumaCount={traumaCount}
+          mvcAccidentRecords={mvcAccidentRecords}
+          mvcWithCrashDetails={mvcWithCrashDetails}
+          comparison={comparison}
+          actionableInsights={actionableInsights}
+          onOpenTab={setActiveTab}
+        />
+      )}
 
+      {activeTab === 'spatial' && (
       <section id="analytics-spatial" className="scroll-mt-4">
         <SpatioTemporalSection
           filteredIncidents={spatioFiltered}
@@ -1138,9 +1744,16 @@ export default function Analytics() {
           setLayerVisibility={setSpatioLayers}
           range={range}
           customRange={customRange}
+          locationScope={locationScope}
+          setLocationScope={setLocationScope}
+          selectedBarangayName={selectedBarangayName}
+          setSelectedBarangayName={setSelectedBarangayName}
+          onDrilldown={setDrilldown}
         />
       </section>
+      )}
 
+      {activeTab === 'operations' && (
       <section id="analytics-operations" className="scroll-mt-4">
         <SectionHeader title="Operational Performance" subtitle="Real dispatch, incident, and PCR records from the database for the selected date range" />
         <div className="mb-5 grid gap-5 xl:grid-cols-2">
@@ -1150,13 +1763,14 @@ export default function Analytics() {
         <div className="mb-5">
           <PerformanceTable rows={performanceRows} />
         </div>
+        <TeamRunAnalyticsCard rows={teamPerformanceRows} familyRows={teamFamilyRows} />
       </section>
+      )}
 
+      {activeTab === 'mvc' && (
       <section id="analytics-mvc" className="mt-5 scroll-mt-4">
         <SectionHeader title="MVC Safety Analytics" subtitle="Driver, passenger, pedestrian, alcohol breath, helmet, and license indicators aligned to all MVC incident records" />
-        <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          {mvcWithCrashDetails} of {mvcAccidentRecords.length} MVC records have linked PCR crash details. Missing fields are counted as No Data.
-        </div>
+        <MvcCompletionCard rows={mvcCompletionRows} />
         <div className="mb-5 grid gap-5 xl:grid-cols-2">
           <DistributionCard title="Driver / Passenger / Pedestrian" subtitle={`${mvcAccidentRecords.length} MVC accident records from the main database`} data={crashRoleStats} />
           <DistributionCard title="Alcohol Breath" subtitle="All MVC records; Yes/No only appears when linked PCR crash data is filled" data={alcoholBreathStats} type="pie" />
@@ -1164,7 +1778,9 @@ export default function Analytics() {
           <DistributionCard title="Driver's License" subtitle="All MVC records; Yes/No only appears when linked PCR crash data is filled" data={licenseStats} type="pie" />
         </div>
       </section>
+      )}
 
+      {activeTab === 'pcr' && (
       <section id="analytics-pcr" className="scroll-mt-4">
         <SectionHeader title="PCR Clinical Analytics" subtitle="Patient care report status, triage, emergency type, and receiving facility indicators" />
         <div className="grid gap-5 xl:grid-cols-2">
@@ -1185,6 +1801,8 @@ export default function Analytics() {
           </div>
         </div>
       </section>
+      )}
+      <DrilldownDrawer drilldown={drilldown} onClose={() => setDrilldown(null)} />
     </div>
   );
 }
