@@ -233,6 +233,12 @@ export default function PCRReports() {
   };
   const createManual = async () => {
     try {
+      if (!getConnectionState().cloudOnline) {
+        sessionStorage.removeItem(PCR_EDIT_KEY);
+        navigate('/admin/pcr/new');
+        toast.info('Offline standalone PCR opened. Save Draft to keep it on this device until synchronization is available.');
+        return;
+      }
       const pcrId = await createStandalonePCRShell({ dateOfIncident: new Date().toISOString().slice(0, 10) });
       sessionStorage.setItem(PCR_EDIT_KEY, pcrId);
       navigate(`/admin/pcr/new?edit=${pcrId}`);
