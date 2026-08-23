@@ -46,12 +46,21 @@ function classificationFromRecord(classification, extended = {}) {
 }
 
 function priorityToMapSeverity(priority = "medium", extended = {}) {
-  const normalized = String(extended.triage || extended.triageLevel || priority || "").trim().toLowerCase();
+  const normalized = String(extended.pcrTriage || extended.triage || extended.triageLevel || priority || "").trim().toLowerCase();
   if (normalized === "black") return "black";
   if (normalized === "red" || normalized === "critical" || normalized === "high" || normalized === "warning") return "red";
   if (normalized === "yellow" || normalized === "medium" || normalized === "moderate") return "yellow";
   if (normalized === "green" || normalized === "low") return "green";
   return "yellow";
+}
+
+function triageRank(value = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "black") return 4;
+  if (normalized === "red" || normalized === "critical" || normalized === "high" || normalized === "warning") return 3;
+  if (normalized === "yellow" || normalized === "medium" || normalized === "moderate") return 2;
+  if (normalized === "green" || normalized === "low") return 1;
+  return 0;
 }
 
 function summarizeDescription(text, extended = {}, response = {}) {
@@ -99,7 +108,8 @@ function incidentToApp(row = {}) {
     subtype: row.subtype || "",
     priority,
     type: classification === "mvc" ? "vehicular" : classification,
-    severity: priorityToMapSeverity(priority, descriptionParts.extended),
+    triage: row.pcrTriage || descriptionParts.extended.triage || "",
+    severity: priorityToMapSeverity(priority, { ...descriptionParts.extended, pcrTriage: row.pcrTriage }),
     title: row.title || "",
     description: summarizeDescription(descriptionParts.text, descriptionParts.extended, response),
     date: row.incident_date,
@@ -143,6 +153,37 @@ async function casualtyCountsByResponse(responseIds = []) {
       const fallbackCount = row.dispatch_patients?.length || 0;
       return [row.response_id, Number.isFinite(patientCount) ? patientCount : fallbackCount];
     }));
+  } catch {
+    return new Map();
+  }
+}
+
+async function pcrTriageByResponse(responseIds = []) {
+  const ids = [...new Set(responseIds.filter(Boolean))];
+  if (!ids.length) return new Map();
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("pcr_reports")
+        .select("response_id, triage, updated_at, created_at")
+        .in("response_id", ids)
+        .is("deleted_at", null)
+        .limit(5000),
+    "Unable to load PCR triage values.");
+
+    const byResponse = new Map();
+    asRows(rows).forEach(row => {
+      if (!row.response_id || !row.triage) return;
+      const current = byResponse.get(row.response_id);
+      const nextRank = triageRank(row.triage);
+      const currentRank = triageRank(current?.triage);
+      const nextUpdated = new Date(row.updated_at || row.created_at || 0).getTime();
+      const currentUpdated = new Date(current?.updated_at || current?.created_at || 0).getTime();
+      if (!current || nextRank > currentRank || (nextRank === currentRank && nextUpdated > currentUpdated)) {
+        byResponse.set(row.response_id, row);
+      }
+    });
+    return new Map([...byResponse.entries()].map(([responseId, row]) => [responseId, row.triage]));
   } catch {
     return new Map();
   }
@@ -235,10 +276,15 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
   }, "Unable to load incidents.");
 
   const baseRows = asRows(data);
-  const casualtiesByResponse = await casualtyCountsByResponse(baseRows.map(row => row.response_id));
+  const responseIds = baseRows.map(row => row.response_id);
+  const [casualtiesByResponse, triageByResponse] = await Promise.all([
+    casualtyCountsByResponse(responseIds),
+    pcrTriageByResponse(responseIds),
+  ]);
   const rows = baseRows.map(row => incidentToApp({
     ...row,
     casualties: casualtiesByResponse.get(row.response_id) || 0,
+    pcrTriage: triageByResponse.get(row.response_id) || "",
   }));
   rows.totalCount = count ?? rows.length;
   return rows;
