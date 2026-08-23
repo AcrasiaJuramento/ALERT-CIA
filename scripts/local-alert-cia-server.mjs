@@ -167,8 +167,26 @@ class PersistentRecordMap {
 const dispatches = new PersistentRecordMap("dispatch", "id");
 const pcrReports = new PersistentRecordMap("pcr", "responseId");
 
+function sameId(left, right) {
+  return Boolean(left && right && String(left) === String(right));
+}
+
+function responseMatches(record = {}, responseId) {
+  return sameId(record.responseId, responseId)
+    || sameId(record.responseClientId, responseId)
+    || sameId(record.response_id, responseId)
+    || sameId(record.response?.id, responseId)
+    || sameId(record.response?.client_generated_id, responseId);
+}
+
 function findPcrById(id) {
   return pcrReports.values().find(record => record.id === id || record.pcrId === id);
+}
+
+function findPcrByResponse(responseId) {
+  return pcrReports.get(responseId)
+    || pcrReports.values().find(record => responseMatches(record, responseId))
+    || null;
 }
 
 function json(res, status, body) {
@@ -436,7 +454,7 @@ function normalizeDispatch(payload = {}) {
 }
 
 function findDispatchByResponse(responseId) {
-  return [...dispatches.values()].find(dispatch => dispatch.responseId === responseId);
+  return [...dispatches.values()].find(dispatch => responseMatches(dispatch, responseId));
 }
 
 function withLocalSubmittedPcr(dispatch, pcr, submittedAt) {
@@ -626,7 +644,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "Response not found on local server." });
         return;
       }
-      const pcrId = pcrReports.get(dispatch.responseId)?.id || randomUUID();
+      const pcrId = findPcrByResponse(dispatch.responseId || accept[1])?.id || randomUUID();
       const pcr = {
         ...dispatch,
         team: dispatch.team || dispatch.respondingTeam || "",
@@ -661,7 +679,7 @@ const server = http.createServer(async (req, res) => {
 
     const pcrByResponse = url.pathname.match(/^\/api\/responses\/([^/]+)\/pcr$/);
     if (req.method === "GET" && pcrByResponse) {
-      json(res, 200, pcrReports.get(pcrByResponse[1]) || null);
+      json(res, 200, findPcrByResponse(pcrByResponse[1]));
       return;
     }
 
@@ -673,7 +691,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 400, { error: "PCR responseId is required for local sync." });
         return;
       }
-      const existing = pcrReports.get(responseId) || {};
+      const existing = findPcrByResponse(responseId) || {};
       const record = {
         ...existing,
         ...payload,
@@ -703,7 +721,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 400, { error: "PCR responseId is required for local submission." });
         return;
       }
-      const existing = pcrReports.get(responseId) || {};
+      const existing = findPcrByResponse(responseId) || {};
       const submittedAt = new Date().toISOString();
       const dispatch = payload.dispatchId
         ? dispatches.get(payload.dispatchId)
@@ -741,7 +759,7 @@ const server = http.createServer(async (req, res) => {
     const backToBase = url.pathname.match(/^\/api\/responses\/([^/]+)\/back-to-base$/);
     if (req.method === "POST" && backToBase) {
       const dispatch = findDispatchByResponse(backToBase[1]);
-      const pcr = pcrReports.get(backToBase[1]);
+      const pcr = findPcrByResponse(backToBase[1]);
       if (!dispatch || !pcr) {
         json(res, 404, { error: "No linked PCR report found on local server." });
         return;
@@ -771,7 +789,7 @@ const server = http.createServer(async (req, res) => {
         updatedAt: completedAt,
       };
       dispatches.set(dispatch.id, completedDispatch);
-      pcrReports.set(backToBase[1], completedPcr);
+      pcrReports.set(completedPcr.responseId || backToBase[1], completedPcr);
       broadcastEvent("pcr_changed", { pcrId: completedPcr.id, responseId: completedPcr.responseId, status: completedPcr.status, record: completedPcr });
       broadcastEvent("dispatch_changed", { dispatchId: completedDispatch.id, responseId: completedDispatch.responseId, status: completedDispatch.status, record: completedDispatch });
       json(res, 200, { dispatch: completedDispatch, pcr: completedPcr });
