@@ -78,6 +78,17 @@ function writePcrReferenceCache(value) {
     // The form still works when browser storage is unavailable.
   }
 }
+function mergeCachedManualOptions(remote = [], cached = [], identity) {
+  const next = [...remote];
+  for (const option of cached.filter(item => item?.localManual)) {
+    if (!next.some(item => identity(item) === identity(option))) next.push(option);
+  }
+  return next;
+}
+function manualReferenceId(type, value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `manual-${type}-${normalized || randomUuid()}`;
+}
 function formatCurrentTime() {
   const now = new Date();
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
@@ -312,9 +323,9 @@ export default function PCRModule() {
         if (!mounted) return;
         const cached = readPcrReferenceCache();
         const next = {
-          teams: teamsResult.status === "fulfilled" ? teamsResult.value : cached.teams,
-          vehicles: vehiclesResult.status === "fulfilled" ? vehiclesResult.value : cached.vehicles,
-          crew: crewResult.status === "fulfilled" ? crewResult.value : cached.crew,
+          teams: teamsResult.status === "fulfilled" ? mergeCachedManualOptions(teamsResult.value, cached.teams, item => String(item.name || "").trim().toLowerCase()) : cached.teams,
+          vehicles: vehiclesResult.status === "fulfilled" ? mergeCachedManualOptions(vehiclesResult.value, cached.vehicles, item => String(item.call_sign || "").trim().toLowerCase()) : cached.vehicles,
+          crew: crewResult.status === "fulfilled" ? mergeCachedManualOptions(crewResult.value, cached.crew, item => `${item.role}:${String(item.name || "").trim().toLowerCase()}`) : cached.crew,
         };
         setTeamOptions(next.teams);
         setVehicleOptions(next.vehicles);
@@ -410,6 +421,34 @@ export default function PCRModule() {
   };
   const updateTeamManually = value => setForm(f => synchronizePCR({ ...f, respondingTeamId: "", respondingTeam: value, team: value }));
   const updateVehicleManually = value => setForm(f => synchronizePCR({ ...f, vehicleId: "", vehicle: value }));
+  const saveManualReferencesToDropdowns = record => {
+    if (!isStandalonePCR) return;
+    const team = String(record.respondingTeam || record.team || "").trim();
+    const vehicle = String(record.vehicle || "").trim();
+    const manualCrew = [
+      ["driver", record.driver],
+      ["main_aider", record.mainAider],
+      ["group_leader", record.groupLeader],
+      ["assistant_aider", record.assistantAider],
+    ].filter(([, name]) => String(name || "").trim());
+    const nextTeams = team && !teamOptions.some(item => item.name?.trim().toLowerCase() === team.toLowerCase())
+      ? [...teamOptions, { id: manualReferenceId("team", team), name: team, localManual: true }]
+      : teamOptions;
+    const nextVehicles = vehicle && !vehicleOptions.some(item => item.call_sign?.trim().toLowerCase() === vehicle.toLowerCase())
+      ? [...vehicleOptions, { id: manualReferenceId("vehicle", vehicle), call_sign: vehicle, plate_number: "", localManual: true }]
+      : vehicleOptions;
+    const nextCrew = [...crewOptions];
+    for (const [role, rawName] of manualCrew) {
+      const name = String(rawName).trim();
+      if (!nextCrew.some(item => item.role === role && item.name?.trim().toLowerCase() === name.toLowerCase())) {
+        nextCrew.push({ id: manualReferenceId(role, name), name, role, responding_team_id: null, localManual: true });
+      }
+    }
+    setTeamOptions(nextTeams);
+    setVehicleOptions(nextVehicles);
+    setCrewOptions(nextCrew);
+    writePcrReferenceCache({ teams: nextTeams, vehicles: nextVehicles, crew: nextCrew });
+  };
   const teamName = form.respondingTeam || form.team || "";
   const effectiveTeamOptions = useMemo(() => {
     const options = [...teamOptions];
@@ -586,6 +625,7 @@ export default function PCRModule() {
         if (form.status === 'Returned for Correction') await resubmitReverseWorkflow(pcrId);
         else await submitStandalonePCR(pcrId);
       }
+      saveManualReferencesToDropdowns(payload);
       setForm(synchronizePCR({ ...form, ...saved }));
       setMessage(saved.hybridMessage || (status === "Draft" ? "Draft saved." : "PCR submitted successfully."));
       if (status !== "Draft") setTimeout(() => navigate("/admin/pcr"), 800);
