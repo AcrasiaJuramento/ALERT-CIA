@@ -4,6 +4,7 @@ import { localServerClient } from '../api/local-server-client';
 import { checkConnection, getConnectionState } from '../network/connection-manager';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import { logAuditEvent } from '../services/supabase/auditService';
+import { refreshPCRReferenceCache } from '../services/pcrReferenceCache';
 
 const AUTH_STORAGE_KEY = 'alert-cia-auth-user';
 const OFFLINE_AUTH_KEY = 'alert-cia-offline-auth';
@@ -140,6 +141,7 @@ export function AuthProvider({ children }) {
           const nextUser = profileToUser(profile);
           localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
           if (mounted) setUser(nextUser);
+          void refreshPCRReferenceCache().catch(error => console.warn('[offline-reference] Session cache refresh failed.', error?.message || error));
         } else {
           await supabase.auth.signOut();
           localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -202,6 +204,7 @@ export function AuthProvider({ children }) {
       await saveOfflineLogin(nextUser, password);
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
       setUser(nextUser);
+      void refreshPCRReferenceCache().catch(error => console.warn('[offline-reference] Login cache refresh failed.', error?.message || error));
       void logAuditEvent({ action: 'USER_LOGIN', module: 'AUTH', recordReference: nextUser.id, description: `${nextUser.name} signed in to ALERT-CIA.`, platform: 'Web', metadata: { source: 'supabase' } });
       return nextUser;
     }
