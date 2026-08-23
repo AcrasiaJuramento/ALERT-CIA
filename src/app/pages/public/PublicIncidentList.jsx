@@ -1,6 +1,5 @@
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { Search, MapPin, Clock, Filter, Flame, Droplets, Car, Heart, AlertTriangle } from 'lucide-react';
-import { getIncidentStatusLabel, INCIDENT_STATUS } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
 import { formatDateAndTime } from '../../utils/dateFormat';
 
@@ -197,18 +196,6 @@ export default function PublicIncidentList() {
                         </div>
                       )}
                     </div>
-                  </div>
-                  {/* Status */}
-                  <div className="flex flex-col items-end gap-2">
-                    <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${
-                      incident.status === INCIDENT_STATUS.ON_SCENE ? 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400' :
-                      incident.status === INCIDENT_STATUS.TRANSPORTING ? 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-400' :
-                      incident.status === INCIDENT_STATUS.IN_ROUTE ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400' :
-                      incident.status === INCIDENT_STATUS.SCRAPED ? 'bg-slate-100 dark:bg-slate-500/20 text-slate-700 dark:text-slate-300' :
-                      'bg-green-100 dark:bg-green-500/20 text-green-700 dark:text-green-400'
-                    }`}>
-                      {getIncidentStatusLabel(incident.status)}
-                    </span>
                   </div>
                 </div>
               </div>

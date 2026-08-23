@@ -67,17 +67,17 @@ export async function loadPublicAccidentIncidents({ officialLimit = 500, scraped
 
   const official = mergeMapRecords((Array.isArray(officialSets) ? officialSets : []).flat());
   const [publicScraped = [], reviewedScraped = []] = Array.isArray(scrapedSets) ? scrapedSets : [];
-  const publicAndAccidentReports = official.filter(isAccidentRecord);
+  const publicAccidentReports = official.filter(isAccidentRecord);
   const scrapedAccidents = mergeMapRecords([
     ...(Array.isArray(publicScraped) ? publicScraped : []),
     ...(Array.isArray(reviewedScraped) ? reviewedScraped : []),
   ])
     .filter(isAccidentRecord);
-  const officialIds = new Set(publicAndAccidentReports.map(item => item.id));
+  const officialIds = new Set(publicAccidentReports.map(item => item.id));
   const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : [])
     .filter(item => !officialIds.has(item.relatedIncidentId));
 
-  return mergeMapRecords([...publicAndAccidentReports, ...pcrOnly, ...scrapedAccidents])
+  return mergeMapRecords([...publicAccidentReports, ...pcrOnly, ...scrapedAccidents])
     .filter(hasValidLatLng)
     .filter(isWithinIsabelaMapArea)
     .map(sanitizeForPublic);

@@ -5,7 +5,6 @@ import L from 'leaflet';
 import 'leaflet.markercluster';
 import { AlertTriangle, Flame, Droplets, Heart, MapPin, ShieldAlert } from 'lucide-react';
 import { getIncidentLatLng } from '../../utils/mapData';
-import { getIncidentStatusLabel } from '../../utils/incidentStatus';
 import { formatDateAndTime, formatLongDateTime } from '../../utils/dateFormat';
 import { locationAssessment } from '../../utils/locationAccuracy';
 
@@ -59,14 +58,12 @@ function PopupContent({ incident }) {
       {isPcr && (
         <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-[11px] text-blue-800">
           <div><strong>Incident type:</strong> {incident.incident_type || incident.type || 'Emergency response'}</div>
-          <div><strong>PCR status:</strong> {incident.pcrStatusLabel || incident.pcrStatus || getIncidentStatusLabel(incident.status)}</div>
           <div><strong>Date/time:</strong> {incident.incident_datetime ? formatLongDateTime(incident.incident_datetime) : formatDateAndTime(incident.date, incident.time)}</div>
         </div>
       )}
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>
       <div className="mt-2 flex items-center gap-2 text-[11px]">
         <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">{incident.severity}</span>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5">{getIncidentStatusLabel(incident.status)}</span>
       </div>
       {incident.description && (
         <p className="mt-2 text-xs leading-relaxed text-slate-600">{incident.description}</p>
