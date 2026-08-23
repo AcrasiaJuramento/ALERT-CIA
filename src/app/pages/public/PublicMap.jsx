@@ -24,6 +24,8 @@ import { getAccidentProneAreaRadiusMeters } from '../../utils/accidentProneWarni
 import {
   canStartAutomaticReroute,
   getNextOffRouteConfirmationCount,
+  isLatestAccidentRouteWarning,
+  LATEST_ACCIDENT_WARNING_DAYS,
   normalizeBrowserPosition,
 } from '../../utils/routeNavigation';
 
@@ -294,21 +296,24 @@ async function fetchRoute(start, destination) {
   return (await fetchRouteOptions(start, destination))[0];
 }
 
-function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, cautionAreas = [], routePoints, currentLocation }) {
+function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, cautionAreas = [], routePoints, currentLocation, now = new Date() }) {
   const incidentAlerts = incidents
+    .filter(item => isLatestAccidentRouteWarning(item, now))
     .map(item => {
       const latLng = getIncidentLatLng(item);
       const distance = nearestPointDistanceKm(latLng, routePoints);
       const approach = currentLocation ? distanceKm(currentLocation, latLng) : distance;
       return {
         id: item.id,
-        label: item.title || `${item.type || 'Incident'} alert`,
-        type: item.type || 'incident',
+        label: item.title || 'Latest accident warning',
+        type: 'latest-accident-warning',
         severity: item.severity || 'moderate',
         latLng,
         distance,
         approach,
-        description: item.description,
+        affectsReroute: false,
+        allowSaferRoute: false,
+        description: item.description || `Accident reported within the last ${LATEST_ACCIDENT_WARNING_DAYS} days near this route. Slow down and stay alert.`,
       };
     })
     .filter(item => item.distance <= 0.6);
@@ -326,6 +331,8 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, cautionA
         latLng: zonePoint,
         distance,
         approach,
+        affectsReroute: false,
+        allowSaferRoute: false,
         description: zone.description || 'Hazard zone near this route.',
       };
     })

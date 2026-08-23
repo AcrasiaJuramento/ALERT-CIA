@@ -21,6 +21,13 @@ const INJURY_TERMS = [
   "fatality", "fatalities", "ospital", "hospital", "isinugod", "dinala sa pagamutan",
 ];
 
+const CASUALTY_OR_SEVERITY_TERMS = [
+  ...INJURY_TERMS,
+  "dead", "died", "dies", "deceased", "binawian ng buhay", "malubha", "kritikal", "critical",
+  "serious injured", "seriously injured", "severe injured", "severely injured", "grabeng sugatan",
+  "minor injury", "minor injuries", "bahagyang nasugatan", "walang nasugatan", "no injury", "no injuries",
+];
+
 const FALSE_POSITIVE_TERMS = [
   "accidentally", "by accident", "no accident", "not an accident", "accident insurance",
   "accident prevention", "road safety seminar", "drill", "simulation", "anniversary",
@@ -98,6 +105,61 @@ export function classifyIncident(text) {
     injuryTerms: [...new Set(injuryTerms)],
     falsePositiveTerms,
     reason,
+  };
+}
+
+export function resolveNewsReviewConfidence({ classification = {}, location = null, details = {}, text = "" } = {}) {
+  const originalConfidence = classification.confidence || null;
+  if (classification.type !== "vehicular") return classification;
+
+  const low = String(text || "").toLowerCase();
+  const vehicleTerms = classification.vehicleTerms?.length
+    ? classification.vehicleTerms
+    : matchesAny(low, VEHICLE_TERMS);
+  const casualtyTerms = classification.injuryTerms?.length
+    ? classification.injuryTerms
+    : matchesAny(low, CASUALTY_OR_SEVERITY_TERMS);
+  const vehicleTypes = details.vehicleTypes || details.vehicle_types || [];
+  const injuredCount = Number(details.injuredCount ?? details.injured_count ?? NaN);
+  const fatalityCount = Number(details.fatalityCount ?? details.fatality_count ?? NaN);
+  const victimCount = Number(details.victimCount ?? details.victim_count ?? NaN);
+  const hasVehicleDetail = Boolean(vehicleTypes.length || vehicleTerms.length);
+  const hasCasualtyOrSeverityDetail = Boolean(
+    casualtyTerms.length ||
+    (Number.isFinite(injuredCount) && injuredCount > 0) ||
+    (Number.isFinite(fatalityCount) && fatalityCount > 0) ||
+    (Number.isFinite(victimCount) && victimCount > 0)
+  );
+  const hasBarangayLocation = Boolean(location?.barangay);
+  const highRequirements = {
+    road_accident_related: classification.type === "vehicular",
+    vehicle_detail: hasVehicleDetail,
+    casualty_or_severity_detail: hasCasualtyOrSeverityDetail,
+    barangay_location: hasBarangayLocation,
+  };
+  const missing = Object.entries(highRequirements)
+    .filter(([, passed]) => !passed)
+    .map(([key]) => key);
+
+  let confidence = originalConfidence;
+  if (originalConfidence === "high" && missing.length) {
+    confidence = "medium";
+  }
+
+  const reasonSuffix = missing.length
+    ? ` High confidence requires road accident details, vehicle detail, casualty/severity detail, and barangay-level location; missing ${missing.join(", ")}.`
+    : " High confidence requirements met: road accident details, vehicle detail, casualty/severity detail, and barangay-level location.";
+
+  return {
+    ...classification,
+    confidence,
+    reviewConfidence: {
+      originalConfidence,
+      finalConfidence: confidence,
+      highRequirements,
+      missingHighRequirements: missing,
+    },
+    reason: `${classification.reason || "vehicular accident detected"}.${reasonSuffix}`,
   };
 }
 

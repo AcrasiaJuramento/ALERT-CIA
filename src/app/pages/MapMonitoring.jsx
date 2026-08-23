@@ -135,6 +135,10 @@ function isRemovableScrapedMapRecord(record = {}) {
   return getSourceGroup(record) === 'scraper' && record.recordId && record.sourceKind !== 'promoted_scraped';
 }
 
+function isRelocatableScrapedMapRecord(record = {}) {
+  return getSourceGroup(record) === 'scraper' && record.recordId;
+}
+
 function riskBadgeClass(level = '') {
   if (level === 'Critical') return 'bg-red-600 text-white';
   if (level === 'High') return 'bg-red-500 text-white';
@@ -353,6 +357,11 @@ export default function MapMonitoring() {
     }
   };
 
+  const openScrapedLocationReview = (record) => {
+    if (!isRelocatableScrapedMapRecord(record)) return;
+    navigate(`/admin/scraper-review?record=${encodeURIComponent(record.recordId)}&correct=1`);
+  };
+
   const riskFilters = useMemo(() => ({
     ...DEFAULT_RISK_FILTERS,
     municipality: mapScope === 'isabela' ? selectedMunicipality : 'all',
@@ -480,6 +489,7 @@ export default function MapMonitoring() {
           clusterMarkers={false}
           spreadOverlappingMarkers
           scope={mapScope}
+          fitScopeView={mapScope === 'echague'}
           focusedLocation={focusedRiskArea}
           selectedAccidentProneAreaId={selectedAccidentProneAreaId}
           onAccidentProneAreaClick={(area) => setSelectedAccidentProneAreaId(area.area_id)}
@@ -489,7 +499,12 @@ export default function MapMonitoring() {
           <div className="pointer-events-auto flex flex-wrap gap-2">
             <div className="flex h-10 overflow-hidden rounded-lg border border-slate-800 bg-white/95 text-xs font-bold text-slate-700 shadow-xl">
               <button
-                onClick={() => setMapScope('echague')}
+                onClick={() => {
+                  setMapScope('echague');
+                  setSelectedMunicipality('all');
+                  setSelectedIncident(null);
+                  setSelectedAccidentProneAreaId(null);
+                }}
                 className={`flex items-center gap-2 px-4 transition-colors ${mapScope === 'echague' ? 'bg-blue-600 text-white' : 'hover:bg-slate-100'}`}
               >
                 <MapPin className="h-3.5 w-3.5" />
@@ -864,6 +879,17 @@ export default function MapMonitoring() {
                   <span className="text-xs text-muted-foreground">{selectedInc.assignedTeam}</span>
                 </div>
                 <div className="flex items-center gap-2">
+                  {isRelocatableScrapedMapRecord(selectedInc) && (
+                    <button
+                      type="button"
+                      onClick={() => openScrapedLocationReview(selectedInc)}
+                      className="flex items-center gap-1 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-1.5 text-xs font-medium text-blue-300 transition-all hover:bg-blue-500/20"
+                      title="Re-map this scraped news location"
+                    >
+                      <MapPin className="h-3 w-3" />
+                      Re-map
+                    </button>
+                  )}
                   {isRemovableScrapedMapRecord(selectedInc) && (
                     <button
                       type="button"

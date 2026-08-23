@@ -22,6 +22,11 @@ const ECHAGUE_FIT_BOUNDS = {
   east: ECHAGUE_BOUNDS.east + 0.12,
 };
 
+export const ECHAGUE_VIEW_BOUNDS = [
+  [ECHAGUE_BOUNDS.south, ECHAGUE_BOUNDS.west],
+  [ECHAGUE_BOUNDS.north, ECHAGUE_BOUNDS.east],
+];
+
 function toCoordinate(value) {
   if (value === null || value === undefined || value === '') return null;
   const coordinate = Number(value);

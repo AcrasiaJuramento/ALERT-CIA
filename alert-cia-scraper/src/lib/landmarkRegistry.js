@@ -6,6 +6,7 @@ const CATEGORY_HINTS = /\b(?:school|elementary|high school|college|university|ch
 function normalize(value = "") {
   return String(value || "")
     .toLowerCase()
+    .replace(/\b(?:daang\s+maharlika|maharlika\s+(?:highway|road)|national\s+(?:highway|road)|highway)\b/g, "maharlika highway")
     .replace(/\belementary school\b/g, "elem school")
     .replace(/\belementary\b/g, "elem")
     .replace(/\bnational high school\b/g, "nhs")

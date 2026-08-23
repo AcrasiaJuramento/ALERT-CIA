@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, Clock, Database, ExternalLink, Filter,
   GitMerge, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, XCircle,
@@ -297,9 +297,10 @@ function CorrectionPanel({ record, onCancel, onSave }) {
   );
 }
 
-function RecordCard({ record, records, onRefresh }) {
-  const [reviewing, setReviewing] = useState(false);
-  const [correcting, setCorrecting] = useState(false);
+function RecordCard({ record, records, onRefresh, initiallyOpen = false, initiallyCorrecting = false }) {
+  const cardRef = useRef(null);
+  const [reviewing, setReviewing] = useState(initiallyOpen);
+  const [correcting, setCorrecting] = useState(initiallyCorrecting);
   const [checkingDuplicates, setCheckingDuplicates] = useState(false);
   const [mergeTarget, setMergeTarget] = useState("");
   const assessment = locationAssessment({
@@ -337,8 +338,15 @@ function RecordCard({ record, records, onRefresh }) {
     onRefresh();
   };
 
+  useEffect(() => {
+    if (!initiallyOpen) return;
+    window.setTimeout(() => {
+      cardRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+    }, 120);
+  }, [initiallyOpen]);
+
   return (
-    <article className={`overflow-hidden rounded-lg border bg-card transition ${reviewing ? "border-blue-500/40 shadow-lg" : "border-border hover:border-blue-500/30"}`}>
+    <article ref={cardRef} className={`overflow-hidden rounded-lg border bg-card transition ${reviewing ? "border-blue-500/40 shadow-lg" : "border-border hover:border-blue-500/30"}`}>
       <div className="p-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
@@ -622,6 +630,9 @@ function AnalyzerPanel() {
 }
 
 export default function ScraperReview() {
+  const [searchParams] = useSearchParams();
+  const focusRecordId = searchParams.get("record") || "";
+  const shouldOpenCorrection = searchParams.get("correct") === "1";
   const [tab, setTab] = useState("records");
   const [records, setRecords] = useState([]);
   const [candidates, setCandidates] = useState([]);
@@ -641,6 +652,13 @@ export default function ScraperReview() {
   });
   const [query, setQuery] = useState("");
   const updateFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }));
+
+  useEffect(() => {
+    if (!focusRecordId) return;
+    setTab("records");
+    setFilters(current => ({ ...current, status: "", sourceId: "", municipality: "", confidence: "" }));
+    setQuery("");
+  }, [focusRecordId]);
 
   const load = async () => {
     setLoading(true);
@@ -783,7 +801,16 @@ export default function ScraperReview() {
 
       <div className="space-y-3">
         {tab === "records"
-          ? visibleRecords.map(record => <RecordCard key={record.id} record={record} records={records} onRefresh={load} />)
+          ? visibleRecords.map(record => (
+            <RecordCard
+              key={`${record.id}-${String(record.id) === String(focusRecordId) ? 'focused' : 'normal'}-${shouldOpenCorrection ? 'correct' : 'view'}`}
+              record={record}
+              records={records}
+              onRefresh={load}
+              initiallyOpen={String(record.id) === String(focusRecordId)}
+              initiallyCorrecting={String(record.id) === String(focusRecordId) && shouldOpenCorrection}
+            />
+          ))
           : visibleCandidates.map(candidate => <CandidateCard key={candidate.id} candidate={candidate} />)}
         {!loading && tab === "records" && !visibleRecords.length && <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No news reports match the filters.</div>}
         {!loading && tab === "rejected" && !visibleCandidates.length && <div className="rounded-lg border border-border bg-card p-8 text-center text-sm text-muted-foreground">No rejected article candidates match the filters.</div>}

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, MapPin, Plus, RefreshCw, Save, Search, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { LeafletIncidentMap } from "../components/map/LeafletIncidentMap";
+import { resolveIsabelaPointLocation } from "../data/isabelaBarangayGeometry";
 import { ISABELA_MUNICIPALITIES } from "../data/isabelaMunicipalities";
 import { deleteLandmark, listLandmarks, saveLandmark } from "../services/supabase";
 
@@ -51,6 +52,50 @@ function formatCategory(value = "") {
   return value.replace(/_/g, " ").replace(/\b\w/g, char => char.toUpperCase());
 }
 
+function splitAliases(value = "") {
+  return String(value || "")
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeAlias(value = "") {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/\b(?:daang\s+maharlika|maharlika\s+(?:highway|road)|national\s+(?:highway|road)|highway)\b/g, "maharlika highway")
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+function isRoadLocation(form = {}) {
+  return /\b(?:road|highway|daang|maharlika|national)\b/i.test([form.name, form.category, form.aliases].join(" "));
+}
+
+function suggestedRoadAliases(form = {}) {
+  const barangay = String(form.barangay || "").replace(/\s+/g, " ").trim();
+  if (!barangay || !isRoadLocation(form)) return [];
+  const hyphenBarangay = barangay.replace(/\s+/g, "-");
+  const aliases = [
+    `Maharlika Highway ${barangay}`,
+    `Daang Maharlika ${barangay}`,
+    `National Road ${barangay}`,
+    `National Highway ${barangay}`,
+    `Highway ${barangay}`,
+    `${barangay} Maharlika Highway`,
+    `${barangay} National Road`,
+    `${barangay} Highway`,
+  ];
+  if (hyphenBarangay !== barangay) {
+    aliases.push(`National Road ${hyphenBarangay}`, `Maharlika Highway ${hyphenBarangay}`, `Highway ${hyphenBarangay}`);
+  }
+  return [...new Map(aliases.map(alias => [normalizeAlias(alias), alias])).values()];
+}
+
+function parseCoordinate(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const coordinate = Number(value);
+  return Number.isFinite(coordinate) ? coordinate : null;
+}
+
 function toForm(landmark = EMPTY_FORM) {
   return {
     ...EMPTY_FORM,
@@ -70,6 +115,7 @@ export default function LandmarkMapping() {
   const [filters, setFilters] = useState({ search: "", municipality: "", category: "", validationStatus: "" });
   const [form, setForm] = useState(EMPTY_FORM);
   const [selectedId, setSelectedId] = useState("");
+  const [resolvingPin, setResolvingPin] = useState(false);
 
   const selectedLandmark = useMemo(
     () => landmarks.find(landmark => landmark.id === selectedId) || null,
@@ -77,9 +123,9 @@ export default function LandmarkMapping() {
   );
 
   const mapMarkers = useMemo(() => {
-    const formLatitude = Number(form.latitude);
-    const formLongitude = Number(form.longitude);
-    const hasFormPin = Number.isFinite(formLatitude) && Number.isFinite(formLongitude);
+    const formLatitude = parseCoordinate(form.latitude);
+    const formLongitude = parseCoordinate(form.longitude);
+    const hasFormPin = formLatitude !== null && formLongitude !== null;
     const landmarkMarkers = landmarks
       .map(landmark => (
         landmark.id === form.id && hasFormPin
@@ -148,9 +194,15 @@ export default function LandmarkMapping() {
 
   const selectedMapMarkerId = useMemo(() => {
     if (form.id) return `LM-${form.id}`;
-    if (Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude))) return "LM-DRAFT-PIN";
+    if (parseCoordinate(form.latitude) !== null && parseCoordinate(form.longitude) !== null) return "LM-DRAFT-PIN";
     return selectedId ? `LM-${selectedId}` : undefined;
   }, [form.id, form.latitude, form.longitude, selectedId]);
+  const pinnedLatitude = parseCoordinate(form.latitude);
+  const pinnedLongitude = parseCoordinate(form.longitude);
+  const roadAliasSuggestions = useMemo(() => {
+    const existing = new Set(splitAliases(form.aliases).map(normalizeAlias));
+    return suggestedRoadAliases(form).filter(alias => !existing.has(normalizeAlias(alias))).slice(0, 6);
+  }, [form]);
 
   async function loadLandmarks(nextFilters = filters) {
     setLoading(true);
@@ -178,6 +230,45 @@ export default function LandmarkMapping() {
 
   function updateForm(key, value) {
     setForm(current => ({ ...current, [key]: value }));
+  }
+
+  function addRoadAliases() {
+    setForm(current => {
+      const byKey = new Map(splitAliases(current.aliases).map(alias => [normalizeAlias(alias), alias]));
+      suggestedRoadAliases(current).forEach(alias => {
+        const key = normalizeAlias(alias);
+        if (!byKey.has(key)) byKey.set(key, alias);
+      });
+      return { ...current, aliases: [...byKey.values()].join(", ") };
+    });
+  }
+
+  async function pinLocation(latlng) {
+    const latitude = latlng.lat.toFixed(6);
+    const longitude = latlng.lng.toFixed(6);
+    setForm(current => ({ ...current, latitude, longitude }));
+    setResolvingPin(true);
+
+    try {
+      const location = await resolveIsabelaPointLocation({ lat: latlng.lat, lng: latlng.lng });
+      if (!location) {
+        toast.warning("Pin set, but no Isabela barangay boundary matched this point.");
+        return;
+      }
+      setForm(current => ({
+        ...current,
+        latitude,
+        longitude,
+        barangay: location.barangay || current.barangay,
+        municipality: location.municipality || current.municipality,
+        province: location.province || current.province,
+      }));
+      toast.success(`Pin set in ${location.barangay}, ${location.municipality}.`);
+    } catch (error) {
+      toast.warning(error.message || "Pin set, but barangay lookup failed.");
+    } finally {
+      setResolvingPin(false);
+    }
   }
 
   function startCreate() {
@@ -351,11 +442,7 @@ export default function LandmarkMapping() {
                 const landmark = landmarks.find(item => item.id === landmarkId);
                 if (landmark) startEdit(landmark);
               }}
-              onMapClick={latlng => {
-                updateForm("latitude", latlng.lat.toFixed(6));
-                updateForm("longitude", latlng.lng.toFixed(6));
-                toast.success("Pin location set from map.");
-              }}
+              onMapClick={pinLocation}
               showHeatmap={false}
               showDangerZones={false}
               accidentProneAreas={[]}
@@ -365,9 +452,9 @@ export default function LandmarkMapping() {
               compact
               scope="isabela"
             />
-            {Number.isFinite(Number(form.latitude)) && Number.isFinite(Number(form.longitude)) && (
+            {pinnedLatitude !== null && pinnedLongitude !== null && (
               <div className="pointer-events-none absolute right-3 top-3 z-[500] rounded-lg border border-slate-200 bg-white/95 px-3 py-2 text-xs font-semibold text-slate-700 shadow-lg">
-                Pin: {Number(form.latitude).toFixed(6)}, {Number(form.longitude).toFixed(6)}
+                {resolvingPin ? "Resolving barangay..." : `Pin: ${pinnedLatitude.toFixed(6)}, ${pinnedLongitude.toFixed(6)}`}
               </div>
             )}
           </div>
@@ -479,6 +566,22 @@ export default function LandmarkMapping() {
                   placeholder="Comma-separated names used in news reports"
                   className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 />
+                {roadAliasSuggestions.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={addRoadAliases}
+                      className="rounded-md border border-blue-500/30 bg-blue-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-blue-300 hover:bg-blue-500/20"
+                    >
+                      Add road aliases
+                    </button>
+                    {roadAliasSuggestions.slice(0, 3).map(alias => (
+                      <span key={alias} className="rounded-md border border-border bg-secondary px-2 py-1 text-[10px] text-muted-foreground">
+                        {alias}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </label>
               <label>
                 <span className="mb-1 block text-xs font-medium text-muted-foreground">Source</span>

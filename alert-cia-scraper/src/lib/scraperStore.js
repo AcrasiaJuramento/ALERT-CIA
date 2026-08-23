@@ -171,24 +171,62 @@ function incidentRow(record) {
   };
 }
 
+function highConfidenceNewsEvidence(record = {}) {
+  const text = [
+    record.title,
+    record.snippet,
+    record.body,
+    record.raw_payload?.title,
+    record.raw_payload?.snippet,
+    record.raw_payload?.body,
+  ].filter(Boolean).join(" ").toLowerCase();
+  const vehicleTypes = record.vehicle_types || record.vehicleTypes || [];
+  const injuredCount = Number(record.injured_count ?? record.injuredCount ?? NaN);
+  const fatalityCount = Number(record.fatality_count ?? record.fatalityCount ?? NaN);
+  const victimCount = Number(record.victim_count ?? record.victimCount ?? NaN);
+  const hasVehicleDetail = Boolean(
+    vehicleTypes.length ||
+    /\b(?:motorcycle|motorsiklo|tricycle|car|kotse|van|truck|bus|jeepney|jeep|pickup|vehicle|sasakyan|pedestrian)\b/i.test(text)
+  );
+  const hasCasualtyOrSeverityDetail = Boolean(
+    (Number.isFinite(injuredCount) && injuredCount > 0) ||
+    (Number.isFinite(fatalityCount) && fatalityCount > 0) ||
+    (Number.isFinite(victimCount) && victimCount > 0) ||
+    /\b(?:injured|sugatan|nasugatan|patay|nasawi|namatay|dead|died|dies|killed|fatalit(?:y|ies)|deceased|malubha|kritikal|critical|serious(?:ly)?\s+injured|severe(?:ly)?\s+injured|grabeng\s+sugatan|minor\s+injur(?:y|ies)|bahagyang\s+nasugatan|walang\s+nasugatan|no\s+injur(?:y|ies))\b/i.test(text)
+  );
+  const hasBarangay = Boolean(record.location?.barangay);
+
+  return {
+    passed: record.classification_confidence === "high" && hasVehicleDetail && hasCasualtyOrSeverityDetail && hasBarangay,
+    missing: {
+      high_classifier_score: record.classification_confidence === "high",
+      vehicle_detail: hasVehicleDetail,
+      casualty_or_severity_detail: hasCasualtyOrSeverityDetail,
+      barangay_location: hasBarangay,
+    },
+  };
+}
+
 function autoReviewDecision(record = {}) {
   const hasCoordinates = Number.isFinite(record.lat) && Number.isFinite(record.lon);
+  const highConfidenceEvidence = highConfidenceNewsEvidence(record);
   const required = {
     title: Boolean(record.title),
     source_url: Boolean(record.source_url),
     published_at: Boolean(record.published_at),
     vehicular: record.incident_type_key === "vehicular",
-    high_confidence: record.classification_confidence === "high",
+    high_confidence: highConfidenceEvidence.passed,
     municipality: Boolean(record.location?.municipality),
     barangay: Boolean(record.location?.barangay),
     coordinates: hasCoordinates && record.geocode_status === "success",
   };
   const missing = Object.entries(required).filter(([, passed]) => !passed).map(([key]) => key);
+  const highMissing = Object.entries(highConfidenceEvidence.missing).filter(([, passed]) => !passed).map(([key]) => key);
   return {
     accepted: missing.length === 0,
     missing,
     reason: missing.length
-      ? `Needs manual review: missing ${missing.join(", ")}.`
+      ? `Needs manual review: missing ${missing.join(", ")}${highMissing.length ? ` (${highMissing.join(", ")})` : ""}.`
       : "Auto-approved: high-confidence non-duplicate vehicular accident with barangay and coordinates.",
   };
 }

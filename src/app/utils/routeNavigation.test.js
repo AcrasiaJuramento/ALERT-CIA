@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import {
   canStartAutomaticReroute,
   getDistanceFromRouteMeters,
+  getLatestAccidentWarningAgeDays,
   getNextOffRouteConfirmationCount,
+  isLatestAccidentRouteWarning,
   isLocationOffRoute,
+  LATEST_ACCIDENT_WARNING_DAYS,
   normalizeBrowserPosition,
 } from './routeNavigation.js';
 
@@ -65,4 +68,20 @@ test('blocks automatic rerouting during an active request or cooldown', () => {
   assert.equal(canStartAutomaticReroute({ ...base, isRerouting: false }), true);
   assert.equal(canStartAutomaticReroute({ ...base, isRerouting: true }), false);
   assert.equal(canStartAutomaticReroute({ ...base, isRerouting: false, now: 5000 }), false);
+});
+
+test('keeps latest accident route warnings inside the three day window', () => {
+  const now = new Date('2026-08-23T12:00:00.000Z');
+
+  assert.equal(isLatestAccidentRouteWarning({ incidentDate: '2026-08-21T12:00:00.000Z' }, now), true);
+  assert.equal(isLatestAccidentRouteWarning({ incidentDate: '2026-08-20T12:00:00.000Z' }, now), true);
+  assert.equal(isLatestAccidentRouteWarning({ incidentDate: '2026-08-20T11:59:59.000Z' }, now), false);
+  assert.equal(isLatestAccidentRouteWarning({ incidentDate: '2026-08-24T12:00:00.000Z' }, now), false);
+  assert.equal(isLatestAccidentRouteWarning({ scrapedAt: '2026-08-23T12:00:00.000Z' }, now), false);
+});
+
+test('reports latest accident warning age in days', () => {
+  const now = new Date('2026-08-23T12:00:00.000Z');
+  assert.equal(getLatestAccidentWarningAgeDays({ incidentDate: '2026-08-21T12:00:00.000Z' }, now), 2);
+  assert.equal(LATEST_ACCIDENT_WARNING_DAYS, 3);
 });

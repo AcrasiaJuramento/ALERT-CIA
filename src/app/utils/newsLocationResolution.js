@@ -3,6 +3,7 @@ import { isWithinIsabelaMapArea } from './mapData.js';
 export function normalizeLocationName(value = '') {
   return String(value || '')
     .toLowerCase()
+    .replace(/\b(?:daang\s+maharlika|maharlika\s+(?:highway|road)|national\s+(?:highway|road)|highway)\b/g, 'maharlika highway')
     .replace(/\bgeneral\b/g, 'gen')
     .replace(/\bsanta\b/g, 'sta')
     .replace(/\bsanto\b/g, 'sto')

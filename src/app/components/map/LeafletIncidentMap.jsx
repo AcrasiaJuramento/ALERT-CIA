@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CircleMarker, GeoJSON, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { ChevronDown, LocateFixed, Layers, RefreshCw } from 'lucide-react';
-import { ECHAGUE_CENTER, ISABELA_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
+import { ECHAGUE_CENTER, ECHAGUE_VIEW_BOUNDS, ISABELA_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadIsabelaBoundaryCollection } from '../../data/isabelaBarangayGeometry';
 import { AdvisoryMarkersLayer } from './AdvisoryMarkersLayer';
@@ -13,11 +13,18 @@ import { HeatmapLayer } from './HeatmapLayer';
 import { RouteLayer } from './RouteLayer';
 import { useGeolocation } from '../../contexts/GeolocationContext';
 
-function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvisoryId, scope }) {
+function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvisoryId, scope, fitScopeView = false }) {
   const map = useMap();
 
   useEffect(() => {
     if (selectedIncidentId || selectedAdvisoryId) return;
+    if (fitScopeView && scope === 'echague') {
+      map.fitBounds(ECHAGUE_VIEW_BOUNDS, {
+        padding: [28, 28],
+        maxZoom: 12,
+      });
+      return;
+    }
     const advisoryPoints = advisories.map(getAdvisoryLatLng).filter(Boolean);
     const bounds = [...(getBoundsForIncidents(incidents, { scope }) || []), ...advisoryPoints];
     if (!bounds?.length) return;
@@ -26,7 +33,7 @@ function FitMapToData({ incidents, advisories, selectedIncidentId, selectedAdvis
       padding: [36, 36],
       maxZoom: 14,
     });
-  }, [advisories, incidents, map, scope, selectedAdvisoryId, selectedIncidentId]);
+  }, [advisories, fitScopeView, incidents, map, scope, selectedAdvisoryId, selectedIncidentId]);
 
   return null;
 }
@@ -273,6 +280,7 @@ export function LeafletIncidentMap({
   focusedLocation = null,
   compact = false,
   autoFit = true,
+  fitScopeView = false,
   onMapClick,
   externalLayers,
   onExternalLayersChange,
@@ -349,6 +357,7 @@ export function LeafletIncidentMap({
             selectedIncidentId={selectedIncidentId}
             selectedAdvisoryId={selectedAdvisoryId}
             scope={scope}
+            fitScopeView={fitScopeView}
           />
         )}
         <IncidentBarangayBoundaries incidents={effectiveLayers.incidents ? incidents : []} enabled={effectiveLayers.barangayBoundaries !== false} />

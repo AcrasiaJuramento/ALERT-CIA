@@ -1,4 +1,4 @@
-import { classifyIncident, incidentTypeLabel } from "./classify.js";
+import { classifyIncident, incidentTypeLabel, resolveNewsReviewConfidence } from "./classify.js";
 import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey, inferAccidentSeverity } from "./deduplication.js";
 import { extractArticle } from "./extractArticle.js";
 import { fetchHTML } from "./fetchHTML.js";
@@ -71,14 +71,15 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
 
   if (!article) article = textArticle({ title, snippet, body, url: sourceUrl });
   const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || body || ""}`;
-  const classification = classifyIncident(combined);
+  let classification = classifyIncident(combined);
   const locationContext = locationTextForSource(sourceUrl, combined);
   const location = extractLocation(article.title, article.snippet, article.body || body, locationContext);
+  const details = extractStructuredAccidentDetails(combined);
+  classification = resolveNewsReviewConfidence({ classification, location, details, text: combined });
   const decision = fetchError
     ? { accepted: false, reason: "fetch_failed", details: fetchError }
     : decide({ article, sourceUrl, classification, location });
   const geo = decision.accepted ? await geocode(location) : null;
-  const details = extractStructuredAccidentDetails(combined);
   const incidentDateTime = extractIncidentDateTime(combined, article.published_at);
   const severity = inferAccidentSeverity(combined, details);
   const record = decision.accepted ? {

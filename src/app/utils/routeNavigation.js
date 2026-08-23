@@ -1,9 +1,13 @@
+import { readIncidentDate } from './accidentProneAreas.js';
+
 const EARTH_RADIUS_METERS = 6371000;
+const DAY_MS = 86400000;
 
 export const OFF_ROUTE_THRESHOLD_METERS = 40;
 export const OFF_ROUTE_CONFIRMATION_COUNT = 2;
 export const MAX_OFF_ROUTE_GPS_ACCURACY_METERS = 75;
 export const REROUTE_COOLDOWN_MS = 5000;
+export const LATEST_ACCIDENT_WARNING_DAYS = 3;
 
 export function normalizeBrowserPosition(position) {
   const { latitude, longitude, accuracy } = position?.coords || {};
@@ -93,4 +97,16 @@ export function canStartAutomaticReroute({
     && !isRerouting
     && now - lastRerouteAt >= REROUTE_COOLDOWN_MS,
   );
+}
+
+export function getLatestAccidentWarningAgeDays(record = {}, now = new Date()) {
+  const incidentDate = readIncidentDate(record);
+  const currentDate = now instanceof Date ? now : new Date(now);
+  if (!incidentDate || !Number.isFinite(currentDate.getTime())) return Infinity;
+  return (currentDate.getTime() - incidentDate.getTime()) / DAY_MS;
+}
+
+export function isLatestAccidentRouteWarning(record = {}, now = new Date()) {
+  const ageDays = getLatestAccidentWarningAgeDays(record, now);
+  return ageDays >= 0 && ageDays <= LATEST_ACCIDENT_WARNING_DAYS;
 }

@@ -1,5 +1,5 @@
 import { ENABLED_SOURCES } from "../constants/sources.js";
-import { classifyIncident, incidentTypeLabel } from "../lib/classify.js";
+import { classifyIncident, incidentTypeLabel, resolveNewsReviewConfidence } from "../lib/classify.js";
 import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey, inferAccidentSeverity } from "../lib/deduplication.js";
 import { discoverArticleLinks } from "../lib/discoverLinks.js";
 import { extractArticle } from "../lib/extractArticle.js";
@@ -148,7 +148,8 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
     seenUrls.add(`${sourceUrl}:canonical`);
     const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || ""}`;
     const articleHash = contentHash(combined);
-    const classification = classifyIncident(combined);
+    let classification = classifyIncident(combined);
+    const details = extractStructuredAccidentDetails(combined);
     const locationContext = locationTextForSource(source, combined);
     const location = extractLocation(article.title, article.snippet, article.body, locationContext);
     const reject = (reason, details) => rejected.push({
@@ -188,10 +189,6 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
       reject("non_vehicular", `Classified as ${classification.type || "unknown"}.`);
       continue;
     }
-    if (!classification.confidence || classification.confidence === "low") {
-      reject("low_confidence", classification.reason);
-      continue;
-    }
     if (!location) {
       reject("location_unknown", "No Isabela location could be extracted from the accident context.");
       continue;
@@ -202,6 +199,11 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
     }
     if (!location.municipality) {
       reject("location_unknown", "No supported Isabela city or municipality could be extracted from the accident context.");
+      continue;
+    }
+    classification = resolveNewsReviewConfidence({ classification, location, details, text: combined });
+    if (!classification.confidence || classification.confidence === "low") {
+      reject("low_confidence", classification.reason);
       continue;
     }
     const landmark = matchLocalLandmark({ text: combined, location, landmarks });
@@ -216,7 +218,6 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
         geocode_confidence: 1,
       }
       : await geocode(location);
-    const details = extractStructuredAccidentDetails(combined);
     const incidentDateTime = extractIncidentDateTime(combined, article.published_at);
     const severity = inferAccidentSeverity(combined, details);
     const record = applyLandmarkMatch({
