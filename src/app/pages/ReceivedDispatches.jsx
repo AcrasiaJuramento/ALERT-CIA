@@ -64,6 +64,19 @@ function joinValues(value) {
   return value || "";
 }
 
+function localResponseId(record = {}) {
+  return record.responseClientId || record.responseId;
+}
+
+async function getLocalPcrForDispatch(record = {}) {
+  const ids = [...new Set([localResponseId(record), record.responseId].filter(Boolean))];
+  for (const id of ids) {
+    const pcr = await localServerClient.getPcrByResponse(id).catch(() => null);
+    if (pcr) return pcr;
+  }
+  return null;
+}
+
 function isResolvedDispatch(record = {}, pcr = null) {
   return Boolean(
     record.resolvedAt
@@ -158,12 +171,8 @@ export default function ReceivedDispatches() {
       setRecords(rows);
       const localPairs = state.localOnline
         ? await Promise.all(rows.map(async record => {
-          try {
-            const pcr = await localServerClient.getPcrByResponse(record.responseId);
-            return [record.responseId, pcr];
-          } catch {
-            return [record.responseId, null];
-          }
+          const pcr = await getLocalPcrForDispatch(record);
+          return [record.responseId, pcr];
         }))
         : [];
       const cloudPairs = state.cloudOnline
@@ -261,7 +270,7 @@ export default function ReceivedDispatches() {
     try {
       const localMode = getConnectionState().mode === "local";
       const result = localMode
-        ? await localServerClient.acceptDispatchByResponse(record.responseId)
+        ? await localServerClient.acceptDispatchByResponse(localResponseId(record))
         : await acceptDispatchByResponse(record.responseId);
       const pcrId = localMode ? result.pcrId : result;
       if (localMode) {
@@ -289,8 +298,8 @@ export default function ReceivedDispatches() {
     try {
       const localMode = getConnectionState().mode === "local";
       if (localMode) {
-        const result = await localServerClient.markResponseBackToBase(record.responseId);
-        await hybridRepository.markPcrCompletedByResponse(record.responseId, result.pcr);
+        const result = await localServerClient.markResponseBackToBase(localResponseId(record));
+        await hybridRepository.markPcrCompletedByResponse(localResponseId(record), result.pcr);
       } else {
         await markResponseBackToBase(record.responseId);
       }
