@@ -2,8 +2,8 @@ import { createElement, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, ArrowLeft, Camera, Car, CheckCircle2, ChevronRight,
-  Clock, Droplets, Edit2, ExternalLink, FileText, Flame, Heart, MapPin, Maximize2, Minimize2, Plus,
-  Radio, Share2, Users,
+  Clock, Droplets, Edit2, ExternalLink, FileText, Flame, Heart, Image as ImageIcon, MapPin, Maximize2, Minimize2, Plus,
+  Radio, Share2, Users, X,
 } from 'lucide-react';
 import { getDispatchRecordByResponse, getIncident, getPCRReportByResponse, listAuditLogs } from '../services/supabase';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
@@ -51,6 +51,24 @@ const displayValue = value => value || '-';
 const titleCase = value => String(value || '')
   .replace(/_/g, ' ')
   .replace(/\b\w/g, letter => letter.toUpperCase());
+const IMAGE_EXTENSIONS = /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i;
+
+const attachmentName = attachment => attachment?.name || attachment?.fileName || 'Attachment';
+const attachmentUrl = attachment => {
+  const source = attachment?.data || attachment?.url || attachment?.fileUrl || attachment?.publicUrl || attachment?.storagePath || '';
+  return typeof source === 'string' ? source : '';
+};
+const isAbsolutePreviewUrl = value => /^(data:image\/|blob:|https?:\/\/)/i.test(value);
+const isImageAttachment = attachment => {
+  const type = String(attachment?.type || attachment?.mimeType || attachment?.attachmentType || '').toLowerCase();
+  const name = attachmentName(attachment);
+  const url = attachmentUrl(attachment);
+  return type.startsWith('image/') || type === 'photo' || IMAGE_EXTENSIONS.test(name) || /^data:image\//i.test(url) || IMAGE_EXTENSIONS.test(url.split('?')[0]);
+};
+const imagePreviewSrc = attachment => {
+  const url = attachmentUrl(attachment);
+  return isImageAttachment(attachment) && isAbsolutePreviewUrl(url) ? url : '';
+};
 
 const incidentTitle = incident => {
   if (incident.title) return incident.title;
@@ -67,6 +85,7 @@ export default function IncidentDetails() {
   const [pcr, setPcr] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [pcrPreviewOpen, setPcrPreviewOpen] = useState(false);
+  const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -124,7 +143,10 @@ export default function IncidentDetails() {
   const TypeIcon = typeIcons[incident.type] || AlertTriangle;
   const statusSteps = RESPONSE_STATUS_ORDER.includes(incident.status) ? RESPONSE_STATUS_ORDER : INCIDENT_STATUS_ORDER;
   const currentStatusIndex = statusSteps.indexOf(incident.status);
-  const attachments = pcr?.attachments || [];
+  const attachments = [
+    ...(incident.attachments || []),
+    ...(pcr?.attachments || []).map(attachment => ({ ...attachment, source: attachment.source || 'pcr' })),
+  ];
   const timeline = auditLogs.length
     ? auditLogs.map(log => ({
         time: formatDateTime(log.created_at),
@@ -256,13 +278,38 @@ export default function IncidentDetails() {
               <span className="text-sm font-semibold text-white">Photos & Attachments</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              {attachments.length ? attachments.slice(0, 6).map((attachment) => (
-                <div key={attachment.id || attachment.name} className="rounded-lg border border-slate-700/50 bg-slate-800 p-3">
-                  <Camera className="mb-2 h-5 w-5 text-slate-500" />
-                  <div className="truncate text-xs font-semibold text-slate-200">{attachment.name || 'PCR attachment'}</div>
-                  <div className="mt-1 text-[10px] text-slate-500">{formatDateTime(attachment.capturedAt)}</div>
-                </div>
-              )) : (
+              {attachments.length ? attachments.slice(0, 6).map((attachment) => {
+                const previewSrc = imagePreviewSrc(attachment);
+                const name = attachmentName(attachment);
+                const content = (
+                  <>
+                    {previewSrc ? (
+                      <div className="mb-2 aspect-video overflow-hidden rounded-md bg-slate-900">
+                        <img src={previewSrc} alt={name} className="h-full w-full object-cover" />
+                      </div>
+                    ) : (
+                      <Camera className="mb-2 h-5 w-5 text-slate-500" />
+                    )}
+                    <div className="truncate text-xs font-semibold text-slate-200">{name}</div>
+                    <div className="mt-1 text-[10px] text-slate-500">{formatDateTime(attachment.capturedAt)}</div>
+                    {previewSrc && <div className="mt-2 flex items-center gap-1 text-[10px] font-medium text-blue-300"><ImageIcon className="h-3 w-3" /> Preview image</div>}
+                  </>
+                );
+                return previewSrc ? (
+                  <button
+                    key={attachment.id || name}
+                    type="button"
+                    onClick={() => setAttachmentPreview({ ...attachment, previewSrc, name })}
+                    className="rounded-lg border border-slate-700/50 bg-slate-800 p-3 text-left transition-colors hover:border-blue-500/60 hover:bg-slate-800/80"
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  <div key={attachment.id || name} className="rounded-lg border border-slate-700/50 bg-slate-800 p-3">
+                    {content}
+                  </div>
+                );
+              }) : (
                 <div className="sm:col-span-2 rounded-lg border border-dashed border-slate-700 bg-slate-800/40 p-5 text-center">
                   <Camera className="mx-auto mb-2 h-6 w-6 text-slate-500" />
                   <p className="text-xs text-slate-400">No incident photos or PCR attachments are linked yet.</p>
@@ -416,6 +463,34 @@ export default function IncidentDetails() {
         onClose={() => setPcrPreviewOpen(false)}
         onEdit={editPcr}
       />
+      {attachmentPreview && (
+        <div
+          className="fixed inset-0 z-[5100] flex items-center justify-center bg-black/80 p-4"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={() => setAttachmentPreview(null)}
+        >
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800 p-3">
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-semibold text-white">{attachmentPreview.name}</h2>
+                <p className="text-xs text-slate-500">{formatDateTime(attachmentPreview.capturedAt)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAttachmentPreview(null)}
+                aria-label="Close attachment preview"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-900 p-3">
+              <img src={attachmentPreview.previewSrc} alt={attachmentPreview.name} className="max-h-[calc(100vh-8rem)] max-w-full object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
