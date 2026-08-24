@@ -3,11 +3,11 @@ import { readIncidentDate } from './accidentProneAreas.js';
 const EARTH_RADIUS_METERS = 6371000;
 const DAY_MS = 86400000;
 
-export const OFF_ROUTE_THRESHOLD_METERS = 40;
-export const OFF_ROUTE_CONFIRMATION_COUNT = 2;
+export const OFF_ROUTE_THRESHOLD_METERS = 25;
+export const OFF_ROUTE_CONFIRMATION_COUNT = 1;
 export const MAX_OFF_ROUTE_GPS_ACCURACY_METERS = 75;
 export const MAX_USABLE_OFF_ROUTE_GPS_ACCURACY_METERS = 150;
-export const REROUTE_COOLDOWN_MS = 5000;
+export const REROUTE_COOLDOWN_MS = 3000;
 export const LATEST_ACCIDENT_WARNING_DAYS = 3;
 
 export function normalizeBrowserPosition(position) {

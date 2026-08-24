@@ -23,6 +23,7 @@ import { useGeolocation } from '../../contexts/GeolocationContext';
 import { getAccidentProneAreaRadiusMeters } from '../../utils/accidentProneWarningZones';
 import {
   canStartAutomaticReroute,
+  getDistanceFromRouteMeters,
   getNextOffRouteConfirmationCount,
   isLatestAccidentRouteWarning,
   LATEST_ACCIDENT_WARNING_DAYS,
@@ -38,6 +39,8 @@ const quickDestinations = [
 ];
 
 const ALERT_VOICE_DISTANCE_KM = 0.1;
+const ROUTE_ORIGIN_REFRESH_METERS = 120;
+const PARALLEL_ROAD_REROUTE_METERS = 15;
 
 const severityTone = {
   black: 'border-slate-300 bg-slate-950 text-white dark:border-slate-500/50 dark:bg-slate-950 dark:text-slate-100',
@@ -463,6 +466,7 @@ export default function PublicMap() {
   const currentLocationRef = useRef(null);
   const destinationRef = useRef(null);
   const routePlanRef = useRef(null);
+  const routeOriginRef = useRef(null);
   const navigationActiveRef = useRef(false);
   const offRouteCountRef = useRef(0);
   const isReroutingRef = useRef(false);
@@ -502,6 +506,7 @@ export default function PublicMap() {
       const resolvedRoute = provider === 'OSRM road route'
         ? nextRoute
         : { ...nextRoute, provider };
+      routeOriginRef.current = [...origin.latLng];
       routePlanRef.current = resolvedRoute;
       routeEndpointsKeyRef.current = `${origin.latLng.join(',')}>${selectedDestination.latLng.join(',')}`;
       offRouteCountRef.current = 0;
@@ -525,6 +530,7 @@ export default function PublicMap() {
 
       if (fallbackOnError) {
         const directRoute = fallbackRoute(origin, selectedDestination);
+        routeOriginRef.current = [...origin.latLng];
         routePlanRef.current = directRoute;
         routeEndpointsKeyRef.current = `${origin.latLng.join(',')}>${selectedDestination.latLng.join(',')}`;
         setRoutePlan(directRoute);
@@ -596,11 +602,17 @@ export default function PublicMap() {
     const activeRoute = routePlanRef.current?.positions || [];
     if (activeRoute.length < 2) return;
 
+    const distanceFromRoute = getDistanceFromRouteMeters(location, activeRoute);
+    const routeOrigin = routeOriginRef.current || activeRoute[0];
+    const distanceFromRouteOrigin = routeOrigin ? distanceKm(location.latLng, routeOrigin) * 1000 : 0;
+    const hasShiftedToNearbyRoad = distanceFromRouteOrigin > ROUTE_ORIGIN_REFRESH_METERS
+      && distanceFromRoute > PARALLEL_ROAD_REROUTE_METERS;
     offRouteCountRef.current = getNextOffRouteConfirmationCount(
       offRouteCountRef.current,
       location,
       activeRoute,
     );
+    if (hasShiftedToNearbyRoad) offRouteCountRef.current = Math.max(offRouteCountRef.current, 1);
     if (!canStartAutomaticReroute({
       navigationActive: navigationActiveRef.current,
       hasDestination: Boolean(destinationRef.current),
@@ -631,6 +643,7 @@ export default function PublicMap() {
     routeRequestSequenceRef.current += 1;
     offRouteCountRef.current = 0;
     isReroutingRef.current = false;
+    routeOriginRef.current = null;
   }, []);
 
 
@@ -784,12 +797,17 @@ export default function PublicMap() {
       .slice(0, 6),
     [activeIncidents, currentLocation]
   );
+  const visibleRoutePositions = useMemo(() => {
+    if (!routePlan?.positions?.length) return [];
+    if (!navigationActive || !currentLocation) return routePlan.positions;
+    return [currentLocation, ...routePlan.positions.slice(1)];
+  }, [currentLocation, navigationActive, routePlan]);
   const route = routePlan
     ? [
       {
         id: 'planned-route',
         label: `${start?.label || 'Point A'} to ${destination?.label || 'Point B'}`,
-        positions: routePlan.positions,
+        positions: visibleRoutePositions,
         color: routeAlerts.some(alert => ['black', 'red'].includes(severityGroup(alert.severity))) ? '#dc2626' : '#2563eb',
         weight: 6,
       },
@@ -918,6 +936,7 @@ export default function PublicMap() {
     destinationRef.current = null;
     routeRequestSequenceRef.current += 1;
     routePlanRef.current = null;
+    routeOriginRef.current = null;
     routeEndpointsKeyRef.current = '';
     offRouteCountRef.current = 0;
     isReroutingRef.current = false;
@@ -942,6 +961,7 @@ export default function PublicMap() {
     if (navigationActiveRef.current) {
       navigationActiveRef.current = false;
       routeRequestSequenceRef.current += 1;
+      routeOriginRef.current = null;
       if (start?.latLng && destinationRef.current?.latLng) {
         routeEndpointsKeyRef.current = `${start.latLng.join(',')}>${destinationRef.current.latLng.join(',')}`;
       }
