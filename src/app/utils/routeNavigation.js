@@ -6,6 +6,7 @@ const DAY_MS = 86400000;
 export const OFF_ROUTE_THRESHOLD_METERS = 40;
 export const OFF_ROUTE_CONFIRMATION_COUNT = 2;
 export const MAX_OFF_ROUTE_GPS_ACCURACY_METERS = 75;
+export const MAX_USABLE_OFF_ROUTE_GPS_ACCURACY_METERS = 150;
 export const REROUTE_COOLDOWN_MS = 5000;
 export const LATEST_ACCIDENT_WARNING_DAYS = 3;
 
@@ -67,13 +68,26 @@ export function isReliableOffRouteFix(location) {
   );
 }
 
-export function isLocationOffRoute(location, routeCoordinates = []) {
-  if (!isReliableOffRouteFix(location)) return false;
-  const threshold = Math.max(
-    OFF_ROUTE_THRESHOLD_METERS,
-    Number.isFinite(location.accuracy) ? location.accuracy : 0,
+export function isUsableOffRouteFix(location) {
+  return Boolean(
+    location?.latLng?.every(Number.isFinite)
+    && (!Number.isFinite(location.accuracy) || location.accuracy <= MAX_USABLE_OFF_ROUTE_GPS_ACCURACY_METERS),
   );
-  return getDistanceFromRouteMeters(location, routeCoordinates) > threshold;
+}
+
+export function getOffRouteThresholdMeters(location = {}) {
+  const accuracy = Number(location.accuracy);
+  if (!Number.isFinite(accuracy)) return OFF_ROUTE_THRESHOLD_METERS;
+
+  const accuracyBuffer = accuracy <= MAX_OFF_ROUTE_GPS_ACCURACY_METERS
+    ? accuracy
+    : accuracy * 2;
+  return Math.max(OFF_ROUTE_THRESHOLD_METERS, accuracyBuffer);
+}
+
+export function isLocationOffRoute(location, routeCoordinates = []) {
+  if (!isUsableOffRouteFix(location)) return false;
+  return getDistanceFromRouteMeters(location, routeCoordinates) > getOffRouteThresholdMeters(location);
 }
 
 export function getNextOffRouteConfirmationCount(currentCount, location, routeCoordinates = []) {
