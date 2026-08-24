@@ -82,6 +82,14 @@ function summarizeDescription(text, extended = {}, response = {}) {
 function incidentToApp(row = {}) {
   const descriptionParts = parseDescription(row.description);
   const response = row.response || row.responses || {};
+  const attachments = asRows(row.incident_media).map(media => ({
+    id: media.id,
+    name: media.file_name || media.storage_path?.split("/").pop() || "Incident attachment",
+    type: media.media_type || "photo",
+    storagePath: media.storage_path || "",
+    capturedAt: media.created_at || "",
+    source: "incident",
+  }));
   const classification = classificationFromRecord(row.classification || "other", descriptionParts.extended);
   const priority = row.priority || "medium";
   const status = row.status || "draft";
@@ -133,6 +141,7 @@ function incidentToApp(row = {}) {
     locationPrecision: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "official_incident_pin" : "unknown",
     coordinateSource: "official_incident_record",
     mappingStatus: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "exact_geocode" : "needs_review",
+    attachments,
   };
 }
 
@@ -294,7 +303,7 @@ export async function getIncident(incidentId) {
   const row = await runSupabaseRequest(client =>
     client
       .from("incidents")
-      .select("*, barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))")
+      .select("*, incident_media(*), barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))")
       .eq("id", incidentId)
       .maybeSingle(),
   "Unable to load incident.");
