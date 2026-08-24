@@ -5,6 +5,7 @@ import {
   listPublicPCRMapIncidents,
 } from '../services/supabase';
 import { hasValidLatLng, isWithinIsabelaMapArea } from './mapData';
+import { isWithinAccidentProneWindow } from './accidentProneWindow';
 
 function isAccidentRecord(record = {}) {
   const values = [
@@ -75,10 +76,14 @@ export async function loadPublicAccidentIncidents({ officialLimit = 500, scraped
     .filter(isAccidentRecord);
   const officialIds = new Set(publicAccidentReports.map(item => item.id));
   const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : [])
-    .filter(item => !officialIds.has(item.relatedIncidentId));
+    .filter(item => !officialIds.has(item.relatedIncidentId))
+    .filter(isAccidentRecord);
 
   return mergeMapRecords([...publicAccidentReports, ...pcrOnly, ...scrapedAccidents])
     .filter(hasValidLatLng)
     .filter(isWithinIsabelaMapArea)
+    .filter(record => isWithinAccidentProneWindow(
+      record.date || record.incident_date || record.createdAt || record.created_at,
+    ))
     .map(sanitizeForPublic);
 }

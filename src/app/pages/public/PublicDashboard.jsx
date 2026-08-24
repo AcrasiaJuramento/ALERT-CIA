@@ -51,7 +51,9 @@ export default function PublicDashboard() {
   const [error, setError] = useState('');
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
   const resolvedToday = incidents.filter(i => isIncidentCompleted(i.status)).length;
-  const criticalCount = incidents.filter(i => i.severity === 'critical').length;
+  const criticalCount = activeIncidents.filter(
+    incident => String(incident.severity || incident.priority || '').trim().toLowerCase() === 'critical',
+  ).length;
   const topAdvisory = useMemo(() => publicAdvisories[0] || null, [publicAdvisories]);
   const showAdvisoryPopup = topAdvisory && topAdvisory.id !== dismissedAdvisoryId;
 
@@ -94,7 +96,6 @@ export default function PublicDashboard() {
     loadAdvisoriesFromDatabase();
     const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
     const refreshTimer = window.setInterval(loadAdvisoriesFromDatabase, 60000);
-    const incidentPollTimer = window.setInterval(() => loadIncidents({ silent: true }), 15000);
     const incidentChannel = supabase
       ? supabase.channel('public-dashboard-records')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, queueIncidentRefresh)
@@ -111,7 +112,6 @@ export default function PublicDashboard() {
       mounted = false;
       unsubscribe();
       window.clearInterval(refreshTimer);
-      window.clearInterval(incidentPollTimer);
       window.clearTimeout(incidentRefreshTimer);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       if (incidentChannel) supabase.removeChannel(incidentChannel);

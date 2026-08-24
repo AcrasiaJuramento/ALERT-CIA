@@ -61,6 +61,7 @@ export default function IncidentList() {
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [incidents, setIncidents] = useState([]);
+  const [summaryIncidents, setSummaryIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [pcrLoadingIncidentId, setPcrLoadingIncidentId] = useState(null);
   const [pcrPreview, setPcrPreview] = useState(null);
@@ -75,16 +76,27 @@ export default function IncidentList() {
       setLoading(true);
       setError('');
       try {
-        const rows = await listIncidents({
-          limit: pageSize,
-          from: (page - 1) * pageSize,
+        const filters = {
           completedWorkflowOnly: true,
           status: filterStatus === 'all' ? undefined : filterStatus,
           type: filterType === 'all' ? undefined : filterType,
           severity: filterSeverity === 'all' ? undefined : filterSeverity,
-        });
+        };
+        const [rows, summaryRows] = await Promise.all([
+          listIncidents({
+            ...filters,
+            limit: pageSize,
+            from: (page - 1) * pageSize,
+          }),
+          listIncidents({
+            ...filters,
+            limit: 500,
+            from: 0,
+          }),
+        ]);
         if (mounted) {
           setIncidents(Array.isArray(rows) ? rows : []);
+          setSummaryIncidents(Array.isArray(summaryRows) ? summaryRows : []);
           setTotalCount(rows.totalCount ?? rows.length);
         }
       } catch (requestError) {
@@ -123,10 +135,10 @@ export default function IncidentList() {
   useEffect(() => setPage(1), [search, filterSeverity, filterType, filterStatus]);
 
   const stats = {
-    total: incidents.length,
-    critical: incidents.filter(i => i.severity === 'critical').length,
-    active: incidents.filter(i => !isIncidentCompleted(i.status)).length,
-    resolved: incidents.filter(i => isIncidentCompleted(i.status)).length,
+    total: totalCount,
+    critical: summaryIncidents.filter(i => i.severity === 'critical').length,
+    active: summaryIncidents.filter(i => !isIncidentCompleted(i.status)).length,
+    resolved: summaryIncidents.filter(i => isIncidentCompleted(i.status)).length,
   };
 
   const selectClass = 'px-3 py-2 bg-secondary border border-border rounded-lg text-muted-foreground text-xs focus:outline-none focus:border-blue-500 transition-all';
