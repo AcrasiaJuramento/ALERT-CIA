@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   canStartAutomaticReroute,
   getDistanceFromRouteMeters,
+  getOffRouteThresholdMeters,
   getLatestAccidentWarningAgeDays,
   getNextOffRouteConfirmationCount,
   isLatestAccidentRouteWarning,
@@ -38,6 +39,11 @@ test('treats a reliable reading beyond the route corridor as off-route', () => {
 
 test('does not use a very inaccurate reading as off-route evidence', () => {
   assert.equal(isLocationOffRoute({ latLng: [16.702, 121.675], accuracy: 120 }, route), false);
+});
+
+test('uses a less precise GPS reading when the route deviation is decisive', () => {
+  assert.equal(getOffRouteThresholdMeters({ accuracy: 120 }), 240);
+  assert.equal(isLocationOffRoute({ latLng: [16.704, 121.675], accuracy: 120 }, route), true);
 });
 
 test('uses reported accuracy as a wider noise floor when it is still usable', () => {
