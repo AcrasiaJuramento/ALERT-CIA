@@ -82,6 +82,14 @@ function summarizeDescription(text, extended = {}, response = {}) {
 function incidentToApp(row = {}) {
   const descriptionParts = parseDescription(row.description);
   const response = row.response || row.responses || {};
+  const attachments = asRows(row.incident_media).map(media => ({
+    id: media.id,
+    name: media.file_name || media.storage_path?.split("/").pop() || "Incident attachment",
+    type: media.media_type || "photo",
+    storagePath: media.storage_path || "",
+    capturedAt: media.created_at || "",
+    source: "incident",
+  }));
   const classification = classificationFromRecord(row.classification || "other", descriptionParts.extended);
   const priority = row.priority || "medium";
   const status = row.status || "draft";
@@ -133,6 +141,7 @@ function incidentToApp(row = {}) {
     locationPrecision: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "official_incident_pin" : "unknown",
     coordinateSource: "official_incident_record",
     mappingStatus: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "exact_geocode" : "needs_review",
+    attachments,
   };
 }
 
@@ -239,13 +248,27 @@ async function completedWorkflowResponseIds(client) {
   return { data: [...new Set(responseIds)], error: null };
 }
 
-export async function listIncidents({ publicOnly = false, limit = 200, from = 0, status, type, severity, completedWorkflowOnly = false } = {}) {
+async function verifiedPCRResponseIds(client) {
+  return client
+    .from("pcr_reports")
+    .select("response_id")
+    .eq("status", "verified")
+    .not("response_id", "is", null)
+    .is("deleted_at", null)
+    .limit(5000);
+}
+
+export async function listIncidents({ publicOnly = false, limit = 200, from = 0, status, type, severity, completedWorkflowOnly = false, verifiedMapOnly = false } = {}) {
   const classification = type === "vehicular" ? "mvc" : type;
   const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
   const { data, count } = await runSupabaseRequestWithMeta(async client => {
     const completedResponseResult = completedWorkflowOnly ? await completedWorkflowResponseIds(client) : null;
     if (completedResponseResult?.error) return completedResponseResult;
     if (completedWorkflowOnly && !completedResponseResult.data.length) return { data: [], count: 0, error: null };
+    const verifiedResponseResult = verifiedMapOnly ? await verifiedPCRResponseIds(client) : null;
+    if (verifiedResponseResult?.error) return verifiedResponseResult;
+    const verifiedResponseIds = asRows(verifiedResponseResult?.data).map(row => row.response_id).filter(Boolean);
+    if (verifiedMapOnly && !verifiedResponseIds.length) return { data: [], count: 0, error: null };
 
     if (publicOnly) {
       let query = client
@@ -259,6 +282,7 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
       if (classification) query = query.eq("classification", classification);
       if (priority) query = query.eq("priority", priority);
       if (completedWorkflowOnly) query = query.in("response_id", completedResponseResult.data);
+      if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
       return query;
     }
 
@@ -272,6 +296,7 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
     if (classification) query = query.eq("classification", classification);
     if (priority) query = query.eq("priority", priority);
     if (completedWorkflowOnly) query = query.in("response_id", completedResponseResult.data);
+    if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
     return query;
   }, "Unable to load incidents.");
 
@@ -294,7 +319,7 @@ export async function getIncident(incidentId) {
   const row = await runSupabaseRequest(client =>
     client
       .from("incidents")
-      .select("*, barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))")
+      .select("*, incident_media(*), barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))")
       .eq("id", incidentId)
       .maybeSingle(),
   "Unable to load incident.");

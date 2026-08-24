@@ -93,6 +93,85 @@ function formatCurrentTime() {
   const now = new Date();
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Unable to read attachment."));
+    reader.readAsDataURL(file);
+  });
+}
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Unable to load image attachment."));
+    image.src = dataUrl;
+  });
+}
+function canvasToDataUrl(canvas, type) {
+  return new Promise((resolve, reject) => {
+    const outputType = ["image/jpeg", "image/png", "image/webp"].includes(type) ? type : "image/jpeg";
+    canvas.toBlob(blob => {
+      if (!blob) {
+        reject(new Error("Unable to watermark image attachment."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => resolve({ data: reader.result, size: blob.size, type: outputType });
+      reader.onerror = () => reject(reader.error || new Error("Unable to read watermarked image."));
+      reader.readAsDataURL(blob);
+    }, outputType, 0.9);
+  });
+}
+function coordinateLabel(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(6) : "Unavailable";
+}
+function buildAttachmentWatermarkLines(form, location, capturedAt) {
+  const latitude = location?.lat ?? form.latitude;
+  const longitude = location?.lng ?? form.longitude;
+  const incidentDate = formatDateAndTime(form.timeline?.dateOfIncident || form.dateOfIncident, form.timeline?.timeOfIncident || form.timeOfIncident);
+  return [
+    form.timeline?.placeOfIncident || form.placeOfIncident || form.locationText || "Incident location unavailable",
+    `Lat ${coordinateLabel(latitude)}  Long ${coordinateLabel(longitude)}`,
+    `Date ${incidentDate || new Date(capturedAt).toLocaleString()}`,
+  ];
+}
+async function watermarkImageAttachment(file, dataUrl, form, location, capturedAt) {
+  const image = await loadImage(dataUrl);
+  const canvas = document.createElement("canvas");
+  const width = image.naturalWidth || image.width;
+  const height = image.naturalHeight || image.height;
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.drawImage(image, 0, 0, width, height);
+
+  const lines = buildAttachmentWatermarkLines(form, location, capturedAt);
+  const fontSize = Math.max(16, Math.round(width * 0.025));
+  const smallFontSize = Math.max(13, Math.round(fontSize * 0.78));
+  const lineHeight = Math.round(fontSize * 1.32);
+  const padding = Math.max(14, Math.round(width * 0.018));
+  const panelHeight = padding * 2 + lineHeight * lines.length;
+  const panelY = Math.max(0, height - panelHeight);
+
+  context.fillStyle = "rgba(0, 0, 0, 0.62)";
+  context.fillRect(0, panelY, width, panelHeight);
+  context.fillStyle = "rgba(37, 99, 235, 0.92)";
+  context.fillRect(0, panelY, Math.max(6, Math.round(width * 0.012)), panelHeight);
+  context.fillStyle = "#ffffff";
+  context.shadowColor = "rgba(0, 0, 0, 0.65)";
+  context.shadowBlur = 3;
+  context.font = `700 ${fontSize}px Arial, sans-serif`;
+  context.fillText(lines[0], padding, panelY + padding + fontSize, width - padding * 2);
+  context.font = `600 ${smallFontSize}px Arial, sans-serif`;
+  lines.slice(1).forEach((line, index) => {
+    context.fillText(line, padding, panelY + padding + fontSize + lineHeight * (index + 1), width - padding * 2);
+  });
+
+  return canvasToDataUrl(canvas, file.type);
+}
 function FloatingTimelinePrompt({ item, onChange }) {
   if (!item) return null;
   return <div className="sticky top-3 z-30 ml-auto w-full max-w-xs rounded-lg border border-blue-500/30 bg-card p-3 shadow-xl"><div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-blue-400"><ClockIcon />{item.label}</div><button type="button" onClick={() => onChange(item.key, formatCurrentTime())} className="w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500">Yes</button></div>;
@@ -709,7 +788,36 @@ export default function PCRModule() {
   const setGcsRow = (id, key, value) => update("gcsRows", gcsRows.map(row => row.id === id ? { ...row, [key]: value } : row));
   const addMedication = () => update("medications", [...form.medications, { drug: "", dose: "", dateTime: "" }]);
   const setMedication = (index, key, value) => update("medications", form.medications.map((m,i)=>i===index?{...m,[key]:value}:m));
-  const upload = async e => { const files = [...e.target.files]; if (!files.length) return; const location = await new Promise(resolve => navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }), () => resolve(null), { enableHighAccuracy: true, timeout: 5000 }) : resolve(null)); const items = await Promise.all(files.map(file => new Promise(resolve => { const reader = new FileReader(); reader.onload = () => resolve({ id: randomUuid(), name: file.name, type: file.type, size: file.size, data: reader.result, location, capturedAt: new Date().toISOString() }); reader.readAsDataURL(file); }))); update("attachments", [...form.attachments, ...items]); };
+  const upload = async e => {
+    const files = [...e.target.files];
+    if (!files.length) return;
+    const location = await new Promise(resolve => navigator.geolocation ? navigator.geolocation.getCurrentPosition(p => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }), () => resolve(null), { enableHighAccuracy: true, timeout: 5000 }) : resolve(null));
+    const items = await Promise.all(files.map(async file => {
+      const capturedAt = new Date().toISOString();
+      const originalData = await readFileAsDataUrl(file);
+      if (!file.type.startsWith("image/")) {
+        return { id: randomUuid(), name: file.name, type: file.type, size: file.size, data: originalData, location, capturedAt };
+      }
+      try {
+        const watermarked = await watermarkImageAttachment(file, originalData, form, location, capturedAt);
+        return {
+          id: randomUuid(),
+          name: file.name,
+          type: watermarked.type,
+          size: watermarked.size,
+          data: watermarked.data,
+          originalSize: file.size,
+          location,
+          capturedAt,
+          watermarked: true,
+        };
+      } catch {
+        return { id: randomUuid(), name: file.name, type: file.type, size: file.size, data: originalData, location, capturedAt, watermarkFailed: true };
+      }
+    }));
+    update("attachments", [...form.attachments, ...items]);
+    e.target.value = "";
+  };
 
   return <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
     {loading && <div className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">Loading PCR report...</div>}

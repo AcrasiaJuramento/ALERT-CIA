@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { toast } from 'sonner';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Layers, AlertTriangle, Flame, Droplets, Car, Heart, Shield,
@@ -546,9 +547,9 @@ export default function MapMonitoring() {
       setLoading(true);
       try {
         const [officialResult, scrapedResult, pcrResult, advisoryResult] = await Promise.allSettled([
-          listIncidents({ limit: 500 }),
+          listIncidents({ verifiedMapOnly: true, limit: 500 }),
           listOfficerScrapedMapIncidents({ includeUnverified: true }),
-          listPCRMapIncidents({ limit: 200 }),
+          listPCRMapIncidents({ verifiedOnly: true, limit: 200 }),
           listAdvisories({ activeOnly: true, limit: 100 }),
         ]);
         if (mounted) {
@@ -583,36 +584,46 @@ export default function MapMonitoring() {
   useEffect(() => {
     if (!supabase) return undefined;
 
+    let refreshTimer;
+    const refreshFromRealtime = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(() => {
+        setReloadKey(key => key + 1);
+        toast.success('Map updated from live data.', { id: 'officer-map-live-update' });
+      }, 250);
+    };
+
     const channel = supabase
       .channel('map-monitoring-scraper-records')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'scraper_records' },
-        () => setReloadKey(key => key + 1),
+        refreshFromRealtime,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'incidents' },
-        () => setReloadKey(key => key + 1),
+        refreshFromRealtime,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'pcr_reports' },
-        () => setReloadKey(key => key + 1),
+        refreshFromRealtime,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'responses' },
-        () => setReloadKey(key => key + 1),
+        refreshFromRealtime,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'public_advisories' },
-        () => setReloadKey(key => key + 1),
+        refreshFromRealtime,
       )
       .subscribe();
 
     return () => {
+      window.clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, []);

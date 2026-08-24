@@ -364,13 +364,13 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
   };
 }
 
-export async function listPCRMapIncidents({ publicOnly = false, limit = 100 } = {}) {
+export async function listPCRMapIncidents({ publicOnly = false, verifiedOnly = false, limit = 100 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("pcr_reports")
       .select(PCR_SELECT)
       .is("deleted_at", null)
-      .in("status", publicOnly ? PUBLIC_PCR_MAP_STATUSES : ADMIN_PCR_MAP_STATUSES)
+      .in("status", verifiedOnly ? ["verified"] : publicOnly ? PUBLIC_PCR_MAP_STATUSES : ADMIN_PCR_MAP_STATUSES)
       .order("created_at", { ascending: false })
       .limit(limit);
     return query;
