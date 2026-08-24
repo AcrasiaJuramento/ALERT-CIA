@@ -61,6 +61,14 @@ export function returnNormalPCRToFieldOfficer(pcrId, remarks) {
   }, 'Unable to return the PCR to the Field Officer.');
 }
 
+export function reviewNormalPCRAsAdmin(pcrId, decision, remarks = '') {
+  return transition('review_normal_pcr_admin', {
+    target_pcr_id: pcrId,
+    decision,
+    remarks: remarks || null,
+  }, 'Unable to review Patient Care Record.');
+}
+
 export async function listPCRWorkflowHistory(pcrId) {
   const rows = await runSupabaseRequest(client => client
     .from('pcr_dispatch_workflow_history')

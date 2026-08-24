@@ -8,13 +8,29 @@ import { createIncident } from "../services/supabase/incidentService";
 import { replacePCRAttachments, replacePCRInterventions, replacePCRMedications, replacePCRVitals, upsertPCRReport } from "../services/supabase/pcrService";
 import { randomUuid } from "../utils/uuid";
 
+function hasMeaningfulVitalRows(vitals = []) {
+  return vitals.some(vital => vital?.time || vital?.bp || vital?.pulse || vital?.respiratory || vital?.temperature || vital?.oxygen);
+}
+
+function hasMeaningfulMedicationRows(medications = []) {
+  return medications.some(medication => medication?.drug || medication?.dose || medication?.dateTime);
+}
+
+function hasMeaningfulInterventions(interventions = {}) {
+  return Object.values(interventions || {}).some(Boolean);
+}
+
+function hasMeaningfulAttachments(attachments = []) {
+  return attachments.some(attachment => attachment?.name || attachment?.fileName || attachment?.data || attachment?.storagePath);
+}
+
 async function replacePCRChildRows(pcrId, payload) {
-  await Promise.all([
-    replacePCRVitals(pcrId, payload.vitals || []),
-    replacePCRMedications(pcrId, payload.medications || []),
-    replacePCRInterventions(pcrId, payload.interventions || {}, payload.interventionDetails || {}),
-    replacePCRAttachments(pcrId, payload.attachments || []),
-  ]);
+  const replacements = [];
+  if (hasMeaningfulVitalRows(payload.vitals || [])) replacements.push(replacePCRVitals(pcrId, payload.vitals));
+  if (hasMeaningfulMedicationRows(payload.medications || [])) replacements.push(replacePCRMedications(pcrId, payload.medications));
+  if (hasMeaningfulInterventions(payload.interventions || {})) replacements.push(replacePCRInterventions(pcrId, payload.interventions, payload.interventionDetails || {}));
+  if (hasMeaningfulAttachments(payload.attachments || [])) replacements.push(replacePCRAttachments(pcrId, payload.attachments));
+  await Promise.all(replacements);
 }
 
 function manualDispatchShellFromPcr(payload) {

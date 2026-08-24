@@ -87,6 +87,33 @@ db.exec(`
     ON local_sync_operations(sync_status, updated_at DESC);
 `);
 
+function hasMeaningfulValue(value) {
+  if (value === null || value === undefined || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).some(hasMeaningfulValue);
+  return true;
+}
+
+function mergePreservingExisting(existing = {}, incoming = {}) {
+  const merged = { ...(existing || {}) };
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (!hasMeaningfulValue(value)) continue;
+    if (
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && merged[key]
+      && typeof merged[key] === "object"
+      && !Array.isArray(merged[key])
+    ) {
+      merged[key] = mergePreservingExisting(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 function parseRecord(row) {
   if (!row?.record_json) return null;
   try {
@@ -692,14 +719,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const existing = findPcrByResponse(responseId) || {};
+      const mergedPayload = mergePreservingExisting(existing, payload);
       const record = {
-        ...existing,
-        ...payload,
+        ...mergedPayload,
         id,
         pcrId: id,
         responseId,
-        dispatchId: payload.dispatchId || existing.dispatchId || null,
-        status: payload.status || existing.status || "Draft",
+        dispatchId: mergedPayload.dispatchId || existing.dispatchId || null,
+        status: mergedPayload.status || existing.status || "Draft",
         source: "local_server",
         sync_status: "partially_synced",
         updatedAt: new Date().toISOString(),
@@ -726,13 +753,13 @@ const server = http.createServer(async (req, res) => {
       const dispatch = payload.dispatchId
         ? dispatches.get(payload.dispatchId)
         : findDispatchByResponse(responseId);
+      const mergedPayload = mergePreservingExisting(existing, payload);
       const record = {
-        ...existing,
-        ...payload,
+        ...mergedPayload,
         id,
         pcrId: id,
         responseId,
-        dispatchId: payload.dispatchId || existing.dispatchId || dispatch?.id || null,
+        dispatchId: mergedPayload.dispatchId || existing.dispatchId || dispatch?.id || null,
         status: "Submitted",
         localStatus: "Submitted Locally",
         submittedAt,

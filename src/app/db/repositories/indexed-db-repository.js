@@ -28,6 +28,33 @@ function withLocalFields(record, entityType, source = RECORD_SOURCES.OFFLINE_DEV
   };
 }
 
+function hasMeaningfulValue(value) {
+  if (value === null || value === undefined || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).some(hasMeaningfulValue);
+  return true;
+}
+
+function mergePreservingExisting(existing = {}, incoming = {}) {
+  const merged = { ...(existing || {}) };
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (!hasMeaningfulValue(value)) continue;
+    if (
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && merged[key]
+      && typeof merged[key] === "object"
+      && !Array.isArray(merged[key])
+    ) {
+      merged[key] = mergePreservingExisting(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 function dependencyKeys(deviceId, type, entityType, payload) {
   const keys = [];
   const dispatchId = payload.dispatchId || payload.id;
@@ -349,8 +376,9 @@ export const indexedDbRepository = {
 
   async savePcrDraft(payload) {
     const parentedPayload = await ensureManualPcrParent(payload);
+    const existing = await getRecord("local_pcr_reports", parentedPayload.pcrId || parentedPayload.id);
     const record = withLocalFields({
-      ...parentedPayload,
+      ...mergePreservingExisting(existing, parentedPayload),
       status: payload.status || "Draft",
       localStatus: payload.localStatus || "PCR Draft Locally",
     }, "pcr");
@@ -362,8 +390,9 @@ export const indexedDbRepository = {
   async submitPcr(payload) {
     const completedLocally = payload.status !== "Draft";
     const parentedPayload = await ensureManualPcrParent(payload);
+    const existing = await getRecord("local_pcr_reports", parentedPayload.pcrId || parentedPayload.id);
     const record = withLocalFields({
-      ...parentedPayload,
+      ...mergePreservingExisting(existing, parentedPayload),
       status: completedLocally ? "Submitted" : "Submitted",
       localStatus: completedLocally ? "Submitted Locally" : payload.localStatus,
       submittedAt: payload.submittedAt || new Date().toISOString(),

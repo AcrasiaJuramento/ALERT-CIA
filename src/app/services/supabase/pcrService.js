@@ -182,6 +182,18 @@ function asRows(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function isEmptyPatchValue(value) {
+  if (value === null || value === undefined || value === "") return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
+function compactPatch(payload = {}) {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([, value]) => !isEmptyPatchValue(value)),
+  );
+}
+
 export async function listPCRReports({ status, limit = 100, from = 0, archive = "active" } = {}) {
   const { data, count } = await runSupabaseRequestWithMeta(client => {
     let query = client
@@ -254,6 +266,12 @@ function displayLocationText(...values) {
 
 function pcrStatusRank(status = "") {
   return PCR_STATUS_RANK[String(status || "").toLowerCase()] ?? 9;
+}
+
+function isReturnedCorrectionStatus(status = "") {
+  return ["returned for correction", "returned to field officer", "returned_for_correction", "returned_to_field_officer"].includes(
+    String(status || "").trim().toLowerCase(),
+  );
 }
 
 function canonicalPcrRows(rows = []) {
@@ -480,7 +498,7 @@ export async function savePCRReport(pcrId, record) {
 
     return client
       .from("pcr_reports")
-      .update(pcrPayloadFromRecord(record))
+      .update(compactPatch(pcrPayloadFromRecord(record)))
       .eq("id", pcrId)
       .select(PCR_SELECT)
       .single();
@@ -680,11 +698,42 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
     if (existingError) return { data: null, error: existingError };
     pcrId = existingByResponse?.id || (validUuid(pcrId) ? pcrId : randomUuid());
 
+    if (
+      existingByResponse?.id
+      && syncRecord.workflowOrigin !== "reverse"
+      && (isReturnedCorrectionStatus(syncRecord.status) || syncRecord.wasReturnedForCorrection)
+    ) {
+      if (syncRecord.responseId) {
+        const responsePatch = responseDemographicsPayloadFromPcr(syncRecord);
+        if (Object.keys(responsePatch).length) {
+          const { error: responseError } = await client
+            .from("responses")
+            .update(responsePatch)
+            .eq("id", syncRecord.responseId);
+          if (responseError) return { data: null, error: responseError };
+        }
+      }
+
+      const returnedPatch = compactPatch(pcrPayloadFromRecord({
+        ...syncRecord,
+        birthday: patientBirthdayFromRecord(syncRecord) || syncRecord.birthday,
+        status: syncStatus,
+      }));
+      if (submit || syncStatus === "Submitted") returnedPatch.submitted_at = new Date().toISOString();
+
+      return client
+        .from("pcr_reports")
+        .update(returnedPatch)
+        .eq("id", pcrId)
+        .select(PCR_SELECT)
+        .single();
+    }
+
     if (syncRecord.workflowOrigin === "reverse") {
       return client
         .from("pcr_reports")
         .update({
-          ...pcrPayloadFromRecord({ ...syncRecord, status: syncStatus }),
+          ...compactPatch(pcrPayloadFromRecord({ ...syncRecord, status: syncStatus })),
           workflow_origin: "reverse",
         })
         .eq("id", pcrId)
@@ -722,15 +771,15 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
     const dispatchFormId = await resolveCloudDispatchFormId(client, syncRecord);
     if (dispatchFormId.error) return dispatchFormId;
 
-    const payload = {
+    const payload = compactPatch({
       id: pcrId,
       response_id: syncRecord.responseId,
       dispatch_form_id: dispatchFormId.data,
       dispatch_patient_id: syncRecord.dispatchPatientId || syncRecord.patientId || null,
       responding_team_id: syncRecord.respondingTeamId || null,
       field_officer_id: syncRecord.fieldOfficerId || syncRecord.createdBy || null,
-      ...pcrPayloadFromRecord({ ...syncRecord, birthday: normalizedBirthday || syncRecord.birthday, status: syncStatus }),
-    };
+      ...compactPatch(pcrPayloadFromRecord({ ...syncRecord, birthday: normalizedBirthday || syncRecord.birthday, status: syncStatus })),
+    });
     if (submit || syncStatus === "Submitted") payload.submitted_at = syncRecord.submittedAt || new Date().toISOString();
 
     const upsertResult = await client

@@ -14,7 +14,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getConnectionState, subscribeConnection } from '../network/connection-manager';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
-import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, listPCRReports, listPCRWorkflowHistory, returnNormalPCRToFieldOfficer, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, savePCRReport, supabase, unarchivePCRReport } from '../services/supabase';
+import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, listPCRReports, listPCRWorkflowHistory, reviewNormalPCRAsAdmin, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, supabase, unarchivePCRReport } from '../services/supabase';
 
 const formatDate = value => {
   if (!value) return '-';
@@ -253,9 +253,7 @@ export default function PCRReports() {
     decision === 'approve' ? 'PCR and Dispatch Form verified.' : 'Records returned for correction.',
   );
   const normalDecision = (record, decision, remarks = '') => refreshAfter(
-    () => decision === 'approve'
-      ? savePCRReport(record.id, { ...record, status: 'Verified', rejectionReason: '' })
-      : returnNormalPCRToFieldOfficer(record.id, remarks),
+    () => reviewNormalPCRAsAdmin(record.id, decision, remarks),
     decision === 'approve' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.',
   );
   const rejectRecord = () => {

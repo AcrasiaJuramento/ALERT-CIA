@@ -195,6 +195,20 @@ function timelineTime(...values) {
   return value ? timeFromTimestamp(value) : "";
 }
 
+function plusMinus(value) {
+  if (value === "+") return "Positive";
+  if (value === "-") return "Negative";
+  return value || "";
+}
+
+function patientCrashRole(patient = {}) {
+  return [
+    patient.driver && "Driver",
+    patient.passenger && "Passenger",
+    patient.pedestrian && "Pedestrian",
+  ].filter(Boolean).join(" / ");
+}
+
 function selectedIncidentTypes(dispatch = {}) {
   if (Array.isArray(dispatch.natureTypes)) return dispatch.natureTypes;
   return String(dispatch.typeOfIncident || "")
@@ -250,6 +264,9 @@ function pcrSeedFromDispatch(dispatch = {}, pcrShell = {}, freshPcr = createPCR(
     dispatchTime,
     arrivalScene: timelineTime(dispatch.arrivalScene, dispatch.timeline?.arrivalScene, pcrShell.arrivalScene, pcrShell.timeline?.arrivalScene),
     departureScene: timelineTime(dispatch.departureScene, dispatch.timeline?.departureScene, pcrShell.departureScene, pcrShell.timeline?.departureScene),
+    arrivalHospital: timelineTime(dispatch.arrivalHospital, dispatch.timeline?.arrivalHospital, pcrShell.arrivalHospital, pcrShell.timeline?.arrivalHospital),
+    departureHospital: timelineTime(dispatch.departureHospital, dispatch.timeline?.departureHospital, pcrShell.departureHospital, pcrShell.timeline?.departureHospital),
+    backToBase: timelineTime(dispatch.backToBase, dispatch.arrivalOffice, dispatch.timeline?.backToBase, pcrShell.backToBase, pcrShell.timeline?.backToBase),
     timeline: {
       dateOfIncident: incidentDate,
       timeOfIncident: incidentTime,
@@ -259,32 +276,50 @@ function pcrSeedFromDispatch(dispatch = {}, pcrShell = {}, freshPcr = createPCR(
       departureScene: timelineTime(dispatch.departureScene, dispatch.timeline?.departureScene, pcrShell.departureScene, pcrShell.timeline?.departureScene),
       arrivalHospital: timelineTime(dispatch.arrivalHospital, dispatch.timeline?.arrivalHospital, pcrShell.arrivalHospital, pcrShell.timeline?.arrivalHospital),
       departureHospital: timelineTime(dispatch.departureHospital, dispatch.timeline?.departureHospital, pcrShell.departureHospital, pcrShell.timeline?.departureHospital),
-      backToBase: timelineTime(dispatch.backToBase, dispatch.timeline?.backToBase, pcrShell.backToBase, pcrShell.timeline?.backToBase),
+      backToBase: timelineTime(dispatch.backToBase, dispatch.arrivalOffice, dispatch.timeline?.backToBase, pcrShell.backToBase, pcrShell.timeline?.backToBase),
     },
     patientName: patient.name || dispatch.patientName || "",
     age: patient.age ?? dispatch.age ?? "",
     birthday: patient.birthdate || patient.birthday || dispatch.birthday || "",
     gender: patient.gender || dispatch.gender || "",
     address: patient.address || dispatch.address || "",
-    contactPerson: patient.contactPerson || dispatch.contactPerson || "",
-    contactNumber: patient.contactNumber || dispatch.contactNumber || "",
+    contactPerson: patient.contactPerson || dispatch.contactPerson || dispatch.callerName || "",
+    contactNumber: patient.contactNumber || dispatch.contactNumber || dispatch.callerContact || "",
     chiefComplaint: patient.assessmentFindings || dispatch.chiefComplaint || "",
+    vitals: patient.bp || patient.pr || patient.rr || patient.temp || patient.o2Sat
+      ? [{ id: randomUuid(), time: "", bp: patient.bp || "", pulse: patient.pr || "", respiratory: patient.rr || "", temperature: patient.temp || "", oxygen: patient.o2Sat || "" }]
+      : freshPcr.vitals,
     emergencyTypes: seededEmergencyTypes,
     traumaTypes: seededTraumaTypes,
-    emergencyOther: dispatch.otherMedical || dispatch.otherNature || "",
+    emergencyOther: dispatch.otherMedical || dispatch.otherTrauma || dispatch.otherNature || "",
     assaultDetails: dispatch.assaultDetails || "",
     animalBiteDetails: dispatch.animalBiteDetails || "",
     incidentNature: dispatch.incidentNature || "",
     ingestionItem: dispatch.ingestionItem || dispatch.ifIngestion || dispatch.ingestionDetails || "",
     ingestionQuantity: dispatch.ingestionQuantity || dispatch.quantity || "",
     fallDetails: dispatch.fallDetails || dispatch.ifFall || "",
+    obstetric: {
+      ...freshPcr.obstetric,
+      lmp: patient.lmp || "",
+      g: patient.g || "",
+      p: patient.p || "",
+      edc: patient.edc || "",
+      bow: plusMinus(patient.bow),
+      aog: patient.aog || "",
+      ie: patient.ie || "",
+    },
     crash: {
       ...freshPcr.crash,
       ...(dispatch.crash || {}),
       selfAccident: Boolean(dispatch.crash?.selfAccident || dispatch.selfAccident),
       collision: Boolean(dispatch.crash?.collision || dispatch.collision),
       vehicle: dispatch.crash?.vehicle || dispatch.vehicleInvolved || dispatch.vehicleInvolve || "",
+      role: dispatch.crash?.role || patientCrashRole(patient),
+      alcohol: dispatch.crash?.alcohol || plusMinus(patient.alcoholBreath),
+      helmet: dispatch.crash?.helmet || plusMinus(patient.helmet),
+      license: dispatch.crash?.license || plusMinus(patient.driversLicense),
     },
+    hospitalName: dispatch.hospitalName || dispatch.nameOfHospital || "",
   });
 }
 
@@ -630,17 +665,19 @@ export default function PCRModule() {
     setSavingStatus(status);
     try {
       const reverseSubmit = form.workflowOrigin === "reverse" && status !== "Draft";
+      const preserveReturnedCompletion = form.status === "Returned for Correction";
       const submitTimeline = status === "Draft"
         ? form.timeline
-        : { ...(form.timeline || {}), backToBase: "" };
+        : { ...(form.timeline || {}), backToBase: preserveReturnedCompletion ? form.timeline?.backToBase || form.backToBase : "" };
       const payload = {
         ...form,
         status: reverseSubmit ? "Draft" : status,
         id: form.id || randomUuid(),
         timeline: submitTimeline,
-        backToBase: status === "Draft" ? form.backToBase : "",
-        completedAt: status === "Draft" ? form.completedAt : "",
-        resolvedAt: status === "Draft" ? form.resolvedAt : "",
+        backToBase: status === "Draft" || preserveReturnedCompletion ? form.backToBase : "",
+        completedAt: status === "Draft" || preserveReturnedCompletion ? form.completedAt : "",
+        resolvedAt: status === "Draft" || preserveReturnedCompletion ? form.resolvedAt : "",
+        wasReturnedForCorrection: preserveReturnedCompletion,
       };
       const saved = status === "Draft" || reverseSubmit
         ? await hybridRepository.savePcrDraft(payload)
