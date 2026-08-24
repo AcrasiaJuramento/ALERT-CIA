@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, Save, Download, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
+  ArrowLeft, Save, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -170,6 +170,7 @@ function dispatchPrefillFromPCR(pcr) {
     if (["n/a", "not applicable", "unknown"].includes(normalized)) return "Unknown";
     return "";
   };
+  const hasCrashRole = role => String(crash.role || "").toLowerCase().includes(role);
   const birthday = pcr.birthday || pcr.birthdate || "";
   const birthdateParts = splitBirthdate(birthday);
   const natureTypes = [...new Set([
@@ -189,6 +190,8 @@ function dispatchPrefillFromPCR(pcr) {
     natureTypes,
     otherMedical: pcr.otherMedical || pcr.emergencyOther || "",
     otherTrauma: pcr.otherTrauma || "",
+    arrivalOffice: pcr.arrivalOffice || pcr.backToBase || pcr.timeline?.backToBase || "",
+    nameOfHospital: pcr.nameOfHospital || pcr.hospitalName || pcr.endorsementHospital || "",
     selfAccident: Boolean(pcr.selfAccident || crash.selfAccident),
     collision: Boolean(pcr.collision || crash.collision),
     vehicleInvolved: pcr.vehicleInvolved || crash.vehicle || "",
@@ -223,9 +226,9 @@ function dispatchPrefillFromPCR(pcr) {
       fht: obstetric.fht || "",
       ie: obstetric.ie || "",
       bow: obstetric.bow || "",
-      driver: String(crash.role || "").toLowerCase() === "driver",
-      passenger: String(crash.role || "").toLowerCase() === "passenger",
-      pedestrian: String(crash.role || "").toLowerCase() === "pedestrian",
+      driver: hasCrashRole("driver"),
+      passenger: hasCrashRole("passenger"),
+      pedestrian: hasCrashRole("pedestrian"),
       helmet: normalizeFinding(crash.helmet),
       alcoholBreath: normalizeFinding(crash.alcohol),
       driversLicense: normalizeFinding(crash.license),
@@ -748,8 +751,6 @@ export default function DispatchModule({ onBack }) {
 
   const handlePrimarySend = () => isReverseWorkflow ? handleSave() : handleSendToFieldOfficer();
 
-  const handlePrint = () => window.print();
-
   const natureHas = (t) => form.natureTypes.includes(t);
 
   return (
@@ -786,9 +787,6 @@ export default function DispatchModule({ onBack }) {
           </button>
           <button onClick={handlePrimarySend} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm flex gap-2 items-center hover:bg-green-500">
             <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
-          </button>
-          <button onClick={handlePrint} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm flex gap-2 items-center hover:bg-blue-500">
-            <Download size={15} /> Print / Export
           </button>
         </div>
       </div>
@@ -1042,9 +1040,6 @@ export default function DispatchModule({ onBack }) {
         </button>
         <button onClick={handlePrimarySend} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-green-500">
           <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
-        </button>
-        <button onClick={handlePrint} className="px-5 py-2 bg-blue-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-blue-500">
-          <Download size={15} /> Print / Export PDF
         </button>
       </div>
 
