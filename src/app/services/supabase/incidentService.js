@@ -239,13 +239,27 @@ async function completedWorkflowResponseIds(client) {
   return { data: [...new Set(responseIds)], error: null };
 }
 
-export async function listIncidents({ publicOnly = false, limit = 200, from = 0, status, type, severity, completedWorkflowOnly = false } = {}) {
+async function verifiedPCRResponseIds(client) {
+  return client
+    .from("pcr_reports")
+    .select("response_id")
+    .eq("status", "verified")
+    .not("response_id", "is", null)
+    .is("deleted_at", null)
+    .limit(5000);
+}
+
+export async function listIncidents({ publicOnly = false, limit = 200, from = 0, status, type, severity, completedWorkflowOnly = false, verifiedMapOnly = false } = {}) {
   const classification = type === "vehicular" ? "mvc" : type;
   const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
   const { data, count } = await runSupabaseRequestWithMeta(async client => {
     const completedResponseResult = completedWorkflowOnly ? await completedWorkflowResponseIds(client) : null;
     if (completedResponseResult?.error) return completedResponseResult;
     if (completedWorkflowOnly && !completedResponseResult.data.length) return { data: [], count: 0, error: null };
+    const verifiedResponseResult = verifiedMapOnly ? await verifiedPCRResponseIds(client) : null;
+    if (verifiedResponseResult?.error) return verifiedResponseResult;
+    const verifiedResponseIds = asRows(verifiedResponseResult?.data).map(row => row.response_id).filter(Boolean);
+    if (verifiedMapOnly && !verifiedResponseIds.length) return { data: [], count: 0, error: null };
 
     if (publicOnly) {
       let query = client
@@ -259,6 +273,7 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
       if (classification) query = query.eq("classification", classification);
       if (priority) query = query.eq("priority", priority);
       if (completedWorkflowOnly) query = query.in("response_id", completedResponseResult.data);
+      if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
       return query;
     }
 
@@ -272,6 +287,7 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
     if (classification) query = query.eq("classification", classification);
     if (priority) query = query.eq("priority", priority);
     if (completedWorkflowOnly) query = query.in("response_id", completedResponseResult.data);
+    if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
     return query;
   }, "Unable to load incidents.");
 

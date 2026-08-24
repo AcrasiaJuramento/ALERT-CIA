@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   AlertTriangle, Car, Clock, Crosshair, LocateFixed, MapPin,
   Megaphone, Navigation, RefreshCw, Route, Search, ShieldAlert, X, Volume2, VolumeX
@@ -567,16 +568,25 @@ export default function PublicMap() {
 
   useEffect(() => {
     if (!supabase) return undefined;
+    let refreshTimer;
+    const refreshFromRealtime = () => {
+      window.clearTimeout(refreshTimer);
+      refreshTimer = window.setTimeout(async () => {
+        await loadMap();
+        toast.success('Map updated from live data.', { id: 'public-map-live-update' });
+      }, 250);
+    };
     const channel = supabase
       .channel('public-live-navigation-records')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, () => loadMap())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, () => loadMap())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, () => loadMap())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, () => loadMap())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'hazard_zones' }, () => loadMap())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'public_advisories' }, () => loadMap())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'hazard_zones' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'public_advisories' }, refreshFromRealtime)
       .subscribe();
     return () => {
+      window.clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, []);

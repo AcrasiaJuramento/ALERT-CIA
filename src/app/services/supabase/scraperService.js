@@ -737,7 +737,7 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
 
 export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   if (!isSupabaseConfigured) return [];
-  const cacheKey = `alert-cia:public-scraped-map:${limit}`;
+  const cacheKey = `alert-cia:public-scraped-map:approved-v3:${limit}`;
 
   try {
     const rows = await runSupabaseRequest(client =>
@@ -746,7 +746,8 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
         .select("*, barangay:barangays(id, name, municipality, province, centroid)")
         .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
         .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
-        .in("status", ["approved", "promoted", "matched", "imported"])
+        .eq("status", "approved")
+        .eq("public_visible", true)
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
         .limit(limit),
@@ -755,40 +756,31 @@ export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
     return writeBrowserCache(cacheKey, mapped);
   } catch (error) {
     const cached = readBrowserCache(cacheKey);
-    if (cached) return cached;
+    if (cached) return cached.filter(row => row.scraperStatus === "approved" && row.publicVisible === true);
     throw error;
   }
 }
 
-export async function listOfficerScrapedMapIncidents({ limit = 500, includeUnverified = true } = {}) {
+export async function listOfficerScrapedMapIncidents({ limit = 500 } = {}) {
   if (!isSupabaseConfigured) return [];
 
   const selectColumns = "*, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)";
-  const reviewedStatuses = ["approved", "promoted", "matched", "imported"];
-  const pendingStatuses = ["pending_review", "new"];
-  const buildQuery = (client, statuses, rowLimit) => client
+  const buildQuery = (client, rowLimit) => client
       .from("scraper_records")
       .select(selectColumns)
       .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
       .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
-      .in("status", statuses)
+      .eq("status", "approved")
+      .eq("public_visible", true)
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
       .limit(rowLimit);
 
-  const reviewedRows = await runSupabaseRequest(
-    client => buildQuery(client, reviewedStatuses, limit),
+  const approvedRows = await runSupabaseRequest(
+    client => buildQuery(client, limit),
     "Unable to load verified scraper map incidents.",
   );
-  let pendingRows = [];
-  if (includeUnverified) {
-    pendingRows = await runSupabaseRequest(
-      client => buildQuery(client, pendingStatuses, Math.min(limit, 200)),
-      "Unable to load pending scraper map incidents.",
-    ).catch(() => []);
-  }
-  const rowsById = new Map([...asRows(reviewedRows), ...asRows(pendingRows)].map(row => [row.id, row]));
-  return scraperRowsToMapIncidents([...rowsById.values()].filter(isAccidentMapRow));
+  return scraperRowsToMapIncidents(asRows(approvedRows).filter(isAccidentMapRow));
 }
 
 export async function updateScraperRecordStatus(recordId, status, errorMessage = null) {
