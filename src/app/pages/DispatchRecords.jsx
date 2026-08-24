@@ -57,6 +57,7 @@ const SOURCE_RANK = {
 };
 const LOCAL_REFRESH_MS = 15000;
 const CLOUD_REFRESH_MS = 30000;
+const PCR_SYNC_LOG = "[ALERT-CIA PCR Sync]";
 const DISPATCH_FILTER_STATUSES = [
   "All",
   "Draft",
@@ -76,6 +77,65 @@ const DISPATCH_FILTER_STATUSES = [
 
 function localResponseId(record = {}) {
   return record.responseClientId || record.responseId;
+}
+
+function compactIdSet(values = []) {
+  return new Set(values.filter(Boolean).map(value => String(value)));
+}
+
+function linkedPcrKey(record = {}) {
+  return record.responseId
+    || record.responseClientId
+    || record.dispatchId
+    || record.dispatchClientId
+    || logicalDispatchKey(record);
+}
+
+function linkedPcrFromMap(linkedPCRs = {}, record = {}) {
+  return linkedPCRs[linkedPcrKey(record)];
+}
+
+function logPcrSync(message, details = {}) {
+  console.info(PCR_SYNC_LOG, message, details);
+}
+
+function sameLinkedPcrForDispatch(record = {}, pcr = {}) {
+  const dispatchParentIds = compactIdSet([
+    record.responseId,
+    record.response_id,
+    record.responseClientId,
+    record.response_client_id,
+    record.dispatchId,
+    record.dispatch_id,
+    record.dispatchClientId,
+    record.dispatch_client_id,
+    record.id,
+  ]);
+  const pcrParentIds = compactIdSet([
+    pcr.responseId,
+    pcr.response_id,
+    pcr.responseClientId,
+    pcr.response_client_id,
+    pcr.dispatchId,
+    pcr.dispatch_id,
+    pcr.dispatchFormId,
+    pcr.dispatch_form_id,
+    pcr.dispatchClientId,
+    pcr.dispatch_client_id,
+  ]);
+  if ([...dispatchParentIds].some(id => pcrParentIds.has(id))) return true;
+
+  const linkedPcrIds = compactIdSet([record.linkedPcrId, record.sourcePcrId, record.pcrId]);
+  const pcrIds = compactIdSet([pcr.id, pcr.pcrId, pcr.pcrClientId, pcr.client_generated_id]);
+  if ([...linkedPcrIds].some(id => pcrIds.has(id))) return true;
+
+  const responseNumber = normalizeKeyPart(record.responseNumber);
+  if (responseNumber && responseNumber === normalizeKeyPart(pcr.responseNumber)) {
+    const recordPatientKey = pcrPatientKey(record);
+    const pcrKey = pcrPatientKey(pcr);
+    return !recordPatientKey || !pcrKey || recordPatientKey === pcrKey;
+  }
+  return false;
 }
 
 async function getLocalPcrForDispatch(record = {}) {
@@ -346,20 +406,71 @@ export default function DispatchRecords() {
       if (mode === "cloud") {
         const responseIds = rows.map(record => record.responseId).filter(Boolean);
         const cloudPcrRows = await listPCRReportsByResponses(responseIds).catch(() => []);
-        cloudPcrRows.forEach(pcr => cloudPcrByResponse.set(pcr.responseId, { ...pcr, recordSource: "cloud", syncLabel: "Cloud synced" }));
+        cloudPcrRows.forEach(pcr => {
+          const linked = { ...pcr, recordSource: "cloud", syncLabel: "Cloud synced" };
+          [pcr.responseId, pcr.responseClientId, pcr.dispatchId, pcr.dispatchClientId]
+            .filter(Boolean)
+            .forEach(id => cloudPcrByResponse.set(String(id), linked));
+        });
       }
       const pairs = await Promise.all(rows.map(async record => {
-        if (cloudPcrByResponse.has(record.responseId)) return [record.responseId, cloudPcrByResponse.get(record.responseId)];
+        const key = linkedPcrKey(record);
+        const cloudPcr = [record.responseId, record.responseClientId, record.dispatchId, record.dispatchClientId]
+          .filter(Boolean)
+          .map(id => cloudPcrByResponse.get(String(id)))
+          .find(Boolean);
+        if (cloudPcr) {
+          logPcrSync("Linked cloud PCR to dispatch", {
+            key,
+            responseId: record.responseId,
+            responseClientId: record.responseClientId,
+            dispatchId: record.dispatchId,
+            dispatchClientId: record.dispatchClientId,
+            pcrId: cloudPcr.pcrId || cloudPcr.id,
+            pcrResponseId: cloudPcr.responseId,
+          });
+          return [key, cloudPcr];
+        }
         const localPcr = [...localServerPcrRows, ...localPcrRows]
-          .find(pcr => pcr.responseId === record.responseId || pcr.response_id === record.responseId);
+          .find(pcr => sameLinkedPcrForDispatch(record, pcr));
         if (localPcr) {
+          logPcrSync("Linked local/LAN PCR to dispatch", {
+            key,
+            responseId: record.responseId,
+            responseClientId: record.responseClientId,
+            dispatchId: record.dispatchId,
+            dispatchClientId: record.dispatchClientId,
+            pcrId: localPcr.pcrId || localPcr.id,
+            pcrResponseId: localPcr.responseId || localPcr.response_id,
+            pcrDispatchId: localPcr.dispatchId || localPcr.dispatch_form_id,
+            source: localPcr.recordSource || localPcr.source,
+            syncStatus: localPcr.sync_status,
+            syncLabel: localPcr.syncLabel,
+          });
           const cloudEquivalent = localPcrRows.find(pcr =>
             (pcr.synced_to_cloud || String(pcr.syncLabel || pcr.sync_status || "").toLowerCase().includes("cloud synced"))
             && samePcrRecord(localPcr, pcr)
           );
-          if (cloudEquivalent) return [record.responseId, { ...cloudEquivalent, recordSource: "cloud", syncLabel: "Cloud synced" }];
+          if (cloudEquivalent) {
+            logPcrSync("Local PCR already has a cloud-synced equivalent", {
+              key,
+              localPcrId: localPcr.pcrId || localPcr.id,
+              cloudPcrId: cloudEquivalent.pcrId || cloudEquivalent.id,
+              cloudResponseId: cloudEquivalent.responseId,
+            });
+            return [key, { ...cloudEquivalent, recordSource: "cloud", syncLabel: "Cloud synced" }];
+          }
+        } else {
+          logPcrSync("No linked PCR found for dispatch during refresh", {
+            key,
+            responseId: record.responseId,
+            responseClientId: record.responseClientId,
+            dispatchId: record.dispatchId,
+            dispatchClientId: record.dispatchClientId,
+            responseNumber: record.responseNumber,
+          });
         }
-        return [record.responseId, localPcr ? {
+        return [key, localPcr ? {
           ...localPcr,
           recordSource: localPcr.recordSource || localPcr.source || "local_server",
           syncLabel: localPcr.syncLabel || "Saved on local server",
@@ -403,7 +514,7 @@ export default function DispatchRecords() {
   }, [connection.mode]);
 
   const filtered = useMemo(() => records.filter(record => {
-    const derivedStatus = displayStatus(record, linkedPCRs[record.responseId]);
+    const derivedStatus = displayStatus(record, linkedPcrFromMap(linkedPCRs, record));
     const archived = Boolean(record.archived || record.deleted_at || record.deletedAt);
     const text = [
       record.responseNumber,
@@ -430,7 +541,7 @@ export default function DispatchRecords() {
   };
 
   const resolveLinkedPcr = async record => {
-    const cached = linkedPCRs[record.responseId];
+    const cached = linkedPcrFromMap(linkedPCRs, record);
     if (cached) return cached;
     if (record.responseId) {
       const cloudPcr = await getPCRReportByResponse(record.responseId).catch(() => null);
@@ -439,14 +550,7 @@ export default function DispatchRecords() {
       if (localPcr) return localPcr;
     }
     const localPcrRows = await hybridRepository.getLocalPcrReports().catch(() => []);
-    return localPcrRows.find(pcr =>
-      pcr.responseId === record.responseId
-      || pcr.responseClientId === record.responseClientId
-      || pcr.dispatchId === record.dispatchId
-      || pcr.dispatchId === record.id
-      || pcr.id === record.linkedPcrId
-      || pcr.pcrId === record.linkedPcrId
-    ) || null;
+    return localPcrRows.find(pcr => sameLinkedPcrForDispatch(record, pcr)) || null;
   };
 
   const openPCR = async record => {
@@ -462,10 +566,10 @@ export default function DispatchRecords() {
     draft: records.filter(record => !record.archived && !record.deleted_at && !record.deletedAt && record.status === "Draft").length,
     sent: records.filter(record => {
       if (record.archived || record.deleted_at || record.deletedAt) return false;
-      const derivedStatus = displayStatus(record, linkedPCRs[record.responseId]);
+      const derivedStatus = displayStatus(record, linkedPcrFromMap(linkedPCRs, record));
       return derivedStatus.includes("Sent") || derivedStatus.includes("Accepted") || derivedStatus.includes("Progress");
     }).length,
-    linked: records.filter(record => !record.archived && !record.deleted_at && !record.deletedAt && linkedPCRs[record.responseId]).length,
+    linked: records.filter(record => !record.archived && !record.deleted_at && !record.deletedAt && linkedPcrFromMap(linkedPCRs, record)).length,
   };
 
   const uploadRecordToCloud = async (record, linkedPcr = null) => {
@@ -473,12 +577,19 @@ export default function DispatchRecords() {
       const localPcrRows = await hybridRepository.getLocalPcrReports().catch(() => []);
       const localPcr = linkedPcr
         || await getLocalPcrForDispatch(record)
-        || localPcrRows.find(pcr =>
-          pcr.responseId === record.responseId
-          || pcr.responseClientId === record.responseClientId
-          || pcr.dispatchId === record.dispatchId
-          || pcr.dispatchId === record.id
-        );
+        || localPcrRows.find(pcr => sameLinkedPcrForDispatch(record, pcr));
+      logPcrSync("Manual cloud upload requested", {
+        responseId: record.responseId,
+        responseClientId: record.responseClientId,
+        dispatchId: record.dispatchId || record.id,
+        dispatchClientId: record.dispatchClientId,
+        responseNumber: record.responseNumber,
+        foundLocalPcr: Boolean(localPcr),
+        localPcrId: localPcr?.pcrId || localPcr?.id,
+        localPcrResponseId: localPcr?.responseId || localPcr?.response_id,
+        localPcrDispatchId: localPcr?.dispatchId || localPcr?.dispatch_form_id,
+        localPcrSyncStatus: localPcr?.sync_status,
+      });
       const dispatchIds = new Set([record.id, record.dispatchId, record.dispatchClientId, record.responseId, record.responseClientId].filter(Boolean));
       const pcrIds = new Set([localPcr?.id, localPcr?.pcrId, localPcr?.pcrClientId, localPcr?.responseId, localPcr?.responseClientId, record.linkedPcrId, record.responseId, record.responseClientId].filter(Boolean));
       const rows = await getAllRecords("sync_queue");
@@ -504,6 +615,18 @@ export default function DispatchRecords() {
         return false;
       });
       const now = new Date().toISOString();
+      logPcrSync("Matched pending sync queue rows for upload", {
+        dispatchId: record.dispatchId || record.id,
+        responseId: record.responseId,
+        matchedRows: matching.map(row => ({
+          id: row.id,
+          entityType: row.entity_type,
+          entityId: row.entity_id,
+          operationType: row.operation_type,
+          syncStatus: row.sync_status,
+          attempts: row.attempts,
+        })),
+      });
       if (matching.length) {
         await Promise.all(matching.map(row => putRecord("sync_queue", {
           ...row,
@@ -542,6 +665,13 @@ export default function DispatchRecords() {
           source: localPcr.source || record.source || "local_server",
         });
         const confirmedPcr = await confirmCloudPcrUpload(savedPcr, { ...record, ...localPcr });
+        logPcrSync("Cloud PCR upload confirmed", {
+          savedPcrId: savedPcr?.pcrId || savedPcr?.id,
+          confirmedPcrId: confirmedPcr?.pcrId || confirmedPcr?.id,
+          responseId: confirmedPcr?.responseId,
+          dispatchId: confirmedPcr?.dispatchId,
+          responseNumber: confirmedPcr?.responseNumber,
+        });
         const syncedAt = new Date().toISOString();
         await putRecord("local_pcr_reports", {
           ...localPcr,
@@ -563,6 +693,14 @@ export default function DispatchRecords() {
       await refresh({ silent: true });
       toast.success("Dispatch and linked PCR header uploaded. Records refreshed.");
     } catch (error) {
+      console.error(PCR_SYNC_LOG, "Manual cloud upload failed", {
+        responseId: record?.responseId,
+        responseClientId: record?.responseClientId,
+        dispatchId: record?.dispatchId || record?.id,
+        dispatchClientId: record?.dispatchClientId,
+        responseNumber: record?.responseNumber,
+        error,
+      });
       toast.error(error.message || "Unable to upload this dispatch to cloud.");
     }
   };
@@ -620,7 +758,7 @@ export default function DispatchRecords() {
               </thead>
               <tbody>
                 {visibleRecords.map(record => {
-                  const pcr = linkedPCRs[record.responseId];
+                  const pcr = linkedPcrFromMap(linkedPCRs, record);
                   const patient = patientSummary(record, pcr);
                   return (
                     <tr key={record.id} onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} className="cursor-pointer border-t border-border hover:bg-secondary/40">
@@ -656,7 +794,7 @@ export default function DispatchRecords() {
       edit={edit}
       openPCR={openPCR}
       send={null}
-      findLinkedPCR={record => linkedPCRs[record.responseId]}
+      findLinkedPCR={record => linkedPcrFromMap(linkedPCRs, record)}
     />
       {selectedPcr && createPortal((
         <div className="fixed inset-0 z-[11000] flex items-start justify-center overflow-y-auto bg-black/70 p-3 md:p-5" role="dialog" aria-modal="true" onMouseDown={() => setSelectedPcr(null)}>
