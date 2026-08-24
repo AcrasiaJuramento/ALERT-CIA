@@ -138,10 +138,19 @@ function displayLocationText(...values) {
 const NOTES_EXTENDED_KEY = "__alertCiaExtended";
 
 const DISPATCH_EXTENDED_FIELDS = [
-  "groupLeader", "mainAider", "natureTypes", "otherMedical", "otherTrauma", "otherNature",
+  "respondingTeam", "respondingTeamId", "team", "vehicle", "vehicleId", "driver",
+  "groupLeader", "mainAider", "assistantAider",
+  "natureTypes", "otherMedical", "otherTrauma", "otherNature",
   "incidentNature", "assaultDetails", "animalBiteDetails", "ingestionItem", "ingestionQuantity",
   "ifIngestion", "ingestionDetails", "quantity", "ifFall", "fallDetails", "selfAccident",
   "collision", "vehicleInvolved", "vehicleInvolve", "crash", "assistanceNeeded",
+  "assistanceOther", "assistanceOthersText",
+  "dateOfIncident", "timeOfIncident", "placeOfIncident", "barangay", "barangayId",
+  "locationText", "latitude", "longitude", "locationGeography", "boundarySource",
+  "dispatchedTime", "dispatchTime", "arrivalScene", "arrivalAtScene",
+  "departureScene", "departureAtScene", "arrivalHospital", "arrivalAtHospital",
+  "departureHospital", "departureAtHospital", "arrivalOffice", "arrivalAtOffice",
+  "backToBase", "nameOfHospital", "hospitalName",
   "patients", "dispatcher", "dispatchers", "date", "dispatchDate",
 ];
 
@@ -280,6 +289,13 @@ export function dispatchToApp(row = {}) {
   const response = responseToApp(row.response || row.responses || row);
   const notesBlob = parseNotesBlob(row.notes);
   const extendedPatients = notesBlob.extended.patients || [];
+  const dispatchTime = row.dispatch_time || notesBlob.extended.dispatchedTime || notesBlob.extended.dispatchTime || "";
+  const arrivalScene = row.arrival_scene_time || notesBlob.extended.arrivalScene || notesBlob.extended.arrivalAtScene || "";
+  const departureScene = row.departure_scene_time || notesBlob.extended.departureScene || notesBlob.extended.departureAtScene || "";
+  const arrivalHospital = row.arrival_hospital_time || notesBlob.extended.arrivalHospital || notesBlob.extended.arrivalAtHospital || "";
+  const departureHospital = row.departure_hospital_time || notesBlob.extended.departureHospital || notesBlob.extended.departureAtHospital || "";
+  const arrivalOffice = row.arrival_office_time || notesBlob.extended.arrivalOffice || notesBlob.extended.arrivalAtOffice || notesBlob.extended.backToBase || "";
+  const hospitalName = row.hospital_name || notesBlob.extended.nameOfHospital || notesBlob.extended.hospitalName || "";
   const displayLocation = displayLocationText(
     response.barangay,
     notesBlob.extended.barangay,
@@ -298,13 +314,21 @@ export function dispatchToApp(row = {}) {
     id: row.id || response.id,
     responseId: row.response_id || response.id,
     sourcePcrId: row.source_pcr_id || null,
-    dispatchedTime: row.dispatch_time || "",
-    arrivalScene: row.arrival_scene_time || "",
-    departureScene: row.departure_scene_time || "",
-    arrivalHospital: row.arrival_hospital_time || "",
-    departureHospital: row.departure_hospital_time || "",
-    backToBase: row.arrival_office_time || "",
-    hospitalName: row.hospital_name || "",
+    dispatchedTime: dispatchTime,
+    dispatchTime,
+    arrivalScene,
+    arrivalAtScene: arrivalScene,
+    departureScene,
+    departureAtScene: departureScene,
+    arrivalHospital,
+    arrivalAtHospital: arrivalHospital,
+    departureHospital,
+    departureAtHospital: departureHospital,
+    arrivalOffice,
+    arrivalAtOffice: arrivalOffice,
+    backToBase: arrivalOffice,
+    hospitalName,
+    nameOfHospital: hospitalName,
     numberOfPatients: row.number_of_patients || 1,
     assistanceNeeded: row.assistance_needed || [],
     notes: notesBlob.text,
@@ -474,12 +498,12 @@ export function responsePayloadFromDispatch(form = {}, ids = {}) {
 export function dispatchPayloadFromForm(form = {}) {
   return {
     dispatch_time: form.dispatchedTime || form.dispatchTime || null,
-    arrival_scene_time: form.arrivalScene || null,
-    departure_scene_time: form.departureScene || null,
-    arrival_hospital_time: form.arrivalHospital || null,
-    departure_hospital_time: form.departureHospital || null,
-    arrival_office_time: form.backToBase || null,
-    hospital_name: form.hospitalName || null,
+    arrival_scene_time: form.arrivalScene || form.arrivalAtScene || null,
+    departure_scene_time: form.departureScene || form.departureAtScene || null,
+    arrival_hospital_time: form.arrivalHospital || form.arrivalAtHospital || null,
+    departure_hospital_time: form.departureHospital || form.departureAtHospital || null,
+    arrival_office_time: form.arrivalOffice || form.arrivalAtOffice || form.backToBase || null,
+    hospital_name: form.nameOfHospital || form.hospitalName || null,
     number_of_patients: Number(form.numberOfPatients || form.patients?.length || 1),
     assistance_needed: form.assistanceNeeded || [],
     notes: buildNotesBlob(form.notes, pickMeaningful(form, DISPATCH_EXTENDED_FIELDS)),

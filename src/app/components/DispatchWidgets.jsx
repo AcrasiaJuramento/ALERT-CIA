@@ -50,14 +50,37 @@ const CheckboxLabel = ({ checked, label }) => (
   </label>
 );
 
+const LineValueLabel = ({ label, value }) => (
+  <div className="dispatch-inline-field flex items-center gap-1 text-[11px]">
+    <span className="shrink-0 font-semibold">{label}</span>
+    <span className="min-w-8 flex-1 border-b border-black px-1 text-center font-bold">
+      {value || ""}
+    </span>
+  </div>
+);
+
+const PatientInlineField = ({ label, value, className = "" }) => (
+  <div className={`dispatch-patient-inline-field flex min-w-0 items-center gap-1 text-[11px] ${className}`}>
+    <span className="shrink-0 font-semibold">{label}</span>
+    <span className="min-w-0 flex-1 border-b border-black px-1 leading-tight">
+      {value || ""}
+    </span>
+  </div>
+);
+
+const IncidentRowField = ({ label, value }) => (
+  <div className="grid min-h-6 grid-cols-[35mm_minmax(0,1fr)] border-b border-black text-[11px] last:border-b-0">
+    <div className="flex items-center border-r border-black px-1 font-bold uppercase">
+      {label}
+    </div>
+    <div className="flex items-center px-1">
+      <span className="min-h-4 w-full px-1">{value || ""}</span>
+    </div>
+  </div>
+);
+
 const getPatient = (selected, index) => selected?.patients?.[index] || {};
 
-const yes = (val) =>
-  val === true ||
-  val === "yes" ||
-  val === "Yes" ||
-  val === "+" ||
-  val === "positive";
 const compactDate = (value) => {
   if (!value) return "";
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -68,6 +91,15 @@ const hasNature = (record, label, legacyKey) =>
 const hasAssistance = (record, label, legacyKey) =>
   Boolean(record?.[legacyKey]) ||
   (record?.assistanceNeeded || []).includes(label);
+const patientChecked = (patient, booleanKey, legacyKey, legacyValue) =>
+  Boolean(patient?.[booleanKey]) || patient?.[legacyKey] === legacyValue;
+const plusMinusNa = (value) => {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["+", "positive", "yes"].includes(normalized)) return "+";
+  if (["-", "negative", "no"].includes(normalized)) return "-";
+  if (["n-a", "n/a", "na", "unknown", "not applicable"].includes(normalized)) return "N-A";
+  return value || "";
+};
 
 export default function DispatchPreviewModal({
   selected,
@@ -309,25 +341,20 @@ export default function DispatchPreviewModal({
       </div>
 
       <div className="space-y-0.5 p-2 text-[11px]">
-        <div className="grid grid-cols-2 gap-1">
-          <InlineField label="Name:" value={patient.name} />
-          <InlineField label="Age:" value={patient.age} />
+        <div className="grid grid-cols-[minmax(0,1fr)_18mm] gap-1">
+          <PatientInlineField label="Name:" value={patient.name} />
+          <PatientInlineField label="Age:" value={patient.age} />
         </div>
 
-        <div className="grid grid-cols-2 gap-1">
-          <InlineField
+        <div className="grid grid-cols-[minmax(0,1fr)_24mm] gap-1">
+          <PatientInlineField
             label="Birthdate:"
             value={compactDate(patient.birthdate)}
           />
-          <InlineField label="Gender:" value={patient.gender} />
+          <PatientInlineField label="Gender:" value={patient.gender} />
         </div>
 
-        <div>
-          <div className="mb-0.5 text-[11px] font-semibold">Address:</div>
-          <div className="min-h-5 border-b border-black px-1 text-[11px]">
-            {patient.address || ""}
-          </div>
-        </div>
+        <PatientInlineField label="Address:" value={patient.address} />
 
         <div>
           <div className="mb-0.5 text-[11px] font-semibold">
@@ -361,19 +388,19 @@ export default function DispatchPreviewModal({
           </div>
           <div className="grid grid-cols-2 gap-y-1">
             <CheckboxLabel
-              checked={patient.generalStatus === "Conscious"}
+              checked={patientChecked(patient, "conscious", "generalStatus", "Conscious")}
               label="Conscious"
             />
             <CheckboxLabel
-              checked={patient.generalStatus === "Unconscious"}
+              checked={patientChecked(patient, "unconscious", "generalStatus", "Unconscious")}
               label="Unconscious"
             />
             <CheckboxLabel
-              checked={patient.mobility === "Ambulatory"}
+              checked={patientChecked(patient, "ambulatory", "mobility", "Ambulatory")}
               label="Ambulatory"
             />
             <CheckboxLabel
-              checked={patient.mobility === "Non-Ambulatory"}
+              checked={patientChecked(patient, "nonAmbulatory", "mobility", "Non-Ambulatory")}
               label="Non-Ambulatory"
             />
           </div>
@@ -385,26 +412,22 @@ export default function DispatchPreviewModal({
           </div>
           <div className="grid grid-cols-2 gap-y-1">
             <CheckboxLabel
-              checked={patient.vehicularRole === "Driver"}
+              checked={patientChecked(patient, "driver", "vehicularRole", "Driver")}
               label="Driver"
             />
             <CheckboxLabel
-              checked={patient.vehicularRole === "Passenger"}
+              checked={patientChecked(patient, "passenger", "vehicularRole", "Passenger")}
               label="Passenger"
             />
             <CheckboxLabel
-              checked={patient.vehicularRole === "Pedestrian"}
+              checked={patientChecked(patient, "pedestrian", "vehicularRole", "Pedestrian")}
               label="Pedestrian"
             />
-            <CheckboxLabel checked={yes(patient.helmet)} label="Helmet (+/-)" />
-            <CheckboxLabel
-              checked={yes(patient.alcoholBreath)}
-              label="Alcohol Breath (+/-)"
-            />
-            <CheckboxLabel
-              checked={yes(patient.driversLicense)}
-              label="Driver's License (+/-)"
-            />
+          </div>
+          <div className="mt-1 space-y-0.5">
+            <LineValueLabel label="Helmet (+/-)" value={plusMinusNa(patient.helmet)} />
+            <LineValueLabel label="Alcohol Breath (+/-)" value={plusMinusNa(patient.alcoholBreath)} />
+            <LineValueLabel label="Driver's License (+/-)" value={plusMinusNa(patient.driversLicense)} />
           </div>
         </div>
 
@@ -416,7 +439,7 @@ export default function DispatchPreviewModal({
             <InlineField label="T:" value={patient.t} />
           </div>
           <div className="mt-1 grid grid-cols-3 gap-1">
-            <InlineField label="P:" value={patient.p2} />
+            <InlineField label="P:" value={patient.pa || patient.p2} />
             <InlineField label="A:" value={patient.a} />
             <InlineField label="L:" value={patient.l} />
           </div>
@@ -508,6 +531,7 @@ export default function DispatchPreviewModal({
             <style>{`.dispatch-official-form{width:215.9mm;min-width:215.9mm;height:330.2mm;padding:12.7mm;font-family:Tahoma,Arial,sans-serif;font-size:10pt;line-height:1;overflow:hidden}.dispatch-official-form *{font-family:Tahoma,Arial,sans-serif;font-size:10pt!important;line-height:1!important}.dispatch-official-form .dispatch-doc-header{position:relative;height:31mm;padding:0!important}.dispatch-official-form .dispatch-title-block{width:88mm;margin:0 auto;overflow:visible}.dispatch-official-form .dispatch-country{font-size:12pt!important;font-weight:400}.dispatch-official-form .dispatch-form-municipality{font-size:12pt!important;white-space:nowrap}.dispatch-official-form .dispatch-form-service{font-family:"Harlow Solid Italic","Harlow Solid","Brush Script MT",cursive!important;font-size:14pt!important;font-style:italic;font-weight:400;white-space:nowrap}.dispatch-official-form .dispatch-form-title{font-size:12pt!important}.dispatch-official-form .dispatch-section-title{font-weight:700}.dispatch-official-form .dispatch-section-caller{font-size:8pt!important}.dispatch-official-form .dispatch-section-nature{font-size:9pt!important}.dispatch-official-form .dispatch-section-patients{font-size:12pt!important}.dispatch-official-form .dispatch-nature-panel,.dispatch-official-form .dispatch-nature-panel *{font-size:9pt!important}.dispatch-official-form .dispatch-fine-print,.dispatch-official-form .dispatch-fine-print *{font-size:7pt!important}.dispatch-official-form .dispatch-field{min-height:6mm}.dispatch-official-form .dispatch-field>div:first-child{font-weight:700}.dispatch-official-form .dispatch-patient-block,.dispatch-official-form .dispatch-patient-block *{font-size:9pt!important}.dispatch-official-form .dispatch-patient-title{font-size:10pt!important}.dispatch-official-form .dispatch-inline-field{display:grid!important;grid-template-columns:auto minmax(0,1fr);column-gap:.7mm;min-width:0}.dispatch-official-form .dispatch-inline-field>span:first-child{white-space:nowrap}.dispatch-official-form .dispatch-inline-field>span:last-child{display:block;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:clip}.dispatch-official-form .dispatch-choice-label,.dispatch-official-form .dispatch-choice-label *{font-size:8pt!important;white-space:nowrap}.dispatch-official-form .dispatch-choice-label>span:first-child{width:3.2mm!important;height:3.2mm!important;min-width:3.2mm}.dispatch-official-form .dispatch-header-logo{position:absolute;display:block;width:auto;object-fit:contain}.dispatch-official-form .dispatch-logo-bagong{left:10.76mm;top:0;height:21.35mm;width:22.84mm}.dispatch-official-form .dispatch-logo-seal{left:31.59mm;top:3.1mm;height:20.81mm;width:20.81mm}.dispatch-official-form .dispatch-logo-rescue{left:143.09mm;top:0;height:24.47mm;width:24.47mm}.dispatch-official-form .p-2{padding:.65mm!important}.dispatch-official-form .p-1{padding:.35mm!important}.dispatch-official-form .py-1{padding-top:.4mm!important;padding-bottom:.4mm!important}.dispatch-official-form .px-4{padding-left:0!important;padding-right:0!important}.dispatch-official-form .py-3{padding-top:0!important;padding-bottom:0!important}.dispatch-official-form .min-h-18{min-height:11mm!important}@media(max-width:900px){.dispatch-official-form{transform-origin:top left}}`}</style>
             <style>{`.dispatch-official-form,.dispatch-official-form *{box-sizing:border-box!important;line-height:1.35!important}.dispatch-official-form *{font-size:9pt!important}.dispatch-official-form .dispatch-field{min-height:12mm!important;border-top:0!important;border-bottom:0!important}.dispatch-official-form .dispatch-field>div:first-child{height:5.5mm!important;min-height:5.5mm!important;padding:1.1mm 1.2mm!important;display:flex;align-items:center;line-height:1!important}.dispatch-official-form .dispatch-field>div:last-child{height:6.5mm!important;min-height:6.5mm!important;padding:1.1mm 1.2mm!important;display:flex;align-items:center;line-height:1.15!important}.dispatch-official-form .grid.grid-cols-12.border-b>div{min-height:7mm;padding:1.25mm!important;display:flex;align-items:center}.dispatch-official-form .dispatch-section-title{min-height:6mm!important;padding:1.2mm!important;display:flex;align-items:center;justify-content:center;line-height:1!important}.dispatch-official-form .p-1{padding:1.1mm!important}.dispatch-official-form .py-1{padding-top:1.2mm!important;padding-bottom:1.2mm!important}.dispatch-official-form .dispatch-choice-label>span:first-child{border-radius:0!important}.dispatch-official-form .dispatch-country{font-size:12pt!important}.dispatch-official-form .dispatch-form-municipality{font-size:12pt!important}.dispatch-official-form .dispatch-form-service{font-size:14pt!important}.dispatch-official-form .dispatch-form-title{font-size:12pt!important}.dispatch-official-form .dispatch-section-caller{font-size:8pt!important}.dispatch-official-form .dispatch-section-nature{font-size:9pt!important}.dispatch-official-form .dispatch-section-patients{font-size:12pt!important}.dispatch-official-form .dispatch-fine-print,.dispatch-official-form .dispatch-fine-print *{font-size:7pt!important}.dispatch-official-form .dispatch-patient-block .dispatch-inline-field{min-height:5mm!important;align-items:center}.dispatch-official-form .dispatch-patient-block .dispatch-choice-label{min-height:4.5mm!important;align-items:center}.dispatch-official-form .dispatch-patient-block .space-y-0\\.5>div{margin-top:1mm!important;margin-bottom:1mm!important}.dispatch-official-form.dispatch-export-capture{transform:none!important}`}</style>
             <style>{`.dispatch-official-form .dispatch-paper-content{width:106.383%;transform:scale(.94);transform-origin:top left}.dispatch-official-form .dispatch-patient-block .dispatch-inline-field{min-height:3.3mm!important;align-items:center}.dispatch-official-form .dispatch-patient-block .dispatch-choice-label{min-height:3.4mm!important;align-items:center}.dispatch-official-form .dispatch-patient-block .space-y-0\\.5>div{margin-top:.25mm!important;margin-bottom:.25mm!important}.dispatch-official-form .dispatch-patient-block .min-h-18{min-height:10mm!important}.dispatch-official-form .dispatch-patient-block,.dispatch-official-form .dispatch-patient-block *{line-height:1.05!important}.dispatch-official-form .dispatch-patient-block>div:last-child{padding:.65mm!important}`}</style>
+            <style>{`.dispatch-official-form .dispatch-patient-inline-field{min-height:4mm!important;align-items:flex-end}.dispatch-official-form .dispatch-patient-inline-field>span:first-child{white-space:nowrap}.dispatch-official-form .dispatch-patient-inline-field>span:last-child{display:block;white-space:normal;overflow-wrap:anywhere;word-break:normal;font-size:8.2pt!important;line-height:1.05!important}`}</style>
             {/* Paper */}
             <div className="dispatch-paper-content border border-black">
               {/* Header */}
@@ -799,16 +823,16 @@ export default function DispatchPreviewModal({
               </div>
 
               {/* Incident details */}
-              <div className="grid grid-cols-1 border-b border-black">
-                <PreviewField
+              <div className="border-b border-black">
+                <IncidentRowField
                   label="Place of Incident"
                   value={selected.placeOfIncident}
                 />
-                <PreviewField
+                <IncidentRowField
                   label="Time of Incident"
                   value={selected.timeOfIncident}
                 />
-                <PreviewField
+                <IncidentRowField
                   label="Date of Incident"
                   value={formatLongDate(selected.dateOfIncident, "")}
                 />

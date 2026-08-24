@@ -38,9 +38,42 @@ async function mirrorDispatchToLocalServer(record) {
   }
 }
 
+function latestVital(payload = {}) {
+  return [...(payload.vitals || [])].reverse().find(row =>
+    [row?.bp, row?.pulse, row?.respiratory, row?.temperature, row?.oxygen].some(Boolean)
+  ) || {};
+}
+
+function gcsTotal(payload = {}) {
+  const row = [...(payload.gcsRows || (payload.gcs ? [payload.gcs] : []))].reverse().find(item =>
+    [item?.eye, item?.verbal, item?.motor].some(Boolean)
+  ) || {};
+  const total = [row.eye, row.verbal, row.motor].reduce((sum, score) => sum + Number(score || 0), 0);
+  return total || "";
+}
+
+function positiveNegative(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["positive", "+", "yes"].includes(normalized)) return "+";
+  if (["negative", "-", "no"].includes(normalized)) return "-";
+  if (["n/a", "n-a", "na", "unknown", "not applicable"].includes(normalized)) return "Unknown";
+  return value || "";
+}
+
+function patientVehicleRole(crash = {}) {
+  const role = String(crash.role || "").toLowerCase();
+  return {
+    driver: role.includes("driver"),
+    passenger: role.includes("passenger"),
+    pedestrian: role.includes("pedestrian"),
+  };
+}
+
 function manualDispatchShellFromPcr(payload) {
   const dispatchId = payload.dispatchId || payload.dispatchClientId || randomUuid();
   const responseId = payload.responseId || payload.responseClientId || randomUuid();
+  const vital = latestVital(payload);
+  const vehicleRole = patientVehicleRole(payload.crash);
   return {
     id: dispatchId,
     dispatchId,
@@ -77,21 +110,54 @@ function manualDispatchShellFromPcr(payload) {
     gender: payload.gender,
     address: payload.address,
     chiefComplaint: payload.chiefComplaint,
+    selfAccident: Boolean(payload.crash?.selfAccident),
+    collision: Boolean(payload.crash?.collision),
+    vehicleInvolved: payload.crash?.vehicle || "",
+    otherMedical: payload.emergencyOther || "",
+    otherTrauma: payload.traumaOther || "",
+    incidentNature: payload.incidentNature || "",
+    ifIngestion: payload.ingestionItem || "",
+    quantity: payload.ingestionQuantity || "",
+    ifFall: payload.fallDetails || "",
     patients: [{
       id: payload.patientId || payload.dispatchPatientId || randomUuid(),
+      patientClientId: payload.patientId || payload.dispatchPatientId || undefined,
       name: payload.patientName,
       age: payload.age,
       birthdate: payload.birthday,
       gender: payload.gender,
       address: payload.address,
       assessmentFindings: payload.chiefComplaint,
+      bp: vital.bp || "",
+      pr: vital.pulse || "",
+      rr: vital.respiratory || "",
+      temp: vital.temperature || "",
+      o2Sat: vital.oxygen || "",
+      gcs: gcsTotal(payload),
+      ...vehicleRole,
+      helmet: positiveNegative(payload.crash?.helmet),
+      alcoholBreath: positiveNegative(payload.crash?.alcohol),
+      driversLicense: positiveNegative(payload.crash?.license),
+      g: payload.obstetric?.g || "",
+      p: payload.obstetric?.p || "",
+      l: payload.obstetric?.baby || "",
+      lmp: payload.obstetric?.lmp || "",
+      aog: payload.obstetric?.aog || "",
+      edc: payload.obstetric?.edc || "",
+      fht: payload.obstetric?.fht || "",
+      ie: payload.obstetric?.ie || "",
+      bow: positiveNegative(payload.obstetric?.bow),
     }],
     dispatchedTime: payload.dispatchTime || payload.timeline?.dispatchTime,
+    dispatchTime: payload.dispatchTime || payload.timeline?.dispatchTime,
     arrivalScene: payload.arrivalScene || payload.timeline?.arrivalScene,
     departureScene: payload.departureScene || payload.timeline?.departureScene,
     arrivalHospital: payload.arrivalHospital || payload.timeline?.arrivalHospital,
     departureHospital: payload.departureHospital || payload.timeline?.departureHospital,
+    arrivalOffice: payload.backToBase || payload.timeline?.backToBase,
     backToBase: payload.backToBase || payload.timeline?.backToBase,
+    hospitalName: payload.hospitalName || payload.endorsementHospital,
+    nameOfHospital: payload.hospitalName || payload.endorsementHospital,
     numberOfPatients: 1,
   };
 }
