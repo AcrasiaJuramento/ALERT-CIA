@@ -179,6 +179,40 @@
   box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32), 0 0 0 6px rgba(37, 99, 235, 0.2);
 }
 
+.alert-cia-gps-arrow-shell {
+  background: transparent;
+  border: 0;
+}
+
+.alert-cia-gps-arrow-ring {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.2);
+}
+
+.alert-cia-gps-arrow {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 2px solid white;
+  border-radius: 999px;
+  background: #2563eb;
+  color: white;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.32);
+  transform-origin: center;
+}
+
+.alert-cia-gps-arrow svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
 .leaflet-advisory-marker-shell {
   background: transparent;
   border: 0;

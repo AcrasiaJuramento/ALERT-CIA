@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { CircleMarker, GeoJSON, MapContainer, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
+import { CircleMarker, GeoJSON, MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { ChevronDown, LocateFixed, Layers, RefreshCw } from 'lucide-react';
 import { ECHAGUE_CENTER, ECHAGUE_VIEW_BOUNDS, ISABELA_CENTER, getAdvisoryLatLng, getBoundsForIncidents } from '../../utils/mapData';
@@ -59,10 +59,29 @@ function MapClickHandler({ onMapClick }) {
   return null;
 }
 
+function gpsArrowIcon(heading = 0) {
+  const rotation = Number.isFinite(Number(heading)) ? Number(heading) : 0;
+  return L.divIcon({
+    className: 'alert-cia-gps-arrow-shell',
+    iconSize: [42, 42],
+    iconAnchor: [21, 21],
+    popupAnchor: [0, -22],
+    html: `
+      <div class="alert-cia-gps-arrow-ring">
+        <div class="alert-cia-gps-arrow" style="transform: rotate(${rotation}deg)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 2.5 21 21l-9-4-9 4 9-18.5Z" />
+          </svg>
+        </div>
+      </div>
+    `,
+  });
+}
+
 function UserLocationLayer({ enabled, followUser }) {
   const map = useMap();
   const geolocation = useGeolocation();
-  const { latitude, longitude } = geolocation.position?.coords || {};
+  const { latitude, longitude, heading } = geolocation.position?.coords || {};
   const position = useMemo(() => (
     Number.isFinite(latitude) && Number.isFinite(longitude)
       ? [latitude, longitude]
@@ -81,12 +100,9 @@ function UserLocationLayer({ enabled, followUser }) {
   useEffect(() => {
     if (!position) return;
 
-    const marker = L.circleMarker(position, {
-      radius: 8,
-      color: '#2563eb',
-      fillColor: '#3b82f6',
-      fillOpacity: 0.9,
-      weight: 3,
+    const marker = L.marker(position, {
+      icon: gpsArrowIcon(heading),
+      zIndexOffset: 800,
     });
 
     const accuracy = L.circle(position, {
@@ -105,7 +121,7 @@ function UserLocationLayer({ enabled, followUser }) {
       map.removeLayer(marker);
       map.removeLayer(accuracy);
     };
-  }, [map, position]);
+  }, [heading, map, position]);
 
   return error ? (
     <div className="absolute bottom-3 left-1/2 z-[500] -translate-x-1/2 rounded-lg border border-red-500/30 bg-red-950/90 px-3 py-2 text-xs text-red-100 shadow-lg">
@@ -121,21 +137,33 @@ function PlannerPointsLayer({ points = {} }) {
     ['destination', points.destination],
   ].filter(([, point]) => point?.latLng);
 
-  return visiblePoints.map(([key, point]) => (
-    <CircleMarker
-      key={key}
-      center={point.latLng}
-      radius={9}
-      pathOptions={{
-        color: key === 'destination' ? '#dc2626' : key === 'start' ? '#2563eb' : '#16a34a',
-        fillColor: key === 'destination' ? '#ef4444' : key === 'start' ? '#3b82f6' : '#22c55e',
-        fillOpacity: 0.9,
-        weight: 3,
-      }}
-    >
-      <Popup>{point.label || (key === 'destination' ? 'Point B' : key === 'start' ? 'Point A' : 'Current GPS location')}</Popup>
-    </CircleMarker>
-  ));
+  return visiblePoints.map(([key, point]) => {
+    const label = point.label || (key === 'destination' ? 'Point B' : key === 'start' ? 'Point A' : 'Current GPS location');
+    const isGpsPoint = key === 'current' || label === 'Current GPS location';
+    if (isGpsPoint) {
+      return (
+        <Marker key={key} position={point.latLng} icon={gpsArrowIcon()} zIndexOffset={700}>
+          <Popup>{label}</Popup>
+        </Marker>
+      );
+    }
+
+    return (
+      <CircleMarker
+        key={key}
+        center={point.latLng}
+        radius={9}
+        pathOptions={{
+          color: key === 'destination' ? '#dc2626' : '#2563eb',
+          fillColor: key === 'destination' ? '#ef4444' : '#3b82f6',
+          fillOpacity: 0.9,
+          weight: 3,
+        }}
+      >
+        <Popup>{label}</Popup>
+      </CircleMarker>
+    );
+  });
 }
 
 const BASEMAP_PROVIDERS = [
