@@ -7,6 +7,9 @@ import AccessibilityPanel, { AccessibilityButton } from './AccessibilityPanel';
 import HazardWarningMonitor from './HazardWarningMonitor';
 import { useGeolocation } from '../contexts/GeolocationContext';
 
+const MDRRMO_PRIMARY_PHONE = '09176262352';
+const MDRRMO_SECONDARY_PHONE = '09431320604';
+
 export default function PublicLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
@@ -111,11 +114,11 @@ export default function PublicLayout() {
 
             {/* Emergency Hotline */}
             <a
-              href="tel:911"
+              href={`tel:${MDRRMO_PRIMARY_PHONE}`}
               className="hidden md:flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-all"
             >
               <PhoneCall className="w-4 h-4" />
-              Call 911
+              Call MDRRMO
             </a>
             <button
               onClick={() => navigate('/login')}
@@ -172,10 +175,10 @@ export default function PublicLayout() {
               <MapPin className="w-4 h-4" /> Live Map
             </NavLink>
             <a
-              href="tel:911"
+              href={`tel:${MDRRMO_PRIMARY_PHONE}`}
               className="flex items-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg text-sm font-semibold"
             >
-              <PhoneCall className="w-4 h-4" /> Emergency: Call 911
+              <PhoneCall className="w-4 h-4" /> Emergency: Call MDRRMO
             </a>
           </div>
         )}
@@ -197,7 +200,7 @@ export default function PublicLayout() {
           </div>
           <div className="flex items-center gap-1 text-sm">
             <AlertTriangle className="w-4 h-4 text-red-400" />
-            <span>Emergency Hotline: <strong className="text-foreground">911</strong> | Echague, Isabela</span>
+            <span>Emergency Hotline: <strong className="text-foreground">{MDRRMO_PRIMARY_PHONE}</strong> / <strong className="text-foreground">{MDRRMO_SECONDARY_PHONE}</strong> | Echague, Isabela</span>
           </div>
         </div>
       </footer>}

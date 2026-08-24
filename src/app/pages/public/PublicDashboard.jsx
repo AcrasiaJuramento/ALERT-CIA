@@ -42,6 +42,15 @@ const announcementSeverity = {
   resolved: { bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-200 dark:border-green-500/30', dot: 'bg-green-500', icon: 'text-green-500' },
 };
 
+const mdrrmoContacts = [
+  { label: 'MDRRMO Hotline', value: '09176262352', href: 'tel:09176262352', color: 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10' },
+  { label: 'MDRRMO Hotline 2', value: '09431320604', href: 'tel:09431320604', color: 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10' },
+  { label: 'MDRRMO Email', value: 'mdrrmo.echague@gmail.com', href: 'mailto:mdrrmo.echague@gmail.com', color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10' },
+  { label: 'OPWAR Email', value: 'opwar.mdrrm.echague@gmail.com', href: 'mailto:opwar.mdrrm.echague@gmail.com', color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10' },
+  { label: 'Mdrrmo Echague', value: 'Facebook', href: 'https://www.facebook.com/mdrrmo.echague.5', color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10' },
+  { label: 'Echague Rescue', value: 'Facebook', href: 'https://www.facebook.com/mdrrmoechague', color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10' },
+];
+
 export default function PublicDashboard() {
   const navigate = useNavigate();
   const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
@@ -144,8 +153,8 @@ export default function PublicDashboard() {
               <span className="text-sm font-semibold">⚠ {criticalCount} Critical Incident{criticalCount > 1 ? 's' : ''} Active</span>
               <span className="text-red-200 text-xs hidden sm:inline">Stay alert and follow safety guidelines</span>
             </div>
-            <a href="tel:911" className="flex items-center gap-1.5 bg-white text-red-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-red-50 transition-all">
-              <PhoneCall className="w-3.5 h-3.5" /> Call 911
+            <a href="tel:09176262352" className="flex items-center gap-1.5 bg-white text-red-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-red-50 transition-all">
+              <PhoneCall className="w-3.5 h-3.5" /> Call MDRRMO
             </a>
           </div>
         </div>
@@ -261,16 +270,10 @@ export default function PublicDashboard() {
                 Emergency Contacts
               </h3>
               <div className="space-y-2">
-                {[
-                  { label: 'Emergency Hotline', number: '911', color: 'text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10' },
-                  { label: 'MDRRMO Office', number: '036-268-5123', color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10' },
-                  { label: 'Fire Station', number: '036-268-3456', color: 'text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-500/10' },
-                  { label: 'Police (PNP)', number: '036-268-7890', color: 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-500/10' },
-                  { label: 'KDH Hospital', number: '036-268-2100', color: 'text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-500/10' },
-                ].map(({ label, number, color }) => (
-                  <a key={label} href={`tel:${number}`} className="flex items-center justify-between p-2.5 rounded-xl hover:bg-secondary transition-all group">
+                {mdrrmoContacts.map(({ label, value, href, color }) => (
+                  <a key={label} href={href} className="flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-secondary transition-all group">
                     <span className="text-xs text-muted-foreground">{label}</span>
-                    <span className={`text-xs font-bold px-2 py-1 rounded-lg ${color} group-hover:opacity-80 transition-all`}>{number}</span>
+                    <span className={`text-xs font-bold px-2 py-1 rounded-lg text-right ${color} group-hover:opacity-80 transition-all`}>{value}</span>
                   </a>
                 ))}
               </div>
@@ -309,7 +312,7 @@ export default function PublicDashboard() {
               <div className="space-y-2">
                 {[
                   'During floods, stay away from rivers and low-lying areas',
-                  'In case of fire, call 911 immediately before attempting to fight it',
+                  'In case of fire, call MDRRMO immediately before attempting to fight it',
                   'If you witness an accident, keep a safe distance and call for help',
                   'Keep your emergency contacts updated and easily accessible',
                 ].map((tip, i) => (

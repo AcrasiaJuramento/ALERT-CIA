@@ -1,3 +1,4 @@
+import { createElement } from 'react';
 import { useNavigate } from 'react-router';
 import {
   Siren, Shield, Map, FileText, BarChart2, Users, AlertTriangle,
@@ -5,6 +6,9 @@ import {
   Activity, PhoneCall
 } from 'lucide-react';
 import { MapSimulation } from '../components/MapSimulation';
+
+const MDRRMO_PRIMARY_PHONE = '09176262352';
+const MDRRMO_SECONDARY_PHONE = '09431320604';
 
 const HERO_IMG = 'https://images.unsplash.com/photo-1692133211836-52846376d66f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxlbWVyZ2VuY3klMjBjb21tYW5kJTIwY2VudGVyJTIwb3BlcmF0aW9ucyUyMHJvb20lMjBzY3JlZW5zfGVufDF8fHx8MTc3MzUwNjEzOHww&ixlib=rb-4.1.0&q=80&w=1080';
 const RESPONDER_IMG = 'https://images.unsplash.com/photo-1607264469190-4abbbd14f5ab?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHxyZXNjdWUlMjB0ZWFtJTIwcGFyYW1lZGljcyUyMGVtZXJnZW5jeSUyMHJlc3BvbnNlfGVufDF8fHx8MTc3MzUwNjEzOHww&ixlib=rb-4.1.0&q=80&w=1080';
@@ -111,7 +115,7 @@ export default function LandingPage() {
               Accident & Incident Reporting, Management, and Monitoring System
             </div>
             <p className="text-slate-400 text-base md:text-lg mb-8 leading-relaxed max-w-2xl">
-              A comprehensive real-time emergency response platform for MDRRMO administrators, dispatch officers, field responders, and the public—powered by spatial-temporal AI prediction.
+              A comprehensive real-time emergency response platform for MDRRMO administrators, dispatch officers, field responders.
             </p>
 
             {/* CTAs */}
@@ -148,7 +152,7 @@ export default function LandingPage() {
                 { icon: Radio, value: '5 Teams', label: 'Active Now' },
               ].map(({ icon: Icon, value, label }) => (
                 <div key={label} className="flex items-center gap-2">
-                  <Icon className="w-4 h-4 text-blue-400" />
+                  {createElement(Icon, { className: 'w-4 h-4 text-blue-400' })}
                   <span className="text-white font-bold">{value}</span>
                   <span className="text-slate-500 text-sm">{label}</span>
                 </div>
@@ -215,7 +219,7 @@ export default function LandingPage() {
                 className="p-6 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-600 transition-all group cursor-pointer"
               >
                 <div className={`w-11 h-11 rounded-xl border flex items-center justify-center mb-4 ${colorMap[color]}`}>
-                  <Icon className="w-5 h-5" />
+                  {createElement(Icon, { className: 'w-5 h-5' })}
                 </div>
                 <h3 className="text-base font-semibold mb-2 group-hover:text-white">{label}</h3>
                 <p className="text-slate-400 text-sm leading-relaxed">{desc}</p>
@@ -324,7 +328,7 @@ export default function LandingPage() {
           </div>
           <div className="flex items-center justify-center gap-2 mt-8 text-slate-500">
             <PhoneCall className="w-4 h-4 text-red-400" />
-            <span className="text-sm">Emergency Hotline: <strong className="text-red-400">911</strong></span>
+            <span className="text-sm">MDRRMO Hotlines: <strong className="text-red-400">{MDRRMO_PRIMARY_PHONE}</strong> / <strong className="text-red-400">{MDRRMO_SECONDARY_PHONE}</strong></span>
           </div>
         </div>
       </section>
@@ -339,7 +343,6 @@ export default function LandingPage() {
             <span className="text-slate-400 text-sm">ALERT-CIA © 2024 MDRRMO. All rights reserved.</span>
           </div>
           <div className="flex gap-6 text-slate-500 text-xs">
-            <span>Powered by Spatial-Temporal AI</span>
             <span>•</span>
             <span>MDRRMO Echague, Isabela</span>
           </div>

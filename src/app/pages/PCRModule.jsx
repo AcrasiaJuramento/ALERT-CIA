@@ -690,15 +690,16 @@ export default function PCRModule() {
   const missingRequiredForStep = (stepIndex, submitting = false) => {
     const firstVital = form.vitals?.[0] || {};
     const firstGcs = gcsRows?.[0] || {};
-    const required = stepIndex === 0 ? [
+    const responsePatientRequired = [
       ['Responding Team', form.respondingTeam || form.team], ['Vehicle', form.vehicle], ['Driver', form.driver], ['Main Aider', form.mainAider],
       ['Patient Name', form.patientName], ['Age', form.age], ['Birthday', form.birthday], ['Gender', form.gender], ['Civil Status', form.civilStatus],
       ['Address', form.address], ['Contact Person', form.contactPerson], ['Contact Number', form.contactNumber], ['Nature of Call', form.natureOfCall],
       ['Date of Incident', form.dateOfIncident], ['Time of Incident', form.timeOfIncident], ['Place of Incident', form.placeOfIncident],
-      ['Barangay', form.barangay], ['Dispatch Time', form.dispatchTime]
-    ] : stepIndex === 1 ? [
+      ['Barangay', form.barangay], ...(!isStandalonePCR ? [['Dispatch Time', form.dispatchTime]] : [])
+    ];
+    const required = stepIndex === 0 ? responsePatientRequired : stepIndex === 1 ? [
       ['Arrival at Scene', form.arrivalScene], ...(submitting ? [['Departure at Scene', form.departureScene]] : []), ['Triage', form.triage],
-      ['Type of Emergency', [...(form.emergencyTypes || []), ...(form.traumaTypes || [])].length], ['BOW', form.obstetric?.bow],
+      ['Type of Emergency', [...(form.emergencyTypes || []), ...(form.traumaTypes || [])].length],
       ['Chief Complaint', form.chiefComplaint], ['Vital Sign Time', firstVital.time], ['Blood Pressure', firstVital.bp], ['Pulse Rate', firstVital.pulse],
       ['Respiratory Rate', firstVital.respiratory], ['Temperature', firstVital.temperature], ['Oxygen Saturation', firstVital.oxygen],
       ['GCS Eye', firstGcs.eye], ['GCS Verbal', firstGcs.verbal], ['GCS Motor', firstGcs.motor]

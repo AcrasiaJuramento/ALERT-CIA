@@ -88,3 +88,25 @@ export async function loadPublicAccidentIncidents({ officialLimit = 500, scraped
     ))
     .map(sanitizeForPublic);
 }
+
+export async function loadPublicIncidentLogRecords({ officialLimit = 500, pcrLimit = 200 } = {}) {
+  const [officialRecords, pcrRecords] = await Promise.all([
+    listIncidents({ publicOnly: true, verifiedMapOnly: true, limit: officialLimit }).catch(() => []),
+    listPublicPCRMapIncidents({ limit: pcrLimit })
+      .catch(() => listPCRMapIncidents({ publicOnly: true, verifiedOnly: true, limit: pcrLimit }))
+      .catch(() => []),
+  ]);
+
+  const official = mergeMapRecords(officialRecords);
+  const officialIds = new Set(official.map(item => item.id));
+  const pcrOnly = (Array.isArray(pcrRecords) ? pcrRecords : [])
+    .filter(item => !officialIds.has(item.relatedIncidentId));
+
+  return mergeMapRecords([...official, ...pcrOnly])
+    .filter(hasValidLatLng)
+    .filter(isWithinIsabelaMapArea)
+    .filter(record => isWithinAccidentProneWindow(
+      record.date || record.incident_date || record.createdAt || record.created_at,
+    ))
+    .map(sanitizeForPublic);
+}
