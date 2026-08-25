@@ -105,7 +105,7 @@ export default function PublicIncidentList() {
       setLoading(true);
       setError('');
       try {
-        const publicIncidents = await loadPublicIncidentLogRecords({ officialLimit: 500, pcrLimit: 200 });
+        const publicIncidents = await loadPublicIncidentLogRecords({ officialLimit: 150, pcrLimit: 75 });
         if (mounted) setIncidents(Array.isArray(publicIncidents) ? publicIncidents : []);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incidents.');

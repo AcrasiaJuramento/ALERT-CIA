@@ -85,7 +85,7 @@ export default function PublicDashboard() {
       if (!silent) setLoading(true);
       if (!silent) setError('');
       try {
-        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 200, pcrLimit: 200 });
+        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 150, scrapedLimit: 75, pcrLimit: 75 });
         if (mounted) {
           setIncidents(publicIncidents);
           setError('');
@@ -99,7 +99,7 @@ export default function PublicDashboard() {
     }
     const queueIncidentRefresh = () => {
       window.clearTimeout(incidentRefreshTimer);
-      incidentRefreshTimer = window.setTimeout(() => loadIncidents({ silent: true }), 250);
+      incidentRefreshTimer = window.setTimeout(() => loadIncidents({ silent: true }), 5000);
     };
     loadIncidents();
     loadAdvisoriesFromDatabase();
@@ -108,8 +108,6 @@ export default function PublicDashboard() {
     const incidentChannel = supabase
       ? supabase.channel('public-dashboard-records')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, queueIncidentRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, queueIncidentRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, queueIncidentRefresh)
           .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, queueIncidentRefresh)
           .subscribe()
       : null;

@@ -53,7 +53,7 @@ function sanitizeForPublic(record = {}) {
   };
 }
 
-export async function loadPublicAccidentIncidents({ officialLimit = 500, scrapedLimit = 200, pcrLimit = 200 } = {}) {
+export async function loadPublicAccidentIncidents({ officialLimit = 150, scrapedLimit = 75, pcrLimit = 75 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
       listIncidents({ publicOnly: true, verifiedMapOnly: true, limit: officialLimit }).catch(() => []),
@@ -89,7 +89,7 @@ export async function loadPublicAccidentIncidents({ officialLimit = 500, scraped
     .map(sanitizeForPublic);
 }
 
-export async function loadPublicIncidentLogRecords({ officialLimit = 500, pcrLimit = 200 } = {}) {
+export async function loadPublicIncidentLogRecords({ officialLimit = 150, pcrLimit = 75 } = {}) {
   const [officialRecords, pcrRecords] = await Promise.all([
     listIncidents({ publicOnly: true, verifiedMapOnly: true, limit: officialLimit }).catch(() => []),
     listPublicPCRMapIncidents({ limit: pcrLimit })
