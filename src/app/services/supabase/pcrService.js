@@ -168,6 +168,46 @@ const PCR_LIST_SELECT = `
   )
 `;
 
+const PCR_ANALYTICS_SELECT = `
+  id,
+  client_generated_id,
+  response_id,
+  dispatch_form_id,
+  dispatch_patient_id,
+  responding_team_id,
+  field_officer_id,
+  status,
+  triage,
+  chief_complaint,
+  emergency_types,
+  trauma_types,
+  incident_nature,
+  hospital_name,
+  endorsed_to,
+  received_by,
+  completed_at,
+  submitted_at,
+  created_at,
+  updated_at,
+  response:responses(
+    id,
+    client_generated_id,
+    response_number,
+    date_of_incident,
+    time_of_incident,
+    place_of_incident,
+    location_text,
+    latitude,
+    longitude,
+    patient_name,
+    patient_age,
+    patient_sex,
+    responding_team_id,
+    barangay:barangays(id, name, normalized_name),
+    responding_team:responding_teams!responses_responding_team_id_fkey(id, name)
+  )
+`;
+
 const ADMIN_PCR_MAP_STATUSES = ["in_progress", "submitted", "verified", "completed"];
 const PUBLIC_PCR_MAP_STATUSES = ["verified"];
 const PCR_STATUS_RANK = {
@@ -211,6 +251,29 @@ export async function listPCRReports({ status, limit = 100, from = 0, archive = 
   const rows = asRows(data).map(pcrToApp);
   rows.totalCount = count ?? rows.length;
   return rows;
+}
+
+export async function listPCRAnalyticsReports({ fieldOfficerId, responseIds = [], limit = 120, from = 0 } = {}) {
+  const uniqueResponseIds = [...new Set(responseIds.filter(id => id && id !== "undefined"))];
+  const rows = await runSupabaseRequest(client => {
+    let query = client
+      .from("pcr_reports")
+      .select(PCR_ANALYTICS_SELECT)
+      .is("deleted_at", null)
+      .is("archived_at", null)
+      .order("created_at", { ascending: false })
+      .range(from, from + limit - 1);
+    if (fieldOfficerId && uniqueResponseIds.length) {
+      query = query.or(`field_officer_id.eq.${fieldOfficerId},response_id.in.(${uniqueResponseIds.join(",")})`);
+    } else if (fieldOfficerId) {
+      query = query.eq("field_officer_id", fieldOfficerId);
+    } else if (uniqueResponseIds.length) {
+      query = query.in("response_id", uniqueResponseIds);
+    }
+    return query;
+  }, "Unable to load PCR analytics reports.");
+
+  return asRows(rows).map(pcrToApp);
 }
 
 export async function getPCRDashboardCounts() {

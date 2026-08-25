@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import {
@@ -360,10 +360,20 @@ export default function DispatchRecords() {
   const [selectedPcr, setSelectedPcr] = useState(null);
   const [connection, setConnection] = useState(getConnectionState());
   const [page, setPage] = useState(1);
+  const refreshInFlightRef = useRef(false);
+  const refreshQueuedRef = useRef(false);
+  const refreshQueuedTimerRef = useRef(null);
+  const intervalEffectStartedRef = useRef(false);
+  const mountedRef = useRef(false);
   const pageSize = 10;
   const canCreate = can(PERMISSIONS.CREATE_DISPATCH);
 
-  const refresh = async ({ silent = false } = {}) => {
+  const refresh = useCallback(async ({ silent = false } = {}) => {
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
+      return;
+    }
+    refreshInFlightRef.current = true;
     if (!silent) setLoading(true);
     setError("");
     try {
@@ -401,6 +411,7 @@ export default function DispatchRecords() {
         ...localServerRows.map(record => ({ ...record, recordSource: "local_server" })),
         ...cloudRows.map(record => ({ ...record, recordSource: "cloud" })),
       ]);
+      if (!mountedRef.current) return;
       setRecords(rows);
       const cloudPcrByResponse = new Map();
       if (mode === "cloud") {
@@ -476,18 +487,31 @@ export default function DispatchRecords() {
           syncLabel: localPcr.syncLabel || "Saved on local server",
         } : null];
       }));
+      if (!mountedRef.current) return;
       setLinkedPCRs(Object.fromEntries(pairs));
     } catch (requestError) {
+      if (!mountedRef.current) return;
       setError(requestError.message || "Unable to load Dispatch Form Records.");
       toast.error(requestError.message || "Unable to load Dispatch Form Records.");
     } finally {
-      if (!silent) setLoading(false);
+      if (mountedRef.current && !silent) setLoading(false);
+      refreshInFlightRef.current = false;
+      if (mountedRef.current && refreshQueuedRef.current) {
+        refreshQueuedRef.current = false;
+        window.clearTimeout(refreshQueuedTimerRef.current);
+        refreshQueuedTimerRef.current = window.setTimeout(() => refresh({ silent: true }), 150);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     refresh();
-  }, []);
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(refreshQueuedTimerRef.current);
+    };
+  }, [refresh]);
 
   useEffect(() => subscribeConnection(setConnection), []);
 
@@ -502,16 +526,17 @@ export default function DispatchRecords() {
       clearTimeout(timer);
       unsubscribe();
     };
-  }, []);
+  }, [refresh]);
 
   useEffect(() => {
-    refresh();
+    if (intervalEffectStartedRef.current) refresh({ silent: true });
+    intervalEffectStartedRef.current = true;
     if (connection.mode === "offline") return undefined;
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") refresh({ silent: true });
     }, connection.mode === "cloud" ? CLOUD_REFRESH_MS : LOCAL_REFRESH_MS);
     return () => window.clearInterval(interval);
-  }, [connection.mode]);
+  }, [connection.mode, refresh]);
 
   const filtered = useMemo(() => records.filter(record => {
     const derivedStatus = displayStatus(record, linkedPcrFromMap(linkedPCRs, record));

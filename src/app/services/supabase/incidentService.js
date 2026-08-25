@@ -315,6 +315,32 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
   return rows;
 }
 
+export async function listPublicIncidentMapRecords({ limit = 150, from = 0, status, type, severity } = {}) {
+  const classification = type === "vehicular" ? "mvc" : type;
+  const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
+  const rows = await runSupabaseRequest(client => {
+    let query = client
+      .from("incidents")
+      .select("id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at, barangay:barangays(id, name)")
+      .eq("public_visible", true)
+      .is("deleted_at", null)
+      .not("latitude", "is", null)
+      .not("longitude", "is", null)
+      .order("incident_date", { ascending: false })
+      .range(from, from + limit - 1);
+    if (status) query = query.eq("status", status);
+    if (classification) query = query.eq("classification", classification);
+    if (priority) query = query.eq("priority", priority);
+    return query;
+  }, "Unable to load public incident records.");
+
+  return asRows(rows).map(row => incidentToApp({
+    ...row,
+    casualties: 0,
+    pcrTriage: "",
+  }));
+}
+
 export async function getIncident(incidentId) {
   const row = await runSupabaseRequest(client =>
     client

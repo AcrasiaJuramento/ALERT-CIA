@@ -82,22 +82,16 @@ export default function IncidentList() {
           type: filterType === 'all' ? undefined : filterType,
           severity: filterSeverity === 'all' ? undefined : filterSeverity,
         };
-        const [rows, summaryRows] = await Promise.all([
-          listIncidents({
-            ...filters,
-            limit: pageSize,
-            from: (page - 1) * pageSize,
-          }),
-          listIncidents({
-            ...filters,
-            limit: 500,
-            from: 0,
-          }),
-        ]);
+        const summaryRows = await listIncidents({
+          ...filters,
+          limit: 500,
+          from: 0,
+        });
+        const pageRows = summaryRows.slice((page - 1) * pageSize, page * pageSize);
         if (mounted) {
-          setIncidents(Array.isArray(rows) ? rows : []);
+          setIncidents(Array.isArray(pageRows) ? pageRows : []);
           setSummaryIncidents(Array.isArray(summaryRows) ? summaryRows : []);
-          setTotalCount(rows.totalCount ?? rows.length);
+          setTotalCount(summaryRows.totalCount ?? summaryRows.length);
         }
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load incidents.');

@@ -12,7 +12,7 @@ import {
   filterIncidentsByRange, filterOptions, formatBarangayAnalyticsLabel, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
 import { ECHAGUE_BARANGAYS, matchBarangayName } from '../data/gisConfig';
-import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRReports } from '../services/supabase';
+import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRAnalyticsReports, listPCRReports, listReceivedDispatchRecords } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
@@ -117,7 +117,19 @@ function average(values = []) {
 }
 
 function primaryLocationName(item = {}) {
-  return String(item.barangay || item.municipality || item.placeOfIncident || item.location || '').trim();
+  const candidates = [
+    item.barangay,
+    item.verifiedBarangay,
+    item.extractedBarangay,
+    item.location,
+    item.placeOfIncident,
+    item.locationText,
+    item.municipality,
+  ].map(value => String(value || '').trim()).filter(Boolean);
+  const barangayMatch = candidates
+    .map(value => matchBarangayName(value, ECHAGUE_BARANGAYS))
+    .find(value => ECHAGUE_BARANGAYS.includes(value));
+  return barangayMatch || candidates.find(value => !['Unspecified', 'No location data'].includes(value)) || '';
 }
 
 function locationScopeForItem(item = {}) {
@@ -221,6 +233,49 @@ function isAnalyticsRpcMissing(error) {
   return analyticsRpcMissingCodes.has(error?.code) || String(error?.message || '').includes('staff_all_records_analytics');
 }
 
+function analyticsTabsForRole(role) {
+  if (role === ROLES.DISPATCHER) {
+    return [
+      ['overview', 'Overview'],
+      ['operations', 'Dispatch Operations'],
+      ['pcr', 'PCR Workflow'],
+    ];
+  }
+  if (role === ROLES.FIELD_OFFICER) {
+    return [
+      ['overview', 'My Field Work'],
+      ['operations', 'Team Dispatches'],
+      ['pcr', 'My PCRs'],
+    ];
+  }
+  return analyticsTabs;
+}
+
+function analyticsHeaderForRole(role) {
+  if (role === ROLES.DISPATCHER) {
+    return {
+      eyebrow: 'Dispatch Intelligence',
+      title: 'Dispatch Operations Analytics',
+      description: 'Dispatch workflow, handoff, and PCR review signals scoped to dispatcher operations.',
+      source: 'Dispatcher analytics loads a capped operational dataset and avoids full municipal all-record analytics.',
+    };
+  }
+  if (role === ROLES.FIELD_OFFICER) {
+    return {
+      eyebrow: 'Field Intelligence',
+      title: 'My Field Analytics',
+      description: 'Assigned dispatches, submitted PCRs, and team workload signals for the current field officer.',
+      source: 'Field analytics loads only assigned dispatches and relevant PCR workflow records for a lighter mobile-friendly view.',
+    };
+  }
+  return {
+    eyebrow: 'Emergency Intelligence',
+    title: 'Analytics Command Center',
+    description: 'Incident trends, barangay hotspots, medical classifications, and MVC risk indicators based only on official admin-verified MDRRMO records.',
+    source: 'Analytics source: Official MDRRMO records only. Scraped or external records are excluded; incident, dispatch, and PCR analytics use admin-verified official data.',
+  };
+}
+
 function isAdminVerifiedIncident(record = {}) {
   return verifiedRecordStatuses.has(String(record.status || '').trim().toLowerCase());
 }
@@ -316,6 +371,37 @@ async function loadAllRows(loader, params = {}) {
     from += analyticsPageSize;
   }
   return allRows;
+}
+
+async function loadRoleScopedAnalytics(role, user) {
+  if (role === ROLES.FIELD_OFFICER) {
+    const dispatchRows = await listReceivedDispatchRecords({ limit: 100 }).catch(() => []);
+    const responseIds = new Set(dispatchRows.map(record => record.responseId).filter(Boolean));
+    const pcrRows = await listPCRAnalyticsReports({ fieldOfficerId: user?.id, responseIds: [...responseIds], limit: 100 }).catch(() => []);
+    const scopedPcrRows = pcrRows.filter(report =>
+      report.fieldOfficerId === user?.id
+      || responseIds.has(report.responseId)
+    );
+    return {
+      incidents: [],
+      dispatches: dispatchRows,
+      pcrReports: scopedPcrRows,
+    };
+  }
+
+  if (role === ROLES.DISPATCHER) {
+    const [dispatchRows, pcrRows] = await Promise.all([
+      listDispatchRecords({ limit: 150 }).catch(() => []),
+      listPCRAnalyticsReports({ limit: 120 }).catch(() => []),
+    ]);
+    return {
+      incidents: [],
+      dispatches: dispatchRows,
+      pcrReports: pcrRows,
+    };
+  }
+
+  return null;
 }
 
 function getRiskLevel({ count = 0, critical = 0, high = 0 }, maxCount = 1) {
@@ -467,10 +553,10 @@ function FilterSelect({ label, value, onChange, options }) {
   );
 }
 
-function SectionNav({ activeTab, onChange }) {
+function SectionNav({ activeTab, onChange, tabs = analyticsTabs }) {
   return (
     <div className="mb-5 flex max-w-full gap-2 overflow-x-auto rounded-lg border border-border bg-card p-2 text-xs shadow-sm">
-      {analyticsTabs.map(([id, label]) => (
+      {tabs.map(([id, label]) => (
         <button
           key={id}
           type="button"
@@ -563,12 +649,12 @@ function DrilldownDrawer({ drilldown, onClose }) {
   if (!drilldown) return null;
   const records = drilldown.records || [];
   return (
-    <div className="pointer-events-none fixed inset-0 z-[80]" role="dialog" aria-modal="false">
-      <div className="pointer-events-auto absolute bottom-5 right-5 top-24 flex w-[min(460px,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-2xl">
+    <div className="pointer-events-none fixed inset-0 z-[80] flex items-start justify-end p-3 pt-24 lg:p-5 lg:pt-24" role="dialog" aria-modal="false">
+      <div className="pointer-events-auto flex max-h-[calc(100vh-7rem)] w-full max-w-sm flex-col overflow-hidden rounded-lg border border-border bg-card/95 shadow-2xl backdrop-blur sm:max-w-md">
         <div className="flex items-start justify-between gap-3 border-b border-border bg-secondary/20 px-4 py-3">
           <div className="min-w-0">
             <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-300">Drill-down</div>
-            <h2 className="mt-1 truncate text-sm font-bold text-foreground">{drilldown.title}</h2>
+            <h2 className="mt-1 text-sm font-bold leading-5 text-foreground">{drilldown.title}</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">{drilldown.subtitle}</p>
           </div>
           <button type="button" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-lg border border-border text-muted-foreground hover:bg-secondary hover:text-foreground" aria-label="Close drilldown">
@@ -586,8 +672,8 @@ function DrilldownDrawer({ drilldown, onClose }) {
                 <div key={item.id} className="rounded-lg border border-border bg-secondary/25 p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold text-foreground">{toTitleCase(item.title)}</div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground">{item.location}</div>
+                      <div className="line-clamp-2 text-sm font-semibold leading-5 text-foreground">{toTitleCase(item.title)}</div>
+                      <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.location}</div>
                     </div>
                     <div className="shrink-0 text-right text-[10px] font-semibold text-muted-foreground">
                       <div>{item.date || 'No date'}</div>
@@ -718,9 +804,18 @@ function OverviewSection({
           <div className="space-y-3">
             {insightRows.map((item) => (
               <div key={item.title} className="rounded-lg border border-border bg-secondary/30 p-3">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.title}</div>
-                <div className="mt-1 text-lg font-bold text-foreground">{item.value}</div>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.helper}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{item.title}</div>
+                    <div className="mt-1 line-clamp-2 text-base font-bold leading-5 text-foreground">{item.value}</div>
+                  </div>
+                  {item.badge && (
+                    <span className="shrink-0 rounded-md border border-border bg-card px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+                      {item.badge}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-2 text-xs leading-5 text-muted-foreground">{item.helper}</p>
               </div>
             ))}
           </div>
@@ -736,6 +831,43 @@ function OverviewSection({
       </div>
 
       <ActionableInsights insights={actionableInsights} />
+    </div>
+  );
+}
+
+function ScopedOverviewSection({
+  role,
+  filteredDispatches,
+  filteredPcrReports,
+  avgResponseMinutes,
+  avgSceneMinutes,
+  submittedPcrCount,
+  dispatchStatusStats,
+  pcrStatusStats,
+  onOpenTab,
+}) {
+  const dispatcher = role === ROLES.DISPATCHER;
+  const pendingPcr = Math.max(filteredDispatches.length - submittedPcrCount, 0);
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <MetricCard label={dispatcher ? 'Dispatch Records' : 'Assigned Dispatches'} value={filteredDispatches.length} helper="Scoped workflow records" icon={Radio} tone="border-blue-500/20 bg-blue-500/10 text-blue-400" />
+        <MetricCard label="Submitted PCRs" value={submittedPcrCount} helper={`${filteredPcrReports.length} PCR records loaded`} icon={CheckCircle2} tone="border-emerald-500/20 bg-emerald-500/10 text-emerald-400" />
+        <MetricCard label="Pending PCR Work" value={pendingPcr} helper="Dispatches without submitted PCR signal" icon={FileText} tone="border-amber-500/20 bg-amber-500/10 text-amber-400" />
+        <MetricCard label="Avg Response Time" value={formatMinutes(avgResponseMinutes)} helper={`Avg scene ${formatMinutes(avgSceneMinutes)}`} icon={Clock} tone="border-cyan-500/20 bg-cyan-500/10 text-cyan-400" />
+      </div>
+      <div className="grid gap-5 xl:grid-cols-2">
+        <DistributionCard title={dispatcher ? 'Dispatch Status Mix' : 'Assigned Dispatch Status'} subtitle="Workflow status from scoped dispatch records" data={dispatchStatusStats} type="pie" />
+        <DistributionCard title="PCR Status Mix" subtitle="PCR workflow records visible to this role" data={pcrStatusStats} type="pie" />
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <button type="button" onClick={() => onOpenTab('operations')} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500">
+          Operations
+        </button>
+        <button type="button" onClick={() => onOpenTab('pcr')} className="rounded-lg border border-border px-3 py-2 text-xs font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground">
+          PCR Workflow
+        </button>
+      </div>
     </div>
   );
 }
@@ -1196,6 +1328,13 @@ export default function Analytics() {
   const [drilldown, setDrilldown] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const roleTabs = useMemo(() => analyticsTabsForRole(user?.role), [user?.role]);
+  const headerCopy = useMemo(() => analyticsHeaderForRole(user?.role), [user?.role]);
+  const isFullAnalytics = user?.role === ROLES.ADMINISTRATOR;
+
+  useEffect(() => {
+    if (!roleTabs.some(([id]) => id === activeTab)) setActiveTab('overview');
+  }, [activeTab, roleTabs]);
 
   useEffect(() => {
     let mounted = true;
@@ -1203,6 +1342,15 @@ export default function Analytics() {
       setLoading(true);
       setError('');
       try {
+        if (!isFullAnalytics) {
+          const scopedRecords = await loadRoleScopedAnalytics(user?.role, user);
+          if (mounted) {
+            setIncidents(scopedRecords?.incidents || []);
+            setDispatches(scopedRecords?.dispatches || []);
+            setPcrReports(scopedRecords?.pcrReports || []);
+          }
+          return;
+        }
         let sourceError = null;
         const allRecords = await getStaffAllRecordsAnalytics().catch(error => {
           sourceError = error;
@@ -1243,7 +1391,7 @@ export default function Analytics() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isFullAnalytics, user]);
 
   const officialVerifiedPcrReports = useMemo(() => pcrReports.filter(isVerifiedWorkflowRecord), [pcrReports]);
   const verifiedPcrResponseIds = useMemo(() => new Set(
@@ -1301,7 +1449,7 @@ export default function Analytics() {
     const typeOptions = [...new Set(filtered.map((item) => item.classification).filter(Boolean))]
       .sort()
       .map((value) => ({ value, label: toTitleCase(value) }));
-    const barangayOptions = [...new Set(filtered.map((item) => item.barangay || item.municipality).filter(Boolean))]
+    const barangayOptions = [...new Set(filtered.map((item) => primaryLocationName(item)).filter(Boolean))]
       .sort()
       .map((value) => ({ value, label: formatBarangayAnalyticsLabel(value, { outsideEchague: false }) }));
     const severityOptions = [...new Set(filtered.map((item) => item.priority).filter(Boolean))]
@@ -1316,7 +1464,7 @@ export default function Analytics() {
   }, [filtered]);
   const spatioFiltered = useMemo(() => filtered.filter((item) => {
     const typeMatch = spatioFilters.type === 'all' || item.classification === spatioFilters.type;
-    const barangayMatch = spatioFilters.barangay === 'all' || item.barangay === spatioFilters.barangay || (!item.barangay && item.municipality === spatioFilters.barangay);
+    const barangayMatch = spatioFilters.barangay === 'all' || primaryLocationName(item) === spatioFilters.barangay;
     const severityMatch = spatioFilters.severity === 'all' || item.priority === spatioFilters.severity;
     const timeMatch = spatioFilters.timeOfDay === 'all' || item.timeOfDay === spatioFilters.timeOfDay;
     return typeMatch && barangayMatch && severityMatch && timeMatch;
@@ -1330,7 +1478,7 @@ export default function Analytics() {
   );
   const enrichedBarangays = useMemo(() => barangays.map((barangay) => {
     const records = spatioFiltered.filter((item) => {
-      const locationName = item.barangay || item.municipality || '';
+      const locationName = primaryLocationName(item);
       return barangay.missingLocation
         ? !locationName || locationName === 'Unspecified'
         : locationName === (barangay.sourceName || barangay.name);
@@ -1513,8 +1661,9 @@ export default function Analytics() {
     const outsideRecords = filtered.filter(item => locationScopeForItem(item) === 'outside');
     const missingCrashRecords = mvcAccidentRecords.filter(record => !record.hasLinkedPcrCrash);
     const topBarangay = enrichedBarangays[0];
+    const fullAnalytics = user?.role === ROLES.ADMINISTRATOR;
     return [
-      topBarangay && {
+      fullAnalytics && topBarangay && {
         title: 'Review highest road-risk area',
         value: topBarangay.name,
         helper: `${topBarangay.count} filtered incident${topBarangay.count === 1 ? '' : 's'} with ${topBarangay.riskLevel || 'Minimal'} risk.`,
@@ -1540,7 +1689,7 @@ export default function Analytics() {
           });
         },
       },
-      missingCrashRecords.length > 0 && {
+      fullAnalytics && missingCrashRecords.length > 0 && {
         title: 'Complete MVC crash details',
         value: `${missingCrashRecords.length} missing`,
         helper: 'Fill linked PCR crash details for stronger helmet, license, alcohol, and role analytics.',
@@ -1551,7 +1700,7 @@ export default function Analytics() {
           setDrilldown({ title: 'MVC Records Missing Crash Details', subtitle: 'Records counted as MVC but missing linked PCR crash details.', records: missingCrashRecords });
         },
       },
-      outsideRecords.length > 0 && {
+      fullAnalytics && outsideRecords.length > 0 && {
         title: 'Validate outside-Echague locations',
         value: `${outsideRecords.length} record${outsideRecords.length === 1 ? '' : 's'}`,
         helper: 'Known municipalities outside Echague are labeled separately from no-location records.',
@@ -1562,7 +1711,7 @@ export default function Analytics() {
         },
       },
     ].filter(Boolean);
-  }, [enrichedBarangays, filtered, filteredDispatches, mvcAccidentRecords, performanceRows]);
+  }, [enrichedBarangays, filtered, filteredDispatches, mvcAccidentRecords, performanceRows, user?.role]);
 
   return (
     <div className="min-h-full bg-background p-5" style={{ fontFamily: 'Inter, sans-serif' }}>
@@ -1571,13 +1720,13 @@ export default function Analytics() {
           <div className="min-w-0">
             <div className="mb-2 inline-flex items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-blue-400">
               <Activity className="h-3 w-3" />
-              Emergency Intelligence
+              {headerCopy.eyebrow}
             </div>
             <h1 className="text-2xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-              Analytics Command Center
+              {headerCopy.title}
             </h1>
             <p className="mt-1 max-w-2xl text-xs leading-relaxed text-muted-foreground">
-              Incident trends, barangay hotspots, medical classifications, and MVC risk indicators based only on official admin-verified MDRRMO records.
+              {headerCopy.description}
             </p>
           </div>
           <div className="flex flex-col gap-3">
@@ -1587,9 +1736,9 @@ export default function Analytics() {
       </div>
       {loading && <div className="mb-5 rounded-lg border border-border bg-card p-4 text-sm text-muted-foreground">Loading analytics data...</div>}
       {error && <div className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-400">{error}</div>}
-      <SectionNav activeTab={activeTab} onChange={setActiveTab} />
+      <SectionNav activeTab={activeTab} onChange={setActiveTab} tabs={roleTabs} />
       <div className="mb-5 rounded-lg border border-blue-500/20 bg-blue-500/10 px-4 py-3 text-xs text-blue-200">
-        Analytics source: <strong>Official MDRRMO records only</strong>. Scraped or external records are excluded; incident, dispatch, and PCR analytics use admin-verified official data.
+        {headerCopy.source}
       </div>
       <DataCoverageBar incidents={filtered} dispatches={filteredDispatches} pcrReports={filteredPcrReports} mvcRecords={mvcAccidentRecords} mvcWithCrashDetails={mvcWithCrashDetails} />
 
@@ -1601,7 +1750,7 @@ export default function Analytics() {
         />
       )}
 
-      {activeTab === 'overview' && (
+      {isFullAnalytics && activeTab === 'overview' && (
         <OverviewSection
           filtered={filtered}
           filteredDispatches={filteredDispatches}
@@ -1622,7 +1771,21 @@ export default function Analytics() {
         />
       )}
 
-      {activeTab === 'spatial' && (
+      {!isFullAnalytics && activeTab === 'overview' && (
+        <ScopedOverviewSection
+          role={user?.role}
+          filteredDispatches={filteredDispatches}
+          filteredPcrReports={filteredPcrReports}
+          avgResponseMinutes={avgResponseMinutes}
+          avgSceneMinutes={avgSceneMinutes}
+          submittedPcrCount={submittedPcrCount}
+          dispatchStatusStats={dispatchStatusStats}
+          pcrStatusStats={pcrStatusStats}
+          onOpenTab={setActiveTab}
+        />
+      )}
+
+      {isFullAnalytics && activeTab === 'spatial' && (
       <section id="analytics-spatial" className="scroll-mt-4">
         <SpatioTemporalSection
           filteredIncidents={spatioFiltered}
@@ -1660,7 +1823,7 @@ export default function Analytics() {
       </section>
       )}
 
-      {activeTab === 'mvc' && (
+      {isFullAnalytics && activeTab === 'mvc' && (
       <section id="analytics-mvc" className="mt-5 scroll-mt-4">
         <SectionHeader title="MVC Safety Analytics" subtitle="Driver, passenger, pedestrian, alcohol breath, helmet, and license indicators aligned to all MVC incident records" />
         <MvcCompletionCard rows={mvcCompletionRows} />

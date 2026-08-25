@@ -99,18 +99,29 @@ export function formatBarangayAnalyticsLabel(value = '', { outsideEchague = fals
 }
 
 function getAnalyticsLocationName(item = {}) {
-  const barangay = cleanLocationName(item.barangay);
-  if (!isMissingLocationName(barangay)) return barangay;
-  const municipality = cleanLocationName(item.municipality || item.verifiedMunicipality || item.extractedMunicipality);
-  return isMissingLocationName(municipality) ? '' : municipality;
+  const candidates = [
+    item.barangay,
+    item.verifiedBarangay,
+    item.extractedBarangay,
+    item.location,
+    item.placeOfIncident,
+    item.locationText,
+    item.municipality,
+    item.verifiedMunicipality,
+    item.extractedMunicipality,
+  ].map(cleanLocationName).filter(value => !isMissingLocationName(value));
+  const barangayMatch = candidates
+    .map(value => matchBarangayName(value, ECHAGUE_BARANGAYS))
+    .find(value => ECHAGUE_BARANGAYS.includes(value));
+  return barangayMatch || candidates[0] || '';
 }
 
 export function getBarangayStats(items, barangays = ECHAGUE_BARANGAYS) {
-  return getOrSetCache(`analytics:barangay:${itemsCacheKey(items)}:${barangays.length}:outside-v1`, () => {
+  return getOrSetCache(`analytics:barangay:${itemsCacheKey(items)}:${barangays.length}:outside-v2`, () => {
     const total = items.length || 1;
     const echagueRows = barangays
       .map((barangay) => {
-        const barangayIncidents = items.filter((item) => matchBarangayName(item.barangay, barangays) === barangay);
+        const barangayIncidents = items.filter((item) => matchBarangayName(getAnalyticsLocationName(item), barangays) === barangay);
         const categories = summarizeBy(barangayIncidents, 'classification');
         const priorities = summarizeBy(barangayIncidents, 'priority');
         return {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { CheckCircle2, FileText, Filter, MapPin, Navigation, Radio, Search } from "lucide-react";
 import { toast } from "sonner";
@@ -31,6 +31,8 @@ const RECEIVED_STATUSES = [
   "Sent to Responding Team Locally",
   "Submitted",
   "Submitted Locally",
+  "Pending Admin Verification",
+  "Returned for Correction",
   "Verified",
 ];
 const ACTIVE_STATUS_KEYS = new Set([
@@ -41,10 +43,31 @@ const ACTIVE_STATUS_KEYS = new Set([
   "pcr_in_progress",
   "submitted",
   "submitted_locally",
+  "pending_admin_verification",
+  "returned_for_correction",
   "dispatch_received_locally",
 ]);
 const BACK_TO_BASE_STATUS_KEYS = new Set(["back_to_base", "returned_to_base"]);
 const RESOLVED_STATUS_KEYS = new Set(["pcr_completed", "verified", "completed", "resolved", "closed"]);
+const RECEIVED_STATUS_KEYS = new Set([
+  "sent_to_responding_team",
+  "sent_to_field_officer",
+  "assigned_locally",
+  "accepted_by_responding_team",
+  "pcr_in_progress",
+  "pcr_completed",
+  "submitted",
+  "submitted_locally",
+  "pending_admin_verification",
+  "returned_for_correction",
+  "verified",
+  "completed",
+  "resolved",
+  "closed",
+  "back_to_base",
+  "returned_to_base",
+  "dispatch_received_locally",
+]);
 
 function normalizeStatus(value = "") {
   return String(value || "")
@@ -55,7 +78,9 @@ function normalizeStatus(value = "") {
 }
 
 function hasReceivedStatus(record = {}) {
-  return RECEIVED_STATUSES.includes(record.status) || RECEIVED_STATUSES.includes(record.localStatus);
+  return RECEIVED_STATUSES.includes(record.status)
+    || RECEIVED_STATUSES.includes(record.localStatus)
+    || [record.status, record.localStatus].map(normalizeStatus).some(status => RECEIVED_STATUS_KEYS.has(status));
 }
 
 function joinValues(value) {
@@ -142,8 +167,18 @@ export default function ReceivedDispatches() {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("Active");
   const [connection, setConnection] = useState(getConnectionState());
+  const loadInFlightRef = useRef(false);
+  const loadQueuedRef = useRef(false);
+  const loadQueuedTimerRef = useRef(null);
+  const intervalEffectStartedRef = useRef(false);
+  const mountedRef = useRef(false);
 
-  const loadRecords = async ({ silent = false } = {}) => {
+  const loadRecords = useCallback(async ({ silent = false } = {}) => {
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return;
+    }
+    loadInFlightRef.current = true;
     if (!silent) setLoading(true);
     setError("");
     try {
@@ -168,6 +203,7 @@ export default function ReceivedDispatches() {
       if (cloudRows.length) {
         await hybridRepository.reconcileCloudDispatches(rows).catch(() => 0);
       }
+      if (!mountedRef.current) return;
       setRecords(rows);
       const localPairs = state.localOnline
         ? await Promise.all(rows.map(async record => {
@@ -179,12 +215,15 @@ export default function ReceivedDispatches() {
         ? await (() => {
           const byResponse = new Map();
           const byDispatch = new Map();
-          return Promise.all([
-            listPCRReportsByResponses(rows.map(record => record.responseId)),
-            listPCRReportsByDispatches(rows.map(record => record.dispatchId || record.id)),
-          ])
-            .then(([responsePcrRows, dispatchPcrRows]) => {
+          return listPCRReportsByResponses(rows.map(record => record.responseId))
+            .then(async responsePcrRows => {
               responsePcrRows.forEach(pcr => byResponse.set(pcr.responseId, pcr));
+              const missingDispatchIds = rows
+                .filter(record => !byResponse.has(record.responseId))
+                .map(record => record.dispatchId || record.id);
+              const dispatchPcrRows = missingDispatchIds.length
+                ? await listPCRReportsByDispatches(missingDispatchIds)
+                : [];
               dispatchPcrRows.forEach(pcr => byDispatch.set(pcr.dispatchId, pcr));
               return rows.map(record => [
                 record.responseId,
@@ -202,17 +241,30 @@ export default function ReceivedDispatches() {
       if (state.cloudOnline) {
         await hybridRepository.reconcileCloudPcrReports(pairs.map(([, pcr]) => pcr).filter(Boolean)).catch(() => 0);
       }
+      if (!mountedRef.current) return;
       setLinkedPCRs(Object.fromEntries(pairs));
     } catch (requestError) {
+      if (!mountedRef.current) return;
       setError(requestError.message || "Unable to load received dispatches.");
     } finally {
-      if (!silent) setLoading(false);
+      if (mountedRef.current && !silent) setLoading(false);
+      loadInFlightRef.current = false;
+      if (mountedRef.current && loadQueuedRef.current) {
+        loadQueuedRef.current = false;
+        window.clearTimeout(loadQueuedTimerRef.current);
+        loadQueuedTimerRef.current = window.setTimeout(() => loadRecords({ silent: true }), 150);
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     loadRecords();
-  }, []);
+    return () => {
+      mountedRef.current = false;
+      window.clearTimeout(loadQueuedTimerRef.current);
+    };
+  }, [loadRecords]);
 
   useEffect(() => subscribeConnection(setConnection), []);
 
@@ -227,16 +279,17 @@ export default function ReceivedDispatches() {
       clearTimeout(timer);
       unsubscribe();
     };
-  }, []);
+  }, [loadRecords]);
 
   useEffect(() => {
     if (connection.mode === "offline") return undefined;
-    loadRecords({ silent: true });
+    if (intervalEffectStartedRef.current) loadRecords({ silent: true });
+    intervalEffectStartedRef.current = true;
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") loadRecords({ silent: true });
     }, connection.mode === "cloud" ? CLOUD_REFRESH_MS : LOCAL_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [connection.mode]);
+  }, [connection.mode, loadRecords]);
 
   const received = useMemo(() => records.filter(record => {
     const pcr = linkedPCRs[record.responseId];

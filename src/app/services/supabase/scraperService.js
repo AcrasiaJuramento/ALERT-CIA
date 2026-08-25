@@ -738,12 +738,13 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
 export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   if (!isSupabaseConfigured) return [];
   const cacheKey = `alert-cia:public-scraped-map:approved-v3:${limit}`;
+  const publicMapSelect = "id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, incident_type_key, severity, title, snippet, location_text, display_name, latitude, longitude, scraped_at, extracted_barangay, extracted_municipality, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, match_confidence, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)";
 
   try {
     const rows = await runSupabaseRequest(client =>
       client
         .from("scraper_records")
-        .select("*, barangay:barangays(id, name, municipality, province, centroid)")
+        .select(publicMapSelect)
         .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
         .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
         .eq("status", "approved")

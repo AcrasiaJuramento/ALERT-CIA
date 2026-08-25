@@ -1,6 +1,6 @@
 import {
-  listIncidents,
-  listOfficerScrapedMapIncidents,
+  listPublicIncidentMapRecords,
+  listPublicScrapedMapIncidents,
   listPCRMapIncidents,
   listPublicPCRMapIncidents,
 } from '../services/supabase';
@@ -56,13 +56,13 @@ function sanitizeForPublic(record = {}) {
 export async function loadPublicAccidentIncidents({ officialLimit = 150, scrapedLimit = 75, pcrLimit = 75 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
-      listIncidents({ publicOnly: true, verifiedMapOnly: true, limit: officialLimit }).catch(() => []),
+      listPublicIncidentMapRecords({ limit: officialLimit }).catch(() => []),
     ]),
     listPublicPCRMapIncidents({ limit: pcrLimit })
       .catch(() => listPCRMapIncidents({ publicOnly: true, verifiedOnly: true, limit: pcrLimit }))
       .catch(() => []),
     Promise.all([
-      listOfficerScrapedMapIncidents({ limit: scrapedLimit, includeUnverified: false }).catch(() => []),
+      listPublicScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
     ]),
   ]);
 
@@ -91,7 +91,7 @@ export async function loadPublicAccidentIncidents({ officialLimit = 150, scraped
 
 export async function loadPublicIncidentLogRecords({ officialLimit = 150, pcrLimit = 75 } = {}) {
   const [officialRecords, pcrRecords] = await Promise.all([
-    listIncidents({ publicOnly: true, verifiedMapOnly: true, limit: officialLimit }).catch(() => []),
+    listPublicIncidentMapRecords({ limit: officialLimit }).catch(() => []),
     listPublicPCRMapIncidents({ limit: pcrLimit })
       .catch(() => listPCRMapIncidents({ publicOnly: true, verifiedOnly: true, limit: pcrLimit }))
       .catch(() => []),
