@@ -201,6 +201,36 @@ export function getActiveTeamMembership(profile = {}) {
   return (profile.team_members || []).find(membership => !membership.left_at) || null;
 }
 
+export async function listActiveFieldOfficerTeamAssignments() {
+  return runSupabaseRequest(async client => {
+    const { data, error } = await client
+      .from("team_members")
+      .select("id, team_id, team_role, is_leader, profile:profiles!team_members_profile_id_fkey(id, account_status, deleted_at, roles:profile_roles!profile_roles_profile_id_fkey(role)), team:responding_teams(id, name)")
+      .is("left_at", null);
+
+    if (error) return { data: null, error };
+
+    const rows = (data || [])
+      .filter(row => {
+        const profile = row.profile || {};
+        const roles = profile.roles || [];
+        const isFieldOfficer = roles.some(item => item.role === "field_responder");
+        const isActive = !profile.deleted_at && String(profile.account_status || "active").toLowerCase() !== "inactive";
+        return row.team_id && isActive && isFieldOfficer;
+      })
+      .map(row => ({
+        id: row.id,
+        profileId: row.profile?.id || null,
+        teamId: row.team_id,
+        teamName: row.team?.name || "",
+        teamRole: row.team_role || "",
+        isLeader: Boolean(row.is_leader),
+      }));
+
+    return { data: rows, error: null };
+  }, "Unable to load active field officer team assignments.");
+}
+
 export async function getCurrentProfileTeamMemberships() {
   return runSupabaseRequest(async client => {
     const { data: authData, error: authError } = await client.auth.getUser();

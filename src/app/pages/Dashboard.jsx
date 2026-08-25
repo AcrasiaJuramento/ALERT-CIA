@@ -11,7 +11,7 @@ import { BarangayHeatmap } from '../components/analytics/BarangayHeatmap';
 import { filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/analyticsModule';
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
-import { getIncidentStatusLabel, isAmbulanceAssigned, isIncidentCompleted } from '../utils/incidentStatus';
+import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { computeAverageResponseMinutes, formatResponseDuration } from '../utils/responseTime';
 import { formatLongDateTime } from '../utils/dateFormat';
 import {
@@ -22,6 +22,7 @@ import {
   listDispatchRecords,
   listIncidents,
   listNotifications,
+  listActiveFieldOfficerTeamAssignments,
   listRespondingTeams,
   supabase,
   updateAmbulanceUnitAvailability,
@@ -44,6 +45,33 @@ const typeIcons = {
   crime: AlertTriangle,
   other: AlertTriangle,
 };
+
+const ACTIVE_FIELD_DISPATCH_STATUSES = new Set([
+  'sent_to_responding_team',
+  'sent_to_field_officer',
+  'accepted_by_responding_team',
+  'pcr_in_progress',
+  'dispatch_received_locally',
+]);
+
+function normalizeWorkflowStatus(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function fieldTeamKey(record = {}) {
+  return record.respondingTeamId
+    || record.teamId
+    || String(record.respondingTeam || record.team || record.assignedTeam || '').trim();
+}
+
+function hasActiveFieldTeam(record = {}) {
+  const status = normalizeWorkflowStatus(record.localStatus || record.status);
+  return Boolean(fieldTeamKey(record)) && ACTIVE_FIELD_DISPATCH_STATUSES.has(status);
+}
 
 const severityBadge = {
   critical: 'bg-red-600/20 text-red-400 border-red-500/30',
@@ -132,6 +160,7 @@ export default function Dashboard() {
   const [ambulanceForm, setAmbulanceForm] = useState(initialAmbulanceForm);
   const [ambulanceSaving, setAmbulanceSaving] = useState(false);
   const [respondingTeams, setRespondingTeams] = useState([]);
+  const [fieldOfficerTeamAssignments, setFieldOfficerTeamAssignments] = useState([]);
   const [recentActivity, setRecentActivity] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -153,29 +182,32 @@ export default function Dashboard() {
     setLoading(true);
     setError('');
     try {
-      const [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult] = await Promise.allSettled([
+      const [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult, fieldTeamResult] = await Promise.allSettled([
         listIncidents({ limit: 100 }),
         listDispatchRecords({ limit: 50 }),
         listNotifications({ limit: 20 }),
         listAmbulanceUnits({ activeOnly: false }),
         listRespondingTeams({ activeOnly: true }),
+        listActiveFieldOfficerTeamAssignments(),
       ]);
       const incidentRows = settledValue(incidentResult, []);
       const dispatchRows = settledValue(dispatchResult, []);
       const notificationRows = settledValue(notificationResult, []);
       const ambulanceRows = settledValue(ambulanceResult, []);
       const teamRows = settledValue(teamResult, []);
+      const fieldTeamRows = settledValue(fieldTeamResult, []);
       setIncidents(incidentRows);
       setDispatches(dispatchRows);
       setAmbulanceUnits(ambulanceRows);
       setRespondingTeams(teamRows);
+      setFieldOfficerTeamAssignments(fieldTeamRows);
       setRecentActivity(notificationRows.map(item => ({
         id: item.id,
         type: item.type === 'pcr_created' ? 'report' : item.type === 'response_completed' ? 'resolved' : 'info',
         message: item.title || item.message,
         time: item.timestamp ? formatLongDateTime(item.timestamp) : '',
       })));
-      const failed = [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult].find(result => result.status === 'rejected');
+      const failed = [incidentResult, dispatchResult, notificationResult, ambulanceResult, teamResult, fieldTeamResult].find(result => result.status === 'rejected');
       if (failed) setError(failed.reason?.message || 'Some dashboard data could not be loaded for your role.');
     } catch (requestError) {
       setError(requestError.message || 'Unable to load dashboard data.');
@@ -230,7 +262,6 @@ export default function Dashboard() {
     };
   }, []);
 
-  const activeResponses = useMemo(() => incidents.filter(i => isAmbulanceAssigned(i.status)), [incidents]);
   const availableAmbulances = ambulanceUnits.filter(unit => getAmbulanceStatus(unit) === 'available').length;
   const ambulanceTotal = ambulanceUnits.length;
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status)).slice(0, 6);
@@ -244,6 +275,14 @@ export default function Dashboard() {
     time: incident.time,
   })), [incidents]);
   const todayAnalytics = useMemo(() => filterIncidentsByRange(analyticsIncidents, 'today'), [analyticsIncidents]);
+  const deployedFieldTeams = useMemo(
+    () => {
+      const rosterTeams = new Set(fieldOfficerTeamAssignments.map(item => item.teamId || item.teamName).filter(Boolean));
+      if (rosterTeams.size) return rosterTeams.size;
+      return new Set(dispatches.filter(hasActiveFieldTeam).map(fieldTeamKey).filter(Boolean)).size;
+    },
+    [dispatches, fieldOfficerTeamAssignments],
+  );
   const barangayRanking = useMemo(() => getBarangayStats(todayAnalytics).filter((item) => item.count > 0), [todayAnalytics]);
   const priorityData = useMemo(() => summarizeBy(todayAnalytics, 'priority'), [todayAnalytics]);
   const riskRanking = useMemo(() => barangayRanking
@@ -277,8 +316,8 @@ export default function Dashboard() {
     },
     {
       label: 'Teams Deployed',
-      value: String(new Set(activeResponses.map(item => item.assignedTeam).filter(Boolean)).size),
-      change: 'Assigned active responses',
+      value: String(deployedFieldTeams),
+      change: 'Active field officer teams',
       icon: Users,
       color: 'text-blue-400',
       bg: 'bg-blue-500/10',
@@ -315,7 +354,7 @@ export default function Dashboard() {
       border: availableAmbulances <= 2 ? 'border-red-500/20' : 'border-purple-500/20',
       trend: availableAmbulances <= 2 ? 'up' : 'neutral',
     },
-  ], [activeIncidents.length, activeResponses, ambulanceTotal, availableAmbulances, avgResponseMinutes, todayAnalytics]);
+  ], [activeIncidents.length, ambulanceTotal, availableAmbulances, avgResponseMinutes, deployedFieldTeams, todayAnalytics]);
 
   const openAmbulancePanel = () => {
     setAmbulancePanelOpen(true);
