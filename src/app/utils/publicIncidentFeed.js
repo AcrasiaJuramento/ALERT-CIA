@@ -7,6 +7,8 @@ import {
 import { hasValidLatLng, isWithinIsabelaMapArea } from './mapData';
 import { isWithinAccidentProneWindow } from './accidentProneWindow';
 
+const EXCLUDED_SCRAPER_STATUSES = new Set(['duplicate', 'rejected', 'ignored', 'archived', 'failed']);
+
 function isAccidentRecord(record = {}) {
   const values = [
     record.type,
@@ -23,6 +25,10 @@ function isAccidentRecord(record = {}) {
     || value.includes('vehicle')
     || value.includes('collision')
     || value.includes('crash')
+    || value.includes('bangga')
+    || value.includes('aksidente')
+    || value.includes('salpok')
+    || value.includes('nasagasaan')
     || value === 'mvc'
   ));
 }
@@ -53,7 +59,7 @@ function sanitizeForPublic(record = {}) {
   };
 }
 
-export async function loadPublicAccidentIncidents({ officialLimit = 150, scrapedLimit = 75, pcrLimit = 75 } = {}) {
+export async function loadPublicAccidentIncidents({ officialLimit = 500, scrapedLimit = 1000, pcrLimit = 200 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
       listPublicIncidentMapRecords({ limit: officialLimit }).catch(() => []),
@@ -73,7 +79,7 @@ export async function loadPublicAccidentIncidents({ officialLimit = 150, scraped
     ...(Array.isArray(publicScraped) ? publicScraped : []),
     ...(Array.isArray(reviewedScraped) ? reviewedScraped : []),
   ])
-    .filter(record => record.scraperStatus === 'approved' && record.publicVisible === true)
+    .filter(record => !EXCLUDED_SCRAPER_STATUSES.has(String(record.scraperStatus || record.status || '').toLowerCase()))
     .filter(isAccidentRecord);
   const officialIds = new Set(publicAccidentReports.map(item => item.id));
   const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : [])
@@ -89,7 +95,7 @@ export async function loadPublicAccidentIncidents({ officialLimit = 150, scraped
     .map(sanitizeForPublic);
 }
 
-export async function loadPublicIncidentLogRecords({ officialLimit = 150, pcrLimit = 75 } = {}) {
+export async function loadPublicIncidentLogRecords({ officialLimit = 500, pcrLimit = 200 } = {}) {
   const [officialRecords, pcrRecords] = await Promise.all([
     listPublicIncidentMapRecords({ limit: officialLimit }).catch(() => []),
     listPublicPCRMapIncidents({ limit: pcrLimit })

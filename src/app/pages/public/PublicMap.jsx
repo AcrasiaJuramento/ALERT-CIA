@@ -554,9 +554,9 @@ export default function PublicMap() {
     setError('');
     try {
       const [publicIncidents, zones, activeAdvisories] = await Promise.all([
-        loadPublicAccidentIncidents({ officialLimit: 150, scrapedLimit: 75, pcrLimit: 75 }),
-        listPublicHazardZones({ limit: 75 }),
-        listPublishedAdvisories({ limit: 25 }),
+        loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 1000, pcrLimit: 200 }),
+        listPublicHazardZones({ limit: 100 }),
+        listPublishedAdvisories({ limit: 100 }),
       ]);
       setIncidents(publicIncidents.filter(hasValidLatLng));
       setAdvisories(activeAdvisories.filter(item => item.coordinates));
@@ -580,12 +580,14 @@ export default function PublicMap() {
       refreshTimer = window.setTimeout(async () => {
         await loadMap();
         toast.success('Map updated from live data.', { id: 'public-map-live-update' });
-      }, 5000);
+      }, 250);
     };
     const channel = supabase
       .channel('public-live-navigation-records')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, refreshFromRealtime)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, refreshFromRealtime)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refreshFromRealtime)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'hazard_zones' }, refreshFromRealtime)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'public_advisories' }, refreshFromRealtime)
       .subscribe();

@@ -34,6 +34,7 @@ const ACTIVE_SCRAPER_SOURCE_SITE = "bombo";
 const ACTIVE_SCRAPER_SOURCE_URL_PATTERN = "%cauayan.bomboradyo.com%";
 const SCRAPER_MAP_CACHE_TTL_MS = 30 * 60 * 1000;
 const FULL_SCRAPE_PAGE_CHUNK_SIZE = 5;
+const PUBLIC_MAP_EXCLUDED_SCRAPER_STATUSES = new Set(["duplicate", "rejected", "ignored", "archived", "failed"]);
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
@@ -737,27 +738,26 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
 
 export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
   if (!isSupabaseConfigured) return [];
-  const cacheKey = `alert-cia:public-scraped-map:approved-v3:${limit}`;
-  const publicMapSelect = "id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, incident_type_key, severity, title, snippet, location_text, display_name, latitude, longitude, scraped_at, extracted_barangay, extracted_municipality, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, match_confidence, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)";
+  const queryLimit = Math.max(Number(limit) || 100, 1000);
+  const cacheKey = `alert-cia:public-scraped-map:isabela-news-v2:${queryLimit}`;
+  const publicMapSelect = "id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, incident_type_key, severity, title, snippet, location_text, display_name, latitude, longitude, scraped_at, extracted_barangay, extracted_municipality, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, match_confidence, raw_payload, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)";
 
   try {
     const rows = await runSupabaseRequest(client =>
       client
         .from("scraper_records")
         .select(publicMapSelect)
-        .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
-        .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
-        .eq("status", "approved")
-        .eq("public_visible", true)
         .is("deleted_at", null)
         .order("scraped_at", { ascending: false })
-        .limit(limit),
+        .limit(queryLimit),
     "Unable to load public scraper map incidents.");
-    const mapped = await scraperRowsToMapIncidents(asRows(rows).filter(isAccidentMapRow));
+    const mapped = await scraperRowsToMapIncidents(asRows(rows)
+      .filter(row => !PUBLIC_MAP_EXCLUDED_SCRAPER_STATUSES.has(String(row.status || "").toLowerCase()))
+      .filter(isAccidentMapRow));
     return writeBrowserCache(cacheKey, mapped);
   } catch (error) {
     const cached = readBrowserCache(cacheKey);
-    if (cached) return cached.filter(row => row.scraperStatus === "approved" && row.publicVisible === true);
+    if (cached) return cached.filter(row => !PUBLIC_MAP_EXCLUDED_SCRAPER_STATUSES.has(String(row.scraperStatus || row.status || "").toLowerCase()));
     throw error;
   }
 }

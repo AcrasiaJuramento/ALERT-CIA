@@ -85,7 +85,7 @@ export default function PublicDashboard() {
       if (!silent) setLoading(true);
       if (!silent) setError('');
       try {
-        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 150, scrapedLimit: 75, pcrLimit: 75 });
+        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 1000, pcrLimit: 200 });
         if (mounted) {
           setIncidents(publicIncidents);
           setError('');

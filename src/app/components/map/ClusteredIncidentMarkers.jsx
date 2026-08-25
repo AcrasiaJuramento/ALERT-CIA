@@ -31,6 +31,15 @@ const severityLabels = {
   low: 'Green - Non-critical',
 };
 
+function normalizedSeverity(incident = {}) {
+  const value = String(incident.severity || incident.triage || incident.priority || incident.severity_level || '').trim().toLowerCase();
+  if (['black', 'fatal', 'fatality'].includes(value)) return 'black';
+  if (['red', 'critical', 'high', 'warning'].includes(value)) return 'red';
+  if (['yellow', 'moderate', 'medium'].includes(value)) return 'yellow';
+  if (['green', 'low', 'resolved', 'completed'].includes(value)) return 'green';
+  return value;
+}
+
 const typeIcons = {
   vehicular: AlertTriangle,
   fire: Flame,
@@ -42,7 +51,7 @@ const typeIcons = {
 
 function MarkerGlyph({ incident }) {
   const Icon = typeIcons[incident.type] || MapPin;
-  const severity = String(incident.severity || '').toLowerCase();
+  const severity = normalizedSeverity(incident);
   const color = severityColors[severity] || '#3b82f6';
   const assessment = locationAssessment(incident);
 
@@ -81,7 +90,7 @@ function PopupContent({ incident }) {
       <div className="text-xs text-slate-600 mt-1">{incident.location}</div>
       <div className="mt-2 flex items-center gap-2 text-[11px]">
         <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold capitalize">
-          {severityLabels[String(incident.severity || '').toLowerCase()] || incident.severity || 'Unspecified'}
+          {severityLabels[normalizedSeverity(incident)] || incident.severity || incident.triage || incident.priority || 'Unspecified'}
         </span>
       </div>
       {incident.description && (

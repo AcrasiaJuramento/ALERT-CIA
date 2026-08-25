@@ -118,8 +118,8 @@ export default function HazardWarningMonitor({ position, locationStatus = 'start
   useEffect(() => {
     let active = true;
     Promise.all([
-      listPublicHazardZones({ limit: 75 }).catch(() => []),
-      loadPublicAccidentIncidents({ officialLimit: 150, scrapedLimit: 75, pcrLimit: 75 })
+      listPublicHazardZones({ limit: 500 }).catch(() => []),
+      loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 1000, pcrLimit: 200 })
         .then(records => calculateAccidentProneAreas(records, { publicOnly: true }))
         .catch(() => []),
     ]).then(([registeredZones, calculatedAreas]) => {
