@@ -1,5 +1,6 @@
 import {
   listPublicIncidentMapRecords,
+  listOfficerScrapedMapIncidents,
   listPublicScrapedMapIncidents,
   listPCRMapIncidents,
   listPublicPCRMapIncidents,
@@ -62,36 +63,33 @@ function sanitizeForPublic(record = {}) {
 export async function loadPublicAccidentIncidents({ officialLimit = 500, scrapedLimit = 1000, pcrLimit = 200 } = {}) {
   const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
     Promise.all([
-      listPublicIncidentMapRecords({ limit: officialLimit }).catch(() => []),
+      listPublicIncidentMapRecords({ limit: officialLimit, verifiedMapOnly: true }).catch(() => []),
     ]),
     listPublicPCRMapIncidents({ limit: pcrLimit })
       .catch(() => listPCRMapIncidents({ publicOnly: true, verifiedOnly: true, limit: pcrLimit }))
       .catch(() => []),
     Promise.all([
       listPublicScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
+      listOfficerScrapedMapIncidents({ limit: scrapedLimit, includeUnverified: true }).catch(() => []),
     ]),
   ]);
 
   const official = mergeMapRecords((Array.isArray(officialSets) ? officialSets : []).flat());
   const [publicScraped = [], reviewedScraped = []] = Array.isArray(scrapedSets) ? scrapedSets : [];
-  const publicAccidentReports = official.filter(isAccidentRecord);
+  const publicOfficialReports = official;
   const scrapedAccidents = mergeMapRecords([
     ...(Array.isArray(publicScraped) ? publicScraped : []),
     ...(Array.isArray(reviewedScraped) ? reviewedScraped : []),
   ])
     .filter(record => !EXCLUDED_SCRAPER_STATUSES.has(String(record.scraperStatus || record.status || '').toLowerCase()))
     .filter(isAccidentRecord);
-  const officialIds = new Set(publicAccidentReports.map(item => item.id));
+  const officialIds = new Set(publicOfficialReports.map(item => item.id));
   const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : [])
-    .filter(item => !officialIds.has(item.relatedIncidentId))
-    .filter(isAccidentRecord);
+    .filter(item => !officialIds.has(item.relatedIncidentId));
 
-  return mergeMapRecords([...publicAccidentReports, ...pcrOnly, ...scrapedAccidents])
+  return mergeMapRecords([...publicOfficialReports, ...pcrOnly, ...scrapedAccidents])
     .filter(hasValidLatLng)
     .filter(isWithinIsabelaMapArea)
-    .filter(record => isWithinAccidentProneWindow(
-      record.date || record.incident_date || record.createdAt || record.created_at,
-    ))
     .map(sanitizeForPublic);
 }
 

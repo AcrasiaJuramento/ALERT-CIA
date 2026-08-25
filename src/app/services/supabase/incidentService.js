@@ -315,10 +315,15 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
   return rows;
 }
 
-export async function listPublicIncidentMapRecords({ limit = 150, from = 0, status, type, severity } = {}) {
+export async function listPublicIncidentMapRecords({ limit = 150, from = 0, status, type, severity, verifiedMapOnly = false } = {}) {
   const classification = type === "vehicular" ? "mvc" : type;
   const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
-  const rows = await runSupabaseRequest(client => {
+  const rows = await runSupabaseRequest(async client => {
+    const verifiedResponseResult = verifiedMapOnly ? await verifiedPCRResponseIds(client) : null;
+    if (verifiedResponseResult?.error) return verifiedResponseResult;
+    const verifiedResponseIds = asRows(verifiedResponseResult?.data).map(row => row.response_id).filter(Boolean);
+    if (verifiedMapOnly && !verifiedResponseIds.length) return { data: [], error: null };
+
     let query = client
       .from("incidents")
       .select("id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at, barangay:barangays(id, name)")
@@ -331,13 +336,17 @@ export async function listPublicIncidentMapRecords({ limit = 150, from = 0, stat
     if (status) query = query.eq("status", status);
     if (classification) query = query.eq("classification", classification);
     if (priority) query = query.eq("priority", priority);
+    if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
     return query;
   }, "Unable to load public incident records.");
 
-  return asRows(rows).map(row => incidentToApp({
+  const baseRows = asRows(rows);
+  const triageByResponse = await pcrTriageByResponse(baseRows.map(row => row.response_id));
+
+  return baseRows.map(row => incidentToApp({
     ...row,
     casualties: 0,
-    pcrTriage: "",
+    pcrTriage: triageByResponse.get(row.response_id) || "",
   }));
 }
 
