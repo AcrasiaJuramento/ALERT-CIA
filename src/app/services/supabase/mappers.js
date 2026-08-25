@@ -1,3 +1,5 @@
+import { normalizeDateTimeLocalValue, normalizeTimeValue } from "../../utils/pcrStorage";
+
 const DISPATCH_STATUS_TO_DB = {
   Draft: "draft",
   Dispatched: "dispatched",
@@ -165,12 +167,14 @@ const PCR_EXTENDED_FIELDS = [
   "gender", "civilStatus", "address", "contactPerson", "contactAddress",
   "contactNumber", "emergencyOther", "assaultDetails", "animalBiteDetails", "ingestionItem",
   "ingestionQuantity", "fallDetails", "obstetric", "crash", "gcs", "gcsRows", "bodyMap",
+  "triage", "chiefComplaint", "vitals", "medications",
   "suspectedSpinal", "airway", "breathing", "oxygenLpm", "oxygenVia", "pulseFindings",
   "bleeding", "bleedingLocation", "bleedingControlled", "capillary", "pupils", "skin",
   "painPositive", "painScore", "painOnset", "painQuality", "painOther", "allergies",
   "medicalHistory", "medicalHistoryOther", "hospitalization", "oralIntake",
   "oralIntakeDateTime", "smoking", "alcohol", "eventsPrior", "interventions",
-  "interventionDetails", "hospitalDate", "hospitalTime", "consentForCare",
+  "interventionDetails", "hospitalName", "residentOnDuty", "transferReason",
+  "endorsedTo", "receivedBy", "hospitalDate", "hospitalTime", "consentForCare",
   "endorsementHospital", "endorsementDate", "endorsementTime", "transferArrivalTime",
   "receiverName", "receiverPosition", "receiverContact", "receiverConfirmed",
   "departureHospitalGeneratedAt", "valuables", "valuablesReceivedBy", "valuablesContact",
@@ -252,7 +256,7 @@ export function responseToApp(response = {}) {
     responseClientId: response.client_generated_id || response.id,
     responseNumber: response.response_number,
     dateOfIncident: response.date_of_incident || "",
-    timeOfIncident: response.time_of_incident || "",
+    timeOfIncident: normalizeTimeValue(response.time_of_incident),
     placeOfIncident: locationText,
     locationText,
     latitude: response.latitude ?? "",
@@ -289,12 +293,12 @@ export function dispatchToApp(row = {}) {
   const response = responseToApp(row.response || row.responses || row);
   const notesBlob = parseNotesBlob(row.notes);
   const extendedPatients = notesBlob.extended.patients || [];
-  const dispatchTime = row.dispatch_time || notesBlob.extended.dispatchedTime || notesBlob.extended.dispatchTime || "";
-  const arrivalScene = row.arrival_scene_time || notesBlob.extended.arrivalScene || notesBlob.extended.arrivalAtScene || "";
-  const departureScene = row.departure_scene_time || notesBlob.extended.departureScene || notesBlob.extended.departureAtScene || "";
-  const arrivalHospital = row.arrival_hospital_time || notesBlob.extended.arrivalHospital || notesBlob.extended.arrivalAtHospital || "";
-  const departureHospital = row.departure_hospital_time || notesBlob.extended.departureHospital || notesBlob.extended.departureAtHospital || "";
-  const arrivalOffice = row.arrival_office_time || notesBlob.extended.arrivalOffice || notesBlob.extended.arrivalAtOffice || notesBlob.extended.backToBase || "";
+  const dispatchTime = normalizeTimeValue(row.dispatch_time || notesBlob.extended.dispatchedTime || notesBlob.extended.dispatchTime);
+  const arrivalScene = normalizeTimeValue(row.arrival_scene_time || notesBlob.extended.arrivalScene || notesBlob.extended.arrivalAtScene);
+  const departureScene = normalizeTimeValue(row.departure_scene_time || notesBlob.extended.departureScene || notesBlob.extended.departureAtScene);
+  const arrivalHospital = normalizeTimeValue(row.arrival_hospital_time || notesBlob.extended.arrivalHospital || notesBlob.extended.arrivalAtHospital);
+  const departureHospital = normalizeTimeValue(row.departure_hospital_time || notesBlob.extended.departureHospital || notesBlob.extended.departureAtHospital);
+  const arrivalOffice = normalizeTimeValue(row.arrival_office_time || notesBlob.extended.arrivalOffice || notesBlob.extended.arrivalAtOffice || notesBlob.extended.backToBase);
   const hospitalName = row.hospital_name || notesBlob.extended.nameOfHospital || notesBlob.extended.hospitalName || "";
   const displayLocation = displayLocationText(
     response.barangay,
@@ -345,7 +349,13 @@ export function dispatchToApp(row = {}) {
       birthdate: patient.birthday || extendedPatients[index]?.birthdate || "",
       gender: patient.sex || extendedPatients[index]?.gender || "",
       address: patient.address || extendedPatients[index]?.address || "",
-      assessmentFindings: patient.assessment_findings || extendedPatients[index]?.assessmentFindings || "",
+      assessmentFindings: patient.assessment_findings || extendedPatients[index]?.assessmentFindings || extendedPatients[index]?.assessment || "",
+      bp: extendedPatients[index]?.bp || extendedPatients[index]?.bloodPressure || "",
+      pr: extendedPatients[index]?.pr || extendedPatients[index]?.pulse || "",
+      rr: extendedPatients[index]?.rr || extendedPatients[index]?.respiratory || "",
+      temp: extendedPatients[index]?.temp || extendedPatients[index]?.temperature || "",
+      o2Sat: extendedPatients[index]?.o2Sat || extendedPatients[index]?.o2sat || extendedPatients[index]?.oxygen || "",
+      gcs: extendedPatients[index]?.gcs || "",
       order: patient.patient_order,
     })) : extendedPatients,
   };
@@ -356,12 +366,12 @@ export function pcrToApp(row = {}) {
   const notesBlob = parseNotesBlob(row.notes);
   const extended = notesBlob.extended;
   const dispatch = row.dispatch || row.dispatch_forms || {};
-  const dispatchTime = extended.dispatchTime || extended.timeline?.dispatchTime || dispatch.dispatch_time || "";
-  const arrivalScene = extended.arrivalScene || extended.timeline?.arrivalScene || dispatch.arrival_scene_time || "";
-  const departureScene = extended.departureScene || extended.timeline?.departureScene || dispatch.departure_scene_time || "";
-  const arrivalHospital = extended.arrivalHospital || extended.timeline?.arrivalHospital || dispatch.arrival_hospital_time || "";
-  const departureHospital = extended.departureHospital || extended.timeline?.departureHospital || dispatch.departure_hospital_time || "";
-  const backToBase = row.back_to_base_time || extended.backToBase || extended.timeline?.backToBase || dispatch.arrival_office_time || "";
+  const dispatchTime = normalizeTimeValue(extended.dispatchTime || extended.timeline?.dispatchTime || dispatch.dispatch_time);
+  const arrivalScene = normalizeTimeValue(extended.arrivalScene || extended.timeline?.arrivalScene || dispatch.arrival_scene_time);
+  const departureScene = normalizeTimeValue(extended.departureScene || extended.timeline?.departureScene || dispatch.departure_scene_time);
+  const arrivalHospital = normalizeTimeValue(extended.arrivalHospital || extended.timeline?.arrivalHospital || dispatch.arrival_hospital_time);
+  const departureHospital = normalizeTimeValue(extended.departureHospital || extended.timeline?.departureHospital || dispatch.departure_hospital_time);
+  const backToBase = normalizeTimeValue(row.back_to_base_time || extended.backToBase || extended.timeline?.backToBase || dispatch.arrival_office_time);
   const displayLocation = displayLocationText(
     response.barangay,
     extended.barangay,
@@ -372,7 +382,7 @@ export function pcrToApp(row = {}) {
   );
   const vitalRows = (row.pcr_vital_signs || []).map(vital => ({
     id: vital.id,
-    time: vital.measured_time || "",
+    time: normalizeTimeValue(vital.measured_time),
     bp: vital.blood_pressure || "",
     pulse: vital.pulse_rate || "",
     respiratory: vital.respiratory_rate || "",
@@ -383,7 +393,7 @@ export function pcrToApp(row = {}) {
     id: medication.id,
     drug: medication.drug || "",
     dose: medication.dose || "",
-    dateTime: medication.given_at || "",
+    dateTime: normalizeDateTimeLocalValue(medication.given_at),
   }));
   const interventionRows = row.pcr_interventions || [];
   const attachmentRows = (row.pcr_attachments || []).map(attachment => ({
@@ -433,7 +443,7 @@ export function pcrToApp(row = {}) {
       backToBase,
     },
     triage: row.triage || extended.triage || "",
-    chiefComplaint: row.chief_complaint || response.chiefComplaint || extended.chiefComplaint || "",
+    chiefComplaint: row.chief_complaint || extended.chiefComplaint || response.chiefComplaint || "",
     emergencyTypes: row.emergency_types?.length ? row.emergency_types : extended.emergencyTypes || [],
     traumaTypes: row.trauma_types?.length ? row.trauma_types : extended.traumaTypes || [],
     incidentNature: row.incident_nature || extended.incidentNature || "",

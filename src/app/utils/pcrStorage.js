@@ -5,6 +5,36 @@ export const PCR_EDIT_KEY = "alert-cia-pcr-edit-id";
 export const newVital = () => ({ id: randomUuid(), time: "", bp: "", pulse: "", respiratory: "", temperature: "", oxygen: "" });
 export const newGcsRow = () => ({ id: randomUuid(), time: "", eye: "", verbal: "", motor: "" });
 
+export function normalizeTimeValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
+  const timeMatch = text.match(/^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+  if (timeMatch) return `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function normalizeDateValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  const dateMatch = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) return dateMatch[1];
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+export function normalizeDateTimeLocalValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  const localMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (localMatch) return `${localMatch[1]}T${localMatch[2]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 export const createPCR = () => ({
   dispatchId: null,
   id: randomUuid(), responseNumber: `PCR-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
@@ -78,6 +108,21 @@ export function synchronizePCR(record) {
     next.timeline[key] = next.timeline[key] || next[key] || "";
     next[key] = next.timeline[key] ?? next[key] ?? "";
   });
+  ["dateOfIncident", "birthday", "hospitalDate", "endorsementDate"].forEach(key => {
+    next[key] = normalizeDateValue(next[key]) || next[key] || "";
+  });
+  ["timeOfIncident", "dispatchTime", "dispatchedTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase", "hospitalTime", "endorsementTime", "transferArrivalTime"].forEach(key => {
+    next[key] = normalizeTimeValue(next[key]);
+  });
+  Object.keys(next.timeline || {}).forEach(key => {
+    if (key === "dateOfIncident") next.timeline[key] = normalizeDateValue(next.timeline[key]) || next.timeline[key] || "";
+    else if (key !== "placeOfIncident") next.timeline[key] = normalizeTimeValue(next.timeline[key]);
+  });
+  next.vitals = next.vitals.map(vital => ({ ...vital, time: normalizeTimeValue(vital.time) }));
+  next.gcsRows = next.gcsRows.map(row => ({ ...row, time: normalizeTimeValue(row.time) }));
+  next.medications = next.medications.map(medication => ({ ...medication, dateTime: normalizeDateTimeLocalValue(medication.dateTime) }));
+  next.oralIntakeDateTime = normalizeDateTimeLocalValue(next.oralIntakeDateTime);
+  next.signatureDates = Object.fromEntries(Object.entries(next.signatureDates || {}).map(([key, value]) => [key, normalizeDateTimeLocalValue(value)]));
   next.gcs = next.gcsRows?.[0] ? { ...template.gcs, ...next.gcsRows[0] } : next.gcs;
   next.timeline.endorsementTime = next.timeline.endorsementTime || next.endorsementTime || next.hospitalTime || next.arrivalHospital || "";
   if (next.arrivalHospital) {

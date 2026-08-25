@@ -59,6 +59,7 @@ function CB({ label, checked, onChange }) {
 const ASSISTANCE_OPTIONS = ["PNP", "BFP", "BRGY. OFFICIALS", "OTHERS"];
 const MEDICAL_TYPES = ["Conduction", "Transport", "Transfer", "Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
 const TRAUMA_TYPES = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Motor Vehicle Crash"];
+const VEHICLE_INVOLVED_OPTIONS = ["Bicycle", "Tricycle", "Single Motor", "Private Vehicle", "Public Utility Vehicle", "Truck", "Other"];
 const MONTH_OPTIONS = [
   ["01", "Jan"], ["02", "Feb"], ["03", "Mar"], ["04", "Apr"], ["05", "May"], ["06", "Jun"],
   ["07", "Jul"], ["08", "Aug"], ["09", "Sep"], ["10", "Oct"], ["11", "Nov"], ["12", "Dec"],
@@ -939,7 +940,10 @@ export default function DispatchModule({ onBack }) {
                 <CB label="Collision" checked={form.collision} onChange={() => update("collision", !form.collision)} />
               </div>
               <Field label="Vehicle Involved">
-                <input className={smallInput} value={form.vehicleInvolved} onChange={e => update("vehicleInvolved", e.target.value)} />
+                <select className={smallInput} value={form.vehicleInvolved} onChange={e => update("vehicleInvolved", e.target.value)}>
+                  <option value="">Select vehicle</option>
+                  {VEHICLE_INVOLVED_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                </select>
               </Field>
             </div>
           </div>
