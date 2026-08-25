@@ -168,7 +168,9 @@ export default function DispatchNavigation() {
     const pcrId = pcr?.id || pcr?.pcrId || record.linkedPcrId;
     if (pcrId) {
       sessionStorage.setItem(PCR_EDIT_KEY, pcrId);
-      navigate(`/admin/pcr/new?edit=${pcrId}`);
+      const query = new URLSearchParams({ edit: pcrId, dispatch: record.dispatchId || record.id });
+      if (record.responseId) query.set("response", record.responseId);
+      navigate(`/admin/pcr/new?${query.toString()}`);
     } else {
       navigate(`/admin/pcr/new?dispatch=${record.dispatchId || record.id}`);
     }

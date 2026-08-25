@@ -1,4 +1,4 @@
-const CACHE_NAME = "alert-cia-shell-v3";
+const CACHE_NAME = "alert-cia-shell-v4";
 const APP_SHELL = [
   "/",
   "/admin",

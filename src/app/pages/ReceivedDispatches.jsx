@@ -273,6 +273,7 @@ export default function ReceivedDispatches() {
         ? await localServerClient.acceptDispatchByResponse(localResponseId(record))
         : await acceptDispatchByResponse(record.responseId);
       const pcrId = localMode ? result.pcrId : result;
+      if (!pcrId) throw new Error("The dispatch was accepted, but its linked PCR ID was not returned.");
       if (localMode) {
         await hybridRepository.cacheAcceptedDispatch(
           { ...record, status: DISPATCH_STATUSES.PCR_IN_PROGRESS },
@@ -281,7 +282,10 @@ export default function ReceivedDispatches() {
       }
       toast.success(localMode ? "Dispatch accepted from local server. Opening offline-ready PCR." : "Dispatch accepted. Opening linked PCR report.");
       await loadRecords();
-      navigate(localMode ? `/admin/pcr/new?dispatch=${record.id}` : `/admin/pcr/new?edit=${pcrId}`);
+      const query = new URLSearchParams({ edit: pcrId, dispatch: record.dispatchId || record.id });
+      const linkedResponseId = record.responseId || localResponseId(record);
+      if (linkedResponseId) query.set("response", linkedResponseId);
+      navigate(`/admin/pcr/new?${query.toString()}`);
     } catch (requestError) {
       toast.error(requestError.message || "Unable to accept dispatch.");
     }
@@ -289,8 +293,13 @@ export default function ReceivedDispatches() {
 
   const openPCR = record => {
     const pcr = linkedPCRs[record.responseId];
-    if (pcr?.id || pcr?.pcrId) navigate(`/admin/pcr/new?edit=${pcr.id || pcr.pcrId}`);
-    else if (record.linkedPcrId) navigate(`/admin/pcr/new?edit=${record.linkedPcrId}`);
+    const linkedPcrId = pcr?.id || pcr?.pcrId || record.linkedPcrId;
+    if (linkedPcrId) {
+      const query = new URLSearchParams({ edit: linkedPcrId, dispatch: record.dispatchId || record.id });
+      const linkedResponseId = record.responseId || localResponseId(record);
+      if (linkedResponseId) query.set("response", linkedResponseId);
+      navigate(`/admin/pcr/new?${query.toString()}`);
+    }
     else navigate(`/admin/pcr/new?dispatch=${record.dispatchId || record.id}`);
   };
 

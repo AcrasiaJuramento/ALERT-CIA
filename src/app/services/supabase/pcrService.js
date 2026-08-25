@@ -1,14 +1,13 @@
 import { runSupabaseRequest, runSupabaseRequestWithMeta } from "./errors";
 import { isValidIncidentCoordinate, patientBirthdayFromRecord, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
 import { locationAssessment } from "../../utils/locationAccuracy";
-import { randomUuid } from "../../utils/uuid";
+import { firstRecordIdentifier, isUuidIdentifier, randomUuid } from "../../utils/uuid";
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIME_PATTERN = /^\d{1,2}:\d{2}(:\d{2})?$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function validUuid(value) {
-  return typeof value === "string" && UUID_PATTERN.test(value);
+  return isUuidIdentifier(value);
 }
 
 function validTime(value) {
@@ -636,7 +635,7 @@ async function resolveCloudDispatchFormId(client, record) {
 }
 
 async function ensureLanDispatchParent(client, record) {
-  if (!record.responseId || !record.dispatchId) return { data: null, error: null };
+  if (!validUuid(record.responseId) || !validUuid(record.dispatchId)) return { data: null, error: null };
   const { data: existingResponse, error: responseError } = await client
     .from("responses")
     .select("id, responding_team_id")
@@ -662,13 +661,19 @@ async function ensureLanDispatchParent(client, record) {
 
 export async function upsertPCRReport(record, { submit = false } = {}) {
   let pcrId = validUuid(record.pcrId) ? record.pcrId : validUuid(record.id) ? record.id : validUuid(record.pcrClientId) ? record.pcrClientId : randomUuid();
-  if (!record.responseId) throw new Error("Linked response ID is required before synchronizing a PCR.");
   const syncStatus = submit || record.status === "Completed" || record.status === "Submitted Locally"
     ? "Submitted"
     : record.status;
 
   return runSupabaseRequest(async client => {
-    const resolvedParent = await resolveCloudParentIds(client, record);
+    const normalizedRecord = {
+      ...record,
+      responseId: firstRecordIdentifier(record.responseId, record.responseClientId),
+      responseClientId: firstRecordIdentifier(record.responseClientId, record.responseId),
+      dispatchId: firstRecordIdentifier(record.dispatchId, record.dispatchClientId),
+      dispatchClientId: firstRecordIdentifier(record.dispatchClientId, record.dispatchId),
+    };
+    const resolvedParent = await resolveCloudParentIds(client, normalizedRecord);
     if (resolvedParent.error) return { data: null, error: resolvedParent.error };
     let syncRecord = resolvedParent.data || record;
 
@@ -686,6 +691,10 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
       const refreshedParent = await resolveCloudParentIds(client, syncRecord);
       if (refreshedParent.error) return { data: null, error: refreshedParent.error };
       syncRecord = refreshedParent.data || syncRecord;
+    }
+
+    if (!validUuid(syncRecord.responseId)) {
+      throw new Error("This PCR is not linked to a valid dispatch response. Reopen it from Received Dispatches and try again.");
     }
 
     const { data: existingByResponse, error: existingError } = await client
@@ -753,7 +762,9 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
     if (!rpcResult.error) {
       return selectCanonicalPcr(client, { pcrId: rpcResult.data.id, responseId: syncRecord.responseId });
     }
-    if (!["PGRST202", "42883", "57014"].includes(rpcResult.error.code)) {
+    const missingResponseCompatibilityError = rpcResult.error.code === "P0001"
+      && /linked response id is required/i.test(rpcResult.error.message || "");
+    if (!["PGRST202", "42883", "57014"].includes(rpcResult.error.code) && !missingResponseCompatibilityError) {
       return rpcResult;
     }
 
@@ -810,10 +821,13 @@ export async function replacePCRVitals(pcrReportId, vitals = []) {
   return runSupabaseRequest(async client => {
     const { error: deleteError } = await client.from("pcr_vital_signs").delete().eq("pcr_report_id", pcrReportId);
     if (deleteError) return { data: null, error: deleteError };
-    if (!vitals.length) return { data: [], error: null };
+    const rows = vitals.filter(vital => ["time", "bp", "pulse", "respiratory", "temperature", "oxygen"]
+      .some(key => vital?.[key] !== "" && vital?.[key] !== null && vital?.[key] !== undefined));
+    if (!rows.length) return { data: [], error: null };
 
-    return client.from("pcr_vital_signs").insert(vitals.map(vital => ({
+    return client.from("pcr_vital_signs").insert(rows.map((vital, index) => ({
       pcr_report_id: pcrReportId,
+      sequence_no: index + 1,
       measured_time: vital.time || null,
       blood_pressure: vital.bp || null,
       pulse_rate: vital.pulse || null,
@@ -831,8 +845,9 @@ export async function replacePCRMedications(pcrReportId, medications = []) {
     const rows = medications.filter(medication => medication.drug || medication.dose || medication.dateTime);
     if (!rows.length) return { data: [], error: null };
 
-    return client.from("pcr_medications").insert(rows.map(medication => ({
+    return client.from("pcr_medications").insert(rows.map((medication, index) => ({
       pcr_report_id: pcrReportId,
+      sequence_no: index + 1,
       drug: medication.drug || null,
       dose: medication.dose || null,
       given_at: validDateTimeOrNull(medication.dateTime),
@@ -862,13 +877,13 @@ export async function replacePCRAttachments(pcrReportId, attachments = []) {
   return runSupabaseRequest(async client => {
     const { error: deleteError } = await client.from("pcr_attachments").delete().eq("pcr_report_id", pcrReportId);
     if (deleteError) return { data: null, error: deleteError };
-    const rows = attachments.filter(attachment => attachment.name || attachment.fileName || attachment.data);
+    const rows = attachments.filter(attachment => attachment?.name || attachment?.fileName || attachment?.data || attachment?.storagePath || attachment?.path);
     if (!rows.length) return { data: [], error: null };
 
     return client.from("pcr_attachments").insert(rows.map(attachment => ({
       pcr_report_id: pcrReportId,
       attachment_type: attachment.type || "document",
-      storage_path: attachment.storagePath || null,
+      storage_path: attachment.storagePath || attachment.path || null,
       file_name: attachment.name || attachment.fileName || null,
       metadata: {
         id: attachment.id || null,
@@ -876,6 +891,7 @@ export async function replacePCRAttachments(pcrReportId, attachments = []) {
         location: attachment.location || null,
         capturedAt: attachment.capturedAt || null,
         data: attachment.data || null,
+        uri: attachment.storagePath || attachment.path ? null : attachment.uri || null,
       },
     }))).select("*");
   }, "Unable to save PCR attachments.");

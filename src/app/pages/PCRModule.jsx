@@ -6,13 +6,14 @@ import { AnatomyEditor, AnatomyFigure, PrintablePCR, SignaturePad } from "../com
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import { DISPATCH_EDIT_KEY } from "../utils/dispatchWorkflow";
 import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newGcsRow, newVital, normalizeTimeValue, PCR_EDIT_KEY, synchronizePCR, travelDuration, validateChronology } from "../utils/pcrStorage";
-import { getDispatchRecord, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams, resubmitReverseWorkflow, submitStandalonePCR } from "../services/supabase";
+import { getDispatchRecord, getDispatchRecordByResponse, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams, resubmitReverseWorkflow, submitStandalonePCR } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import { hybridRepository } from "../api/hybrid-client";
 import { localServerClient } from "../api/local-server-client";
 import { getConnectionState } from "../network/connection-manager";
-import { randomUuid } from "../utils/uuid";
+import { firstRecordIdentifier, normalizeRecordIdentifier, randomUuid } from "../utils/uuid";
 import { formatDateAndTime, formatLongDate } from "../utils/dateFormat";
+import { mergePcrSources, pcrSeedFromDispatch as mapDispatchToPcr } from "../utils/pcrDispatchMapping";
 import { toast } from "sonner";
 
 const steps = [["Response & Patient", <Shield key="shield"/>], ["Assessment", <Activity key="activity"/>], ["Clinical Details", <User key="user"/>], ["Treatment & Handover", <ClipboardList key="clipboard"/>], ["Review & Export", <FileText key="file"/>]];
@@ -339,6 +340,11 @@ function selectedIncidentTypes(dispatch = {}) {
 }
 
 function pcrSeedFromDispatch(dispatch = {}, pcrShell = {}, freshPcr = createPCR()) {
+  try {
+    return mapDispatchToPcr(dispatch, pcrShell, freshPcr);
+  } catch (mappingError) {
+    console.warn("Unable to apply the canonical dispatch-to-PCR mapping; using compatibility mapping.", mappingError);
+  }
   const patient = dispatch.patients?.[0] || {};
   const selectedTypes = selectedIncidentTypes(dispatch);
   const seededEmergencyTypes = emergencyTypes.filter(type => selectedTypes.includes(type));
@@ -485,7 +491,7 @@ function DetailedPCRReview({ record, onClose }) {
 }
 
 export default function PCRModule() {
-  const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const editId = params.get("edit") || sessionStorage.getItem(PCR_EDIT_KEY); const dispatchId = params.get("dispatch"); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState(""); const [savingStatus, setSavingStatus] = useState("");
+  const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const dispatchId = normalizeRecordIdentifier(params.get("dispatch")); const responseId = normalizeRecordIdentifier(params.get("response")); const editId = normalizeRecordIdentifier(params.get("edit") || (!dispatchId ? sessionStorage.getItem(PCR_EDIT_KEY) : null)); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState(""); const [savingStatus, setSavingStatus] = useState("");
   const [draftReady, setDraftReady] = useState(false);
   const draftKey = useMemo(() => pcrFormDraftKey({ editId, dispatchId }), [dispatchId, editId]);
   const [teamOptions, setTeamOptions] = useState(() => readPcrReferenceCache().teams);
@@ -522,11 +528,7 @@ export default function PCRModule() {
       const draft = readPcrFormDraft(draftKey);
       if (!draft?.form) return synchronizePCR(baseForm);
       if (Number.isInteger(draft.step)) setStep(Math.max(0, Math.min(steps.length - 1, draft.step)));
-      return synchronizePCR({
-        ...baseForm,
-        ...draft.form,
-        timeline: { ...(baseForm.timeline || {}), ...(draft.form.timeline || {}) },
-      });
+      return synchronizePCR(mergePcrSources(baseForm, draft.form));
     };
     async function loadPCR() {
       if (!editId && !dispatchId) {
@@ -538,32 +540,54 @@ export default function PCRModule() {
       }
       setLoading(true);
       try {
+        const localMode = getConnectionState().mode === "local";
+        const loadCachedDispatchByResponse = async linkedResponseId => {
+          if (!linkedResponseId) return null;
+          const cached = await hybridRepository.getLocalDispatchRecords().catch(() => []);
+          return cached.find(item => item.responseId === linkedResponseId || item.responseClientId === linkedResponseId) || null;
+        };
+        const loadLinkedDispatch = async (linkedDispatchId, linkedResponseId) => {
+          let dispatch = null;
+          if (linkedDispatchId) {
+            dispatch = localMode
+              ? await localServerClient.getDispatch(linkedDispatchId).catch(() => null)
+              : await getDispatchRecord(linkedDispatchId).catch(() => null);
+            if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(linkedDispatchId).catch(() => null);
+            if (!dispatch && getConnectionState().localOnline) dispatch = await localServerClient.getDispatch(linkedDispatchId).catch(() => null);
+          }
+          if (!dispatch && linkedResponseId && !localMode) dispatch = await getDispatchRecordByResponse(linkedResponseId).catch(() => null);
+          if (!dispatch) dispatch = await loadCachedDispatchByResponse(linkedResponseId);
+          return dispatch;
+        };
         if (editId) {
-          const localMode = getConnectionState().mode === "local";
           let record = localMode
-            ? await localServerClient.getPcr(editId)
+            ? await localServerClient.getPcr(editId).catch(() => null)
             : await getPCRReport(editId).catch(() => null);
           if (!record) record = await hybridRepository.getLocalPcrReport(editId).catch(() => null);
           if (!record && getConnectionState().localOnline) {
             record = await localServerClient.getPcr(editId).catch(() => null);
           }
-          if (mounted && record) {
-            setForm(restoreLocalDraft({ ...createPCR(), ...record, timeline: record.timeline || {} }));
-            if (record.dispatchId) {
-              let dispatch = localMode
-                ? await localServerClient.getDispatch(record.dispatchId).catch(() => null)
-                : await getDispatchRecord(record.dispatchId).catch(() => null);
-              if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(record.dispatchId).catch(() => null);
-              if (!dispatch && getConnectionState().localOnline) {
-                dispatch = await localServerClient.getDispatch(record.dispatchId).catch(() => null);
-              }
-              setLinkedDispatch(dispatch);
-            }
+          if (!record && responseId) {
+            record = localMode
+              ? await localServerClient.getPcrByResponse(responseId).catch(() => null)
+              : await getPCRReportByResponse(responseId).catch(() => null);
+          }
+          const linkedResponseId = firstRecordIdentifier(record?.responseId, responseId);
+          const dispatch = await loadLinkedDispatch(firstRecordIdentifier(dispatchId, record?.dispatchId), linkedResponseId);
+          if (mounted && (record || dispatch)) {
+            const freshPcr = createPCR();
+            const shell = record || { id: editId, pcrId: editId, responseId: linkedResponseId, status: "In Progress" };
+            const seeded = dispatch
+              ? mergePcrSources(pcrSeedFromDispatch(dispatch, shell, freshPcr), shell)
+              : mergePcrSources(freshPcr, shell);
+            setLinkedDispatch(dispatch);
+            setForm(restoreLocalDraft(seeded));
+          } else if (mounted) {
+            throw new Error("This Patient Care Report and its linked dispatch could not be loaded.");
           }
         } else if (dispatchId) {
-          const localMode = getConnectionState().mode === "local";
           let dispatch = localMode
-            ? await localServerClient.getDispatch(dispatchId)
+            ? await localServerClient.getDispatch(dispatchId).catch(() => null)
             : await getDispatchRecord(dispatchId).catch(() => null);
           if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(dispatchId).catch(() => null);
           if (!dispatch && getConnectionState().localOnline) {
@@ -615,7 +639,7 @@ export default function PCRModule() {
     return () => {
       mounted = false;
     };
-  }, [dispatchId, draftKey, editId]);
+  }, [dispatchId, draftKey, editId, responseId]);
   useEffect(() => {
     if (!draftReady || loading) return;
     writePcrFormDraft(draftKey, form, step);
@@ -846,6 +870,10 @@ export default function PCRModule() {
         : { ...(form.timeline || {}), backToBase: preserveReturnedCompletion ? form.timeline?.backToBase || form.backToBase : "" };
       const payload = {
         ...form,
+        responseId: firstRecordIdentifier(form.responseId, linkedDispatch?.responseId, responseId),
+        responseClientId: firstRecordIdentifier(form.responseClientId, linkedDispatch?.responseClientId, linkedDispatch?.responseId, responseId),
+        dispatchId: firstRecordIdentifier(form.dispatchId, linkedDispatch?.dispatchId, linkedDispatch?.id, dispatchId),
+        dispatchClientId: firstRecordIdentifier(form.dispatchClientId, linkedDispatch?.dispatchClientId, linkedDispatch?.dispatchId, linkedDispatch?.id, dispatchId),
         status: reverseSubmit ? "Draft" : status,
         id: form.id || randomUuid(),
         timeline: submitTimeline,

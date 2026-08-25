@@ -380,8 +380,14 @@ export function pcrToApp(row = {}) {
     response.locationText,
     response.placeOfIncident,
   );
-  const vitalRows = (row.pcr_vital_signs || []).map(vital => ({
+  const childRowOrder = (left, right) => {
+    const sequenceOrder = (left.sequence_no ?? Number.MAX_SAFE_INTEGER) - (right.sequence_no ?? Number.MAX_SAFE_INTEGER);
+    if (sequenceOrder) return sequenceOrder;
+    return String(left.created_at || left.id || "").localeCompare(String(right.created_at || right.id || ""));
+  };
+  const vitalRows = (row.pcr_vital_signs || []).slice().sort(childRowOrder).map(vital => ({
     id: vital.id,
+    sequenceNo: vital.sequence_no ?? null,
     time: normalizeTimeValue(vital.measured_time),
     bp: vital.blood_pressure || "",
     pulse: vital.pulse_rate || "",
@@ -389,8 +395,9 @@ export function pcrToApp(row = {}) {
     temperature: vital.temperature || "",
     oxygen: vital.oxygen_saturation || "",
   }));
-  const medicationRows = (row.pcr_medications || []).map(medication => ({
+  const medicationRows = (row.pcr_medications || []).slice().sort(childRowOrder).map(medication => ({
     id: medication.id,
+    sequenceNo: medication.sequence_no ?? null,
     drug: medication.drug || "",
     dose: medication.dose || "",
     dateTime: normalizeDateTimeLocalValue(medication.given_at),
@@ -399,12 +406,15 @@ export function pcrToApp(row = {}) {
   const attachmentRows = (row.pcr_attachments || []).map(attachment => ({
     id: attachment.metadata?.id || attachment.id,
     name: attachment.file_name || "",
+    path: attachment.storage_path || "",
     type: attachment.attachment_type || "document",
     size: attachment.metadata?.size || "",
     location: attachment.metadata?.location || null,
     capturedAt: attachment.metadata?.capturedAt || attachment.created_at || "",
     storagePath: attachment.storage_path || "",
     data: attachment.metadata?.data || "",
+    uri: attachment.metadata?.uri || attachment.metadata?.data || "",
+    metadata: attachment.metadata || {},
   }));
   return {
     ...response,
@@ -443,7 +453,7 @@ export function pcrToApp(row = {}) {
       backToBase,
     },
     triage: row.triage || extended.triage || "",
-    chiefComplaint: row.chief_complaint || extended.chiefComplaint || response.chiefComplaint || "",
+    chiefComplaint: row.chief_complaint || response.chiefComplaint || extended.chiefComplaint || "",
     emergencyTypes: row.emergency_types?.length ? row.emergency_types : extended.emergencyTypes || [],
     traumaTypes: row.trauma_types?.length ? row.trauma_types : extended.traumaTypes || [],
     incidentNature: row.incident_nature || extended.incidentNature || "",
