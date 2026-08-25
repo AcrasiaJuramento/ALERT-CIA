@@ -11,6 +11,12 @@ export function subscribePwaUpdates(listener) {
 
 export async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
+  let reloadingForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForUpdate) return;
+    reloadingForUpdate = true;
+    window.location.reload();
+  });
   const registration = await navigator.serviceWorker.register("/sw.js");
   if (registration.waiting) emit({ updateAvailable: true, registration });
   registration.addEventListener("updatefound", () => {
@@ -26,5 +32,4 @@ export async function registerServiceWorker() {
 
 export function activateWaitingServiceWorker(registration) {
   registration?.waiting?.postMessage({ type: "SKIP_WAITING" });
-  window.location.reload();
 }

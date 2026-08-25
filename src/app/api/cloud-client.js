@@ -5,32 +5,16 @@ import {
   updateDispatchRecord,
 } from "../services/supabase/dispatchService";
 import { createIncident } from "../services/supabase/incidentService";
-import { replacePCRAttachments, replacePCRInterventions, replacePCRMedications, replacePCRVitals, upsertPCRReport } from "../services/supabase/pcrService";
-import { randomUuid } from "../utils/uuid";
-
-function hasMeaningfulVitalRows(vitals = []) {
-  return vitals.some(vital => vital?.time || vital?.bp || vital?.pulse || vital?.respiratory || vital?.temperature || vital?.oxygen);
-}
-
-function hasMeaningfulMedicationRows(medications = []) {
-  return medications.some(medication => medication?.drug || medication?.dose || medication?.dateTime);
-}
-
-function hasMeaningfulInterventions(interventions = {}) {
-  return Object.values(interventions || {}).some(Boolean);
-}
-
-function hasMeaningfulAttachments(attachments = []) {
-  return attachments.some(attachment => attachment?.name || attachment?.fileName || attachment?.data || attachment?.storagePath);
-}
+import { getPCRReport, replacePCRAttachments, replacePCRInterventions, replacePCRMedications, replacePCRVitals, upsertPCRReport } from "../services/supabase/pcrService";
+import { firstRecordIdentifier, isUuidIdentifier, randomUuid } from "../utils/uuid";
 
 async function replacePCRChildRows(pcrId, payload) {
-  const replacements = [];
-  if (hasMeaningfulVitalRows(payload.vitals || [])) replacements.push(replacePCRVitals(pcrId, payload.vitals));
-  if (hasMeaningfulMedicationRows(payload.medications || [])) replacements.push(replacePCRMedications(pcrId, payload.medications));
-  if (hasMeaningfulInterventions(payload.interventions || {})) replacements.push(replacePCRInterventions(pcrId, payload.interventions, payload.interventionDetails || {}));
-  if (hasMeaningfulAttachments(payload.attachments || [])) replacements.push(replacePCRAttachments(pcrId, payload.attachments));
-  await Promise.all(replacements);
+  await Promise.all([
+    replacePCRVitals(pcrId, payload.vitals || []),
+    replacePCRMedications(pcrId, payload.medications || []),
+    replacePCRInterventions(pcrId, payload.interventions || {}, payload.interventionDetails || {}),
+    replacePCRAttachments(pcrId, payload.attachments || []),
+  ]);
 }
 
 function latestVital(payload = {}) {
@@ -68,11 +52,11 @@ function manualDispatchShellFromPcr(payload) {
   const vital = latestVital(payload);
   const vehicleRole = patientVehicleRole(payload.crash);
   return {
-    id: payload.dispatchId || payload.dispatchClientId || randomUuid(),
-    dispatchId: payload.dispatchId || payload.dispatchClientId || undefined,
-    dispatchClientId: payload.dispatchClientId || payload.dispatchId || undefined,
-    responseId: payload.responseId || payload.responseClientId || randomUuid(),
-    responseClientId: payload.responseClientId || payload.responseId || undefined,
+    id: firstRecordIdentifier(payload.dispatchId, payload.dispatchClientId) || randomUuid(),
+    dispatchId: firstRecordIdentifier(payload.dispatchId, payload.dispatchClientId) || undefined,
+    dispatchClientId: firstRecordIdentifier(payload.dispatchClientId, payload.dispatchId) || undefined,
+    responseId: firstRecordIdentifier(payload.responseId, payload.responseClientId) || randomUuid(),
+    responseClientId: firstRecordIdentifier(payload.responseClientId, payload.responseId) || undefined,
     responseNumber: payload.responseNumber,
     status: payload.status === "Draft" ? "PCR In Progress" : "Submitted",
     dateOfIncident: payload.dateOfIncident || payload.timeline?.dateOfIncident,
@@ -155,11 +139,22 @@ function manualDispatchShellFromPcr(payload) {
 }
 
 async function ensureManualPcrParent(payload) {
-  if (payload.workflowOrigin === "reverse" && payload.responseId) return payload;
-  if (payload.responseId && payload.dispatchId) return payload;
-  const dispatch = await createDispatchRecord(manualDispatchShellFromPcr(payload));
-  return {
+  const responseId = firstRecordIdentifier(payload.responseId, payload.responseClientId);
+  const dispatchId = firstRecordIdentifier(payload.dispatchId, payload.dispatchClientId);
+  const normalizedPayload = {
     ...payload,
+    responseId,
+    responseClientId: firstRecordIdentifier(payload.responseClientId, responseId),
+    dispatchId,
+    dispatchClientId: firstRecordIdentifier(payload.dispatchClientId, dispatchId),
+  };
+  if (payload.workflowOrigin === "reverse" && isUuidIdentifier(responseId)) return normalizedPayload;
+  // A dispatch-only link is recoverable by upsertPCRReport. Do not create a
+  // second manual dispatch for a PCR that already belongs to one.
+  if (dispatchId || responseId) return normalizedPayload;
+  const dispatch = await createDispatchRecord(manualDispatchShellFromPcr(normalizedPayload));
+  return {
+    ...normalizedPayload,
     responseId: dispatch.responseId,
     responseClientId: dispatch.responseClientId || dispatch.responseId,
     dispatchId: dispatch.dispatchId || dispatch.id,
@@ -181,13 +176,13 @@ export const cloudClient = {
     const parentedPayload = await ensureManualPcrParent(payload);
     const saved = await upsertPCRReport(parentedPayload);
     await replacePCRChildRows(saved.id, payload);
-    return saved;
+    return getPCRReport(saved.id);
   },
   async submitPcr(payload) {
     const parentedPayload = await ensureManualPcrParent(payload);
     const saved = await upsertPCRReport(parentedPayload, { submit: true });
     await replacePCRChildRows(saved.id, payload);
-    return saved;
+    return getPCRReport(saved.id);
   },
   async submitPcrHeader(payload) {
     const parentedPayload = await ensureManualPcrParent(payload);

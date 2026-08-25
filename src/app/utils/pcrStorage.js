@@ -1,9 +1,39 @@
-import { randomUuid } from "./uuid";
+import { randomUuid } from "./uuid.js";
 
 export const PCR_EDIT_KEY = "alert-cia-pcr-edit-id";
 
 export const newVital = () => ({ id: randomUuid(), time: "", bp: "", pulse: "", respiratory: "", temperature: "", oxygen: "" });
 export const newGcsRow = () => ({ id: randomUuid(), time: "", eye: "", verbal: "", motor: "" });
+
+export function normalizeTimeValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return "";
+  const timeMatch = text.match(/^(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/);
+  if (timeMatch) return `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function normalizeDateValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  const dateMatch = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateMatch) return dateMatch[1];
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+}
+
+export function normalizeDateTimeLocalValue(value) {
+  if (!value) return "";
+  const text = String(value).trim();
+  const localMatch = text.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+  if (localMatch) return `${localMatch[1]}T${localMatch[2]}`;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
 
 export const createPCR = () => ({
   dispatchId: null,
@@ -39,55 +69,112 @@ export const createPCR = () => ({
   signatureDates: { patient: "", witness1: "", witness2: "" }, annotation: "", attachments: [], notes: ""
 });
 
+function asObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function firstValue(...values) {
+  return values.find(value => value !== null && value !== undefined && String(value).trim() !== "") ?? "";
+}
+
+function normalizePainScore(value) {
+  if (value === "" || value === null || value === undefined) return "";
+  const score = Number(value);
+  return Number.isFinite(score) ? String(Math.min(10, Math.max(0, Math.trunc(score)))) : "";
+}
+
 export function synchronizePCR(record) {
+  const source = asObject(record);
   const template = createPCR();
+  const rawGcsRows = asArray(source.gcsRows);
+  const sourceGcsRows = rawGcsRows.filter(row =>
+    ["time", "eye", "verbal", "motor"].some(key => String(row?.[key] ?? "").trim()),
+  );
+  const fallbackGcsRows = Object.values(asObject(source.gcs)).some(Boolean)
+    ? [{ id: randomUuid(), ...template.gcs, ...asObject(source.gcs) }]
+    : template.gcsRows;
+  const gcsRows = (sourceGcsRows.length ? rawGcsRows : fallbackGcsRows)
+    .map(row => ({ id: row.id || randomUuid(), ...template.gcs, ...asObject(row) }));
   const next = {
     ...template,
-    ...record,
-    timeline: { ...template.timeline, ...(record.timeline || {}) },
-    obstetric: { ...template.obstetric, ...(record.obstetric || {}) },
-    crash: { ...template.crash, ...(record.crash || {}) },
-    gcs: { ...template.gcs, ...(record.gcs || {}) },
-    bodyMap: { ...template.bodyMap, ...(record.bodyMap || {}), marks: record.bodyMap?.marks || template.bodyMap.marks },
-    allergies: { ...template.allergies, ...(record.allergies || {}) },
-    hospitalization: { ...template.hospitalization, ...(record.hospitalization || {}) },
-    smoking: { ...template.smoking, ...(record.smoking || {}) },
-    alcohol: { ...template.alcohol, ...(record.alcohol || {}) },
-    signatures: { ...template.signatures, ...(record.signatures || {}) },
-    signatureNames: { ...template.signatureNames, ...(record.signatureNames || {}) },
-    signatureDates: { ...template.signatureDates, ...(record.signatureDates || {}) },
-    vitals: record.vitals?.length ? record.vitals : template.vitals,
-    gcsRows: record.gcsRows?.length ? record.gcsRows : record.gcs && Object.values(record.gcs).some(Boolean) ? [{ id: randomUuid(), ...template.gcs, ...record.gcs }] : template.gcsRows,
-    emergencyTypes: record.emergencyTypes || template.emergencyTypes,
-    traumaTypes: record.traumaTypes || template.traumaTypes,
-    airway: record.airway || template.airway,
-    breathing: record.breathing || template.breathing,
-    pulseFindings: record.pulseFindings || template.pulseFindings,
-    pupils: record.pupils || template.pupils,
-    skin: record.skin || template.skin,
-    painQuality: record.painQuality || template.painQuality,
-    medications: record.medications?.length ? record.medications : template.medications,
-    medicalHistory: record.medicalHistory || template.medicalHistory,
-    interventions: record.interventions || template.interventions,
-    interventionDetails: record.interventionDetails || template.interventionDetails,
-    attachments: record.attachments || template.attachments,
+    ...source,
+    timeline: { ...template.timeline, ...asObject(source.timeline) },
+    obstetric: { ...template.obstetric, ...asObject(source.obstetric) },
+    crash: { ...template.crash, ...asObject(source.crash) },
+    bodyMap: { ...template.bodyMap, ...asObject(source.bodyMap), marks: asArray(source.bodyMap?.marks) },
+    allergies: { ...template.allergies, ...asObject(source.allergies) },
+    hospitalization: { ...template.hospitalization, ...asObject(source.hospitalization) },
+    smoking: { ...template.smoking, ...asObject(source.smoking) },
+    alcohol: { ...template.alcohol, ...asObject(source.alcohol) },
+    signatures: { ...template.signatures, ...asObject(source.signatures) },
+    signatureNames: { ...template.signatureNames, ...asObject(source.signatureNames) },
+    signatureDates: { ...template.signatureDates, ...asObject(source.signatureDates) },
+    vitals: (asArray(source.vitals).length ? source.vitals : template.vitals).map(vital => ({ id: vital?.id || randomUuid(), ...newVital(), ...asObject(vital) })),
+    gcsRows,
+    emergencyTypes: asArray(source.emergencyTypes),
+    traumaTypes: asArray(source.traumaTypes),
+    airway: asArray(source.airway),
+    breathing: asArray(source.breathing),
+    pulseFindings: asArray(source.pulseFindings),
+    pupils: asArray(source.pupils),
+    skin: asArray(source.skin),
+    painQuality: asArray(source.painQuality),
+    medications: (asArray(source.medications).length ? source.medications : template.medications).map(medication => ({ drug: "", dose: "", dateTime: "", ...asObject(medication) })),
+    medicalHistory: asArray(source.medicalHistory),
+    interventions: asObject(source.interventions),
+    interventionDetails: asObject(source.interventionDetails),
+    attachments: asArray(source.attachments),
   };
-  next.dispatchTime = next.dispatchTime || next.dispatchedTime || next.timeline?.dispatchTime || "";
-  next.dispatchedTime = next.dispatchedTime || next.dispatchTime;
+  next.dispatchTime = firstValue(source.dispatchTime, source.dispatchedTime, source.timeline?.dispatchTime);
+  next.dispatchedTime = firstValue(source.dispatchedTime, next.dispatchTime);
   ["dateOfIncident", "timeOfIncident", "placeOfIncident", "dispatchTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase"].forEach(key => {
-    next.timeline[key] = next.timeline[key] || next[key] || "";
-    next[key] = next.timeline[key] ?? next[key] ?? "";
+    const value = firstValue(source[key], source.timeline?.[key], next[key], next.timeline[key]);
+    next[key] = value;
+    next.timeline[key] = value;
   });
-  next.gcs = next.gcsRows?.[0] ? { ...template.gcs, ...next.gcsRows[0] } : next.gcs;
-  next.timeline.endorsementTime = next.timeline.endorsementTime || next.endorsementTime || next.hospitalTime || next.arrivalHospital || "";
+  ["dateOfIncident", "birthday", "hospitalDate", "endorsementDate"].forEach(key => {
+    next[key] = normalizeDateValue(next[key]) || next[key] || "";
+  });
+  ["timeOfIncident", "dispatchTime", "dispatchedTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase", "hospitalTime", "endorsementTime", "transferArrivalTime"].forEach(key => {
+    next[key] = normalizeTimeValue(next[key]);
+  });
+  Object.keys(next.timeline || {}).forEach(key => {
+    if (key === "dateOfIncident") next.timeline[key] = normalizeDateValue(next.timeline[key]) || next.timeline[key] || "";
+    else if (key !== "placeOfIncident") next.timeline[key] = normalizeTimeValue(next.timeline[key]);
+  });
+  next.vitals = next.vitals.map(vital => ({ ...vital, time: normalizeTimeValue(vital.time) }));
+  next.gcsRows = next.gcsRows.map(row => ({ ...row, time: normalizeTimeValue(row.time) }));
+  next.medications = next.medications.map(medication => ({ ...medication, dateTime: normalizeDateTimeLocalValue(medication.dateTime) }));
+  next.oralIntakeDateTime = normalizeDateTimeLocalValue(next.oralIntakeDateTime);
+  next.signatureDates = Object.fromEntries(Object.entries(next.signatureDates || {}).map(([key, value]) => [key, normalizeDateTimeLocalValue(value)]));
+  const latestGcs = [...next.gcsRows].reverse().find(row => ["time", "eye", "verbal", "motor"].some(key => String(row?.[key] ?? "").trim())) || next.gcsRows[next.gcsRows.length - 1];
+  next.gcs = { ...template.gcs, ...asObject(source.gcs), ...asObject(latestGcs) };
+  const hospitalArrival = firstValue(source.arrivalHospital, source.timeline?.arrivalHospital, source.transferArrivalTime, source.hospitalTime, source.endorsementTime, source.timeline?.endorsementTime);
+  const endorsementTime = firstValue(source.endorsementTime, source.timeline?.endorsementTime, source.hospitalTime, hospitalArrival);
+  next.arrivalHospital = normalizeTimeValue(hospitalArrival);
+  next.timeline.arrivalHospital = next.arrivalHospital;
+  next.endorsementTime = normalizeTimeValue(endorsementTime);
+  next.timeline.endorsementTime = next.endorsementTime;
+  next.hospitalTime = normalizeTimeValue(firstValue(source.hospitalTime, next.arrivalHospital));
+  next.transferArrivalTime = normalizeTimeValue(firstValue(source.transferArrivalTime, next.arrivalHospital));
   if (next.arrivalHospital) {
-    next.hospitalTime = next.arrivalHospital;
-    next.endorsementTime = next.arrivalHospital;
-    next.timeline.endorsementTime = next.arrivalHospital;
-    next.transferArrivalTime = next.arrivalHospital;
     next.hospitalDate = next.hospitalDate || next.dateOfIncident;
     next.endorsementDate = next.endorsementDate || next.dateOfIncident;
   }
+  const birthday = firstValue(source.birthday, source.birthdate);
+  const [birthYear = "", birthMonth = "", birthDay = ""] = birthday.split("-");
+  next.birthday = birthday;
+  next.birthYear = firstValue(source.birthYear, birthYear);
+  next.birthMonth = firstValue(source.birthMonth, birthMonth);
+  next.birthDay = firstValue(source.birthDay, birthDay);
+  next.painScore = normalizePainScore(source.painScore);
+  next.receiverConfirmed = Boolean(source.receiverConfirmed);
+  next.waiverAccepted = Boolean(source.waiverAccepted);
+  if (next.notes && typeof next.notes === "object") next.notes = String(next.notes.text || "");
   return next;
 }
 
