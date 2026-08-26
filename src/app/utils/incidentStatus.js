@@ -8,6 +8,7 @@ export const INCIDENT_STATUS = {
   ACCEPTED_BY_RESPONDING_TEAM: 'accepted_by_responding_team',
   PCR_IN_PROGRESS: 'pcr_in_progress',
   PCR_COMPLETED: 'pcr_completed',
+  PENDING_ADMIN_VERIFICATION: 'pending_admin_verification',
   CANCELLED: 'cancelled',
   SCRAPED: 'scraped',
 };
@@ -30,6 +31,7 @@ const STATUS_LABELS = {
   [INCIDENT_STATUS.ACCEPTED_BY_RESPONDING_TEAM]: 'Accepted by responding team',
   [INCIDENT_STATUS.PCR_IN_PROGRESS]: 'PCR in progress',
   [INCIDENT_STATUS.PCR_COMPLETED]: 'PCR completed',
+  [INCIDENT_STATUS.PENDING_ADMIN_VERIFICATION]: 'Admin pending verification',
   [INCIDENT_STATUS.CANCELLED]: 'Cancelled',
   [INCIDENT_STATUS.SCRAPED]: 'Scraped',
 };

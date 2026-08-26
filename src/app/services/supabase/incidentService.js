@@ -114,6 +114,11 @@ function incidentToApp(row = {}) {
     barangay: barangayName,
     classification,
     subtype: row.subtype || "",
+    natureOfCall: row.pcrNatureOfCall || descriptionParts.extended.natureOfCall || "",
+    incidentNature: row.pcrIncidentNature || descriptionParts.extended.incidentNature || "",
+    natureTypes: asRows(descriptionParts.extended.natureTypes),
+    emergencyTypes: [...new Set([...asRows(row.pcrEmergencyTypes), ...asRows(descriptionParts.extended.emergencyTypes)])],
+    traumaTypes: [...new Set([...asRows(row.pcrTraumaTypes), ...asRows(descriptionParts.extended.traumaTypes)])],
     priority,
     type: classification === "mvc" ? "vehicular" : classification,
     triage: row.pcrTriage || descriptionParts.extended.triage || "",
@@ -136,6 +141,7 @@ function incidentToApp(row = {}) {
     externalSourceUrl: row.external_source_url || "",
     scraperRecordId: row.scraper_record_id || null,
     status,
+    workflowStatus: row.workflowStatus || status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     locationPrecision: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "official_incident_pin" : "unknown",
@@ -167,35 +173,92 @@ async function casualtyCountsByResponse(responseIds = []) {
   }
 }
 
-async function pcrTriageByResponse(responseIds = []) {
+async function pcrMetadataByResponse(responseIds = []) {
   const ids = [...new Set(responseIds.filter(Boolean))];
   if (!ids.length) return new Map();
   try {
     const rows = await runSupabaseRequest(client =>
       client
         .from("pcr_reports")
-        .select("response_id, triage, updated_at, created_at")
+        .select("response_id, status, triage, emergency_types, trauma_types, incident_nature, notes, updated_at, created_at")
         .in("response_id", ids)
         .is("deleted_at", null)
         .limit(5000),
-    "Unable to load PCR triage values.");
+    "Unable to load PCR incident metadata.");
 
     const byResponse = new Map();
     asRows(rows).forEach(row => {
-      if (!row.response_id || !row.triage) return;
-      const current = byResponse.get(row.response_id);
+      if (!row.response_id) return;
+      const notes = parseDescription(row.notes);
+      const current = byResponse.get(row.response_id) || {
+        triage: "",
+        emergencyTypes: [],
+        traumaTypes: [],
+        natureOfCall: "",
+        incidentNature: "",
+        statuses: [],
+        updatedAt: 0,
+      };
       const nextRank = triageRank(row.triage);
-      const currentRank = triageRank(current?.triage);
+      const currentRank = triageRank(current.triage);
       const nextUpdated = new Date(row.updated_at || row.created_at || 0).getTime();
-      const currentUpdated = new Date(current?.updated_at || current?.created_at || 0).getTime();
-      if (!current || nextRank > currentRank || (nextRank === currentRank && nextUpdated > currentUpdated)) {
-        byResponse.set(row.response_id, row);
-      }
+      const isLatest = nextUpdated >= current.updatedAt;
+      byResponse.set(row.response_id, {
+        triage: nextRank > currentRank || (nextRank === currentRank && isLatest) ? row.triage || current.triage : current.triage,
+        emergencyTypes: [...new Set([
+          ...current.emergencyTypes,
+          ...asRows(row.emergency_types),
+          ...asRows(notes.extended.emergencyTypes),
+        ])],
+        traumaTypes: [...new Set([
+          ...current.traumaTypes,
+          ...asRows(row.trauma_types),
+          ...asRows(notes.extended.traumaTypes),
+        ])],
+        natureOfCall: isLatest ? notes.extended.natureOfCall || current.natureOfCall : current.natureOfCall,
+        incidentNature: isLatest ? row.incident_nature || notes.extended.incidentNature || current.incidentNature : current.incidentNature,
+        statuses: [...new Set([...current.statuses, row.status].filter(Boolean))],
+        updatedAt: Math.max(current.updatedAt, nextUpdated),
+      });
     });
-    return new Map([...byResponse.entries()].map(([responseId, row]) => [responseId, row.triage]));
+    return byResponse;
   } catch {
     return new Map();
   }
+}
+
+async function dispatchStatusesByResponse(responseIds = []) {
+  const ids = [...new Set(responseIds.filter(Boolean))];
+  if (!ids.length) return new Map();
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("dispatch_forms")
+        .select("response_id, status")
+        .in("response_id", ids)
+        .is("deleted_at", null)
+        .limit(5000),
+    "Unable to load dispatch workflow statuses.");
+
+    const byResponse = new Map();
+    asRows(rows).forEach(row => {
+      if (!row.response_id || !row.status) return;
+      byResponse.set(row.response_id, [...new Set([...(byResponse.get(row.response_id) || []), row.status])]);
+    });
+    return byResponse;
+  } catch {
+    return new Map();
+  }
+}
+
+function workflowStatus(incidentStatus, pcrMetadata = {}, dispatchStatuses = []) {
+  const statuses = [...(pcrMetadata.statuses || []), ...dispatchStatuses];
+  if (statuses.includes("pending_admin_verification")) return "pending_admin_verification";
+  if (
+    incidentStatus === "pcr_completed"
+    || statuses.some(status => ["pcr_completed", "submitted", "completed", "verified"].includes(status))
+  ) return "pcr_completed";
+  return incidentStatus;
 }
 
 function incidentPayload(record = {}, barangayId) {
@@ -302,15 +365,24 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
 
   const baseRows = asRows(data);
   const responseIds = baseRows.map(row => row.response_id);
-  const [casualtiesByResponse, triageByResponse] = await Promise.all([
+  const [casualtiesByResponse, pcrMetadataByResponseId, dispatchStatusesByResponseId] = await Promise.all([
     casualtyCountsByResponse(responseIds),
-    pcrTriageByResponse(responseIds),
+    pcrMetadataByResponse(responseIds),
+    dispatchStatusesByResponse(responseIds),
   ]);
-  const rows = baseRows.map(row => incidentToApp({
-    ...row,
-    casualties: casualtiesByResponse.get(row.response_id) || 0,
-    pcrTriage: triageByResponse.get(row.response_id) || "",
-  }));
+  const rows = baseRows.map(row => {
+    const pcrMetadata = pcrMetadataByResponseId.get(row.response_id) || {};
+    return incidentToApp({
+      ...row,
+      casualties: casualtiesByResponse.get(row.response_id) || 0,
+      pcrTriage: pcrMetadata.triage || "",
+      pcrEmergencyTypes: pcrMetadata.emergencyTypes || [],
+      pcrTraumaTypes: pcrMetadata.traumaTypes || [],
+      pcrNatureOfCall: pcrMetadata.natureOfCall || "",
+      pcrIncidentNature: pcrMetadata.incidentNature || "",
+      workflowStatus: workflowStatus(row.status, pcrMetadata, dispatchStatusesByResponseId.get(row.response_id) || []),
+    });
+  });
   rows.totalCount = count ?? rows.length;
   return rows;
 }
@@ -341,13 +413,16 @@ export async function listPublicIncidentMapRecords({ limit = 150, from = 0, stat
   }, "Unable to load public incident records.");
 
   const baseRows = asRows(rows);
-  const triageByResponse = await pcrTriageByResponse(baseRows.map(row => row.response_id));
+  const pcrMetadataByResponseId = await pcrMetadataByResponse(baseRows.map(row => row.response_id));
 
-  return baseRows.map(row => incidentToApp({
-    ...row,
-    casualties: 0,
-    pcrTriage: triageByResponse.get(row.response_id) || "",
-  }));
+  return baseRows.map(row => {
+    const pcrMetadata = pcrMetadataByResponseId.get(row.response_id) || {};
+    return incidentToApp({
+      ...row,
+      casualties: 0,
+      pcrTriage: pcrMetadata.triage || "",
+    });
+  });
 }
 
 export async function getIncident(incidentId) {

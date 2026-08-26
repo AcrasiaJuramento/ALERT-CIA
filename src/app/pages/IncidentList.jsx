@@ -1,15 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import * as Select from '@radix-ui/react-select';
 import {
   Search, Filter, Plus, Eye, Edit2, Users,
-  AlertTriangle, Flame, Droplets, Car, Heart, Download, FileText
+  AlertTriangle, Flame, Droplets, Car, Heart, Download, FileText, ChevronDown, Check
 } from 'lucide-react';
 import { getPCRReportByResponse, listIncidents } from '../services/supabase';
 import { PCRPreviewModal } from '../components/PCRPreviewModal';
-import { getIncidentStatusLabel, INCIDENT_STATUS_OPTIONS, isIncidentCompleted } from '../utils/incidentStatus';
+import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { formatLongDate } from '../utils/dateFormat';
+import { matchesIncidentFilters } from '../utils/incidentFilters';
 
 const severityBadge = {
+  red: 'bg-red-600/20 text-red-400 border border-red-500/30',
+  yellow: 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30',
+  green: 'bg-green-600/20 text-green-400 border border-green-500/30',
   critical: 'bg-red-600/20 text-red-400 border border-red-500/30',
   warning: 'bg-orange-600/20 text-orange-400 border border-orange-500/30',
   moderate: 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30',
@@ -21,6 +26,9 @@ const statusBadge = {
   on_scene: 'bg-orange-500/20 text-orange-400',
   transporting: 'bg-purple-500/20 text-purple-400',
   completed: 'bg-green-500/20 text-green-400',
+  pcr_completed: 'bg-green-500/20 text-green-400',
+  pending_admin_verification: 'bg-amber-500/20 text-amber-300',
+  verified: 'bg-green-500/20 text-green-400',
 };
 
 const typeIcons = {
@@ -54,6 +62,66 @@ const incidentSummary = incident => {
   return `${type} Incident - ${action}`;
 };
 
+const SEVERITY_FILTERS = [
+  { value: 'all', label: 'All Severity' },
+  { value: 'red', label: 'Red' },
+  { value: 'yellow', label: 'Yellow' },
+  { value: 'green', label: 'Green' },
+];
+
+const TYPE_FILTERS = [
+  { value: 'all', label: 'All Types' },
+  { value: 'conduction', label: 'Conduction' },
+  { value: 'medical', label: 'Medical' },
+  { value: 'motor_vehicle_crash', label: 'Motor Vehicle Crash' },
+  { value: 'trauma', label: 'Trauma' },
+];
+
+const STATUS_FILTERS = [
+  { value: 'all', label: 'All Status' },
+  { value: 'pcr_completed', label: 'PCR completed' },
+  { value: 'pending_admin_verification', label: 'Admin pending verification' },
+];
+
+function IncidentFilterSelect({ ariaLabel, value, onValueChange, options }) {
+  return (
+    <Select.Root value={value} onValueChange={onValueChange}>
+      <Select.Trigger
+        aria-label={ariaLabel}
+        className="group inline-flex min-h-10 min-w-36 items-center justify-between gap-3 rounded-xl border border-blue-500/55 bg-[#1c2a3e] px-3.5 text-xs font-semibold text-slate-200 shadow-[0_0_0_1px_rgba(59,130,246,0.08)] outline-none transition hover:border-blue-400 focus-visible:ring-2 focus-visible:ring-blue-500/50 data-[state=open]:border-blue-400 data-[state=open]:bg-[#22334b]"
+      >
+        <Select.Value />
+        <Select.Icon asChild>
+          <ChevronDown className="h-4 w-4 text-slate-400 transition-transform group-data-[state=open]:rotate-180" />
+        </Select.Icon>
+      </Select.Trigger>
+      <Select.Portal>
+        <Select.Content
+          position="popper"
+          sideOffset={5}
+          align="start"
+          className="z-100 min-w-(--radix-select-trigger-width) overflow-hidden rounded-lg border border-blue-500/45 bg-[#1c2a3e] py-1 text-slate-100 shadow-2xl"
+        >
+          <Select.Viewport>
+            {options.map(option => (
+              <Select.Item
+                key={option.value}
+                value={option.value}
+                className="relative flex min-h-10 cursor-pointer select-none items-center py-2 pl-4 pr-9 text-xs font-semibold outline-none transition-colors data-[highlighted]:bg-blue-600 data-[state=checked]:bg-blue-600"
+              >
+                <Select.ItemText>{option.label}</Select.ItemText>
+                <Select.ItemIndicator className="absolute right-3 inline-flex items-center">
+                  <Check className="h-3.5 w-3.5" />
+                </Select.ItemIndicator>
+              </Select.Item>
+            ))}
+          </Select.Viewport>
+        </Select.Content>
+      </Select.Portal>
+    </Select.Root>
+  );
+}
+
 export default function IncidentList() {
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
@@ -76,20 +144,12 @@ export default function IncidentList() {
       setLoading(true);
       setError('');
       try {
-        const filters = {
-          completedWorkflowOnly: true,
-          status: filterStatus === 'all' ? undefined : filterStatus,
-          type: filterType === 'all' ? undefined : filterType,
-          severity: filterSeverity === 'all' ? undefined : filterSeverity,
-        };
         const summaryRows = await listIncidents({
-          ...filters,
           limit: 500,
           from: 0,
         });
-        const pageRows = summaryRows.slice((page - 1) * pageSize, page * pageSize);
         if (mounted) {
-          setIncidents(Array.isArray(pageRows) ? pageRows : []);
+          setIncidents(Array.isArray(summaryRows) ? summaryRows : []);
           setSummaryIncidents(Array.isArray(summaryRows) ? summaryRows : []);
           setTotalCount(summaryRows.totalCount ?? summaryRows.length);
         }
@@ -103,7 +163,7 @@ export default function IncidentList() {
     return () => {
       mounted = false;
     };
-  }, [filterSeverity, filterStatus, filterType, page]);
+  }, []);
 
   const filtered = useMemo(() => incidents.filter(inc => {
     const searchText = [
@@ -118,24 +178,24 @@ export default function IncidentList() {
     const matchSearch =
       !search ||
       searchText.includes(search.toLowerCase());
-    const matchSeverity = filterSeverity === 'all' || inc.severity === filterSeverity;
-    const matchType = filterType === 'all' || inc.type === filterType;
-    const matchStatus = filterStatus === 'all' || inc.status === filterStatus;
-    return matchSearch && matchSeverity && matchType && matchStatus;
+    return matchSearch && matchesIncidentFilters(inc, {
+      severity: filterSeverity,
+      type: filterType,
+      status: filterStatus,
+    });
   }), [filterSeverity, filterStatus, filterType, incidents, search]);
-  const pageCount = Math.max(1, Math.ceil((search ? filtered.length : totalCount) / pageSize));
-  const visibleIncidents = filtered;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const visibleIncidents = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   useEffect(() => setPage(1), [search, filterSeverity, filterType, filterStatus]);
 
   const stats = {
     total: totalCount,
-    critical: summaryIncidents.filter(i => i.severity === 'critical').length,
-    active: summaryIncidents.filter(i => !isIncidentCompleted(i.status)).length,
-    resolved: summaryIncidents.filter(i => isIncidentCompleted(i.status)).length,
+    critical: summaryIncidents.filter(i => i.severity === 'red').length,
+    active: summaryIncidents.filter(i => !isIncidentCompleted(i.workflowStatus || i.status)).length,
+    resolved: summaryIncidents.filter(i => isIncidentCompleted(i.workflowStatus || i.status)).length,
   };
 
-  const selectClass = 'px-3 py-2 bg-secondary border border-border rounded-lg text-muted-foreground text-xs focus:outline-none focus:border-blue-500 transition-all';
   const exportCsv = () => {
     const header = ['Incident ID', 'Type', 'Location', 'Date', 'Time', 'Severity', 'Status', 'Response Team', 'Source'];
     const rows = filtered.map(incident => [
@@ -145,7 +205,7 @@ export default function IncidentList() {
       incident.date,
       incident.time,
       incident.severity,
-      getIncidentStatusLabel(incident.status),
+      getIncidentStatusLabel(incident.workflowStatus || incident.status),
       incident.assignedTeam,
       incident.sourceLabel,
     ]);
@@ -194,7 +254,7 @@ export default function IncidentList() {
           <h1 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
             Incident & Accident List
           </h1>
-          <p className="text-muted-foreground text-xs mt-0.5">{filtered.length} completed dispatch and PCR records found</p>
+          <p className="text-muted-foreground text-xs mt-0.5">{filtered.length} incident records found</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={exportCsv} className="flex items-center gap-1.5 px-3 py-2 bg-secondary border border-border rounded-lg text-xs text-muted-foreground hover:text-foreground transition-all">
@@ -241,30 +301,9 @@ export default function IncidentList() {
             />
           </div>
 
-          <select value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)} className={selectClass}>
-            <option value="all">All Severity</option>
-            <option value="critical">Critical</option>
-            <option value="warning">Warning</option>
-            <option value="moderate">Moderate</option>
-            <option value="resolved">Resolved</option>
-          </select>
-
-          <select value={filterType} onChange={e => setFilterType(e.target.value)} className={selectClass}>
-            <option value="all">All Types</option>
-            <option value="vehicular">Vehicular</option>
-            <option value="fire">Fire</option>
-            <option value="medical">Medical</option>
-            <option value="flood">Flood</option>
-            <option value="crime">Crime</option>
-            <option value="other">Other</option>
-          </select>
-
-          <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className={selectClass}>
-            <option value="all">All Status</option>
-            {INCIDENT_STATUS_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          <IncidentFilterSelect ariaLabel="Filter by severity" value={filterSeverity} onValueChange={setFilterSeverity} options={SEVERITY_FILTERS} />
+          <IncidentFilterSelect ariaLabel="Filter by incident type" value={filterType} onValueChange={setFilterType} options={TYPE_FILTERS} />
+          <IncidentFilterSelect ariaLabel="Filter by status" value={filterStatus} onValueChange={setFilterStatus} options={STATUS_FILTERS} />
 
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Filter className="w-3.5 h-3.5" />
@@ -316,13 +355,13 @@ export default function IncidentList() {
                       <div className="truncate">{incident.location}</div>
                     </td>
                     <td className="px-3 py-3.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${severityBadge[incident.severity]}`}>
-                        {incident.severity.toUpperCase()}
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${severityBadge[incident.severity] || severityBadge.yellow}`}>
+                        {(incident.severity || 'yellow').toUpperCase()}
                       </span>
                     </td>
                     <td className="px-3 py-3.5">
-                      <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${statusBadge[incident.status]}`}>
-                        {getIncidentStatusLabel(incident.status)}
+                      <span className={`px-2 py-0.5 rounded-lg text-[10px] font-medium ${statusBadge[incident.workflowStatus || incident.status] || 'bg-slate-500/20 text-slate-300'}`}>
+                        {getIncidentStatusLabel(incident.workflowStatus || incident.status)}
                       </span>
                     </td>
                     <td className="px-3 py-3.5 text-muted-foreground">
@@ -391,13 +430,13 @@ export default function IncidentList() {
         {!loading && !error && filtered.length === 0 && (
           <div className="py-16 text-center">
             <AlertTriangle className="w-10 h-10 text-muted-foreground opacity-30 mx-auto mb-3" />
-            <p className="text-muted-foreground text-sm">No completed dispatch and PCR records match your filters</p>
+            <p className="text-muted-foreground text-sm">No incident records match your filters</p>
           </div>
         )}
 
         {/* Pagination */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-border">
-          <span className="text-xs text-muted-foreground">Showing {visibleIncidents.length ? (page - 1) * pageSize + 1 : 0}-{Math.min((page - 1) * pageSize + visibleIncidents.length, search ? filtered.length : totalCount)} of {search ? filtered.length : totalCount} incidents</span>
+          <span className="text-xs text-muted-foreground">Showing {visibleIncidents.length ? (page - 1) * pageSize + 1 : 0}-{Math.min((page - 1) * pageSize + visibleIncidents.length, filtered.length)} of {filtered.length} incidents</span>
           <div className="flex gap-1">
             <button disabled={page === 1} onClick={() => setPage(value => Math.max(1, value - 1))} className="h-7 rounded px-2 text-xs text-muted-foreground hover:bg-secondary disabled:opacity-40">Prev</button>
             <span className="px-2 py-1.5 text-xs text-muted-foreground">Page {page} of {pageCount}</span>
