@@ -660,8 +660,10 @@ export default function PublicMap() {
 
   const activeIncidents = useMemo(() => incidents.filter(item => !isIncidentCompleted(item.status)), [incidents]);
   const publicRiskAreas = useMemo(() => {
-    const areas = calculateOfficialAccidentProneAreas(incidents, { publicOnly: true });
-    return showModerateRisk ? areas : areas.filter(area => ['High', 'Critical'].includes(area.risk_level));
+    return calculateOfficialAccidentProneAreas(incidents, {
+      publicOnly: true,
+      publicMinimumOfficialRiskLevel: showModerateRisk ? 'Moderate' : 'High',
+    });
   }, [incidents, showModerateRisk]);
   const publicCautionAreas = useMemo(() => {
     const areas = calculateNewsCautionAreas(incidents, { publicOnly: true });

@@ -98,6 +98,77 @@ test("allows verified news caution areas to be public before they become high ri
   assert.equal(areas[0].risk_level, "Caution");
 });
 
+test("lets the public map opt in to moderate official accident-prone areas", () => {
+  const records = [
+    record("pcr-a", { pcrId: "PCR-A", sourceKind: "pcr_report", severity: "critical" }),
+    record("pcr-b", { pcrId: "PCR-B", sourceKind: "pcr_report", severity: "high" }),
+  ];
+
+  const defaultPublicAreas = calculateOfficialAccidentProneAreas(records, { publicOnly: true });
+  const moderatePublicAreas = calculateOfficialAccidentProneAreas(records, {
+    publicOnly: true,
+    publicMinimumOfficialRiskLevel: "Moderate",
+  });
+
+  assert.equal(defaultPublicAreas.length, 0);
+  assert.equal(moderatePublicAreas.length, 1);
+  assert.equal(moderatePublicAreas[0].risk_level, "Moderate");
+  assert.equal(moderatePublicAreas[0].is_public_visible, true);
+  assert.deepEqual(moderatePublicAreas[0].records, []);
+});
+
+test("clusters unnamed official coordinate pins into public accident-prone areas", () => {
+  const records = [
+    record("pcr-pin-a", {
+      pcrId: "PCR-PIN-A",
+      sourceKind: "pcr_report",
+      barangay: null,
+      location: "16.695935, 121.624844",
+      lat: 16.6959349,
+      lng: 121.6248436,
+      severity: "high",
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    }),
+    record("pcr-pin-b", {
+      pcrId: "PCR-PIN-B",
+      sourceKind: "pcr_report",
+      barangay: null,
+      location: "16.696231, 121.625304",
+      lat: 16.6962308,
+      lng: 121.6253037,
+      severity: "high",
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    }),
+    record("pcr-pin-c", {
+      pcrId: "PCR-PIN-C",
+      sourceKind: "pcr_report",
+      barangay: null,
+      location: "16.696017, 121.625171",
+      lat: 16.6960169,
+      lng: 121.6251712,
+      severity: "high",
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    }),
+  ];
+
+  const areas = calculateOfficialAccidentProneAreas(records, { publicOnly: true });
+
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0].risk_level, "High");
+  assert.equal(areas[0].unique_incident_count, 3);
+  assert.match(areas[0].barangay, /^Mapped official area near /);
+  assert.equal(areas[0].is_public_visible, true);
+});
+
 test("reads incident date without falling back to scraper collection timestamps", () => {
   assert.equal(readIncidentDate({ scrapedAt: "2026-08-23", createdAt: "2026-08-23" }), null);
   assert.equal(readIncidentDate({ incidentAt: "2026-01-02T06:00:00.000Z" }).toISOString(), "2026-01-02T06:00:00.000Z");

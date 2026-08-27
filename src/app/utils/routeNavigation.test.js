@@ -10,6 +10,7 @@ import {
   isLocationOffRoute,
   LATEST_ACCIDENT_WARNING_DAYS,
   normalizeBrowserPosition,
+  REROUTE_COOLDOWN_MS,
 } from './routeNavigation.js';
 
 const route = [
@@ -73,7 +74,11 @@ test('blocks automatic rerouting during an active request or cooldown', () => {
 
   assert.equal(canStartAutomaticReroute({ ...base, isRerouting: false }), true);
   assert.equal(canStartAutomaticReroute({ ...base, isRerouting: true }), false);
-  assert.equal(canStartAutomaticReroute({ ...base, isRerouting: false, now: 5000 }), false);
+  assert.equal(canStartAutomaticReroute({
+    ...base,
+    isRerouting: false,
+    now: base.lastRerouteAt + REROUTE_COOLDOWN_MS - 1,
+  }), false);
 });
 
 test('keeps latest accident route warnings inside the three day window', () => {

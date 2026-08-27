@@ -59,6 +59,8 @@ const riskOrder = {
 export const MIN_ACCIDENT_PRONE_INCIDENTS = 2;
 export const ACCIDENT_ZONE_OFFICIAL = 'official_accident_prone';
 export const ACCIDENT_ZONE_NEWS_CAUTION = 'news_caution_area';
+const UNNAMED_AREA_CLUSTER_DEGREES = 0.005;
+const COORDINATE_TEXT_PATTERN = /^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/;
 
 export const riskStyles = {
   Low: { color: '#16a34a', label: 'Low Risk', publicLabel: 'Road Safety Monitoring Area' },
@@ -99,6 +101,24 @@ function toTitleCase(value = '') {
 
 function normalizeValue(value = '') {
   return String(value || '').trim().toLowerCase();
+}
+
+function meaningfulAreaName(value = '') {
+  const text = String(value || '').trim();
+  if (!text || COORDINATE_TEXT_PATTERN.test(text)) return '';
+  if (/^(?:mapped\s+)?(?:pcr\s+)?response$/i.test(text)) return '';
+  if (/^verified response area$/i.test(text)) return '';
+  return text;
+}
+
+function coordinateClusterKey(lat, lng) {
+  const latBucket = Math.round(Number(lat) / UNNAMED_AREA_CLUSTER_DEGREES);
+  const lngBucket = Math.round(Number(lng) / UNNAMED_AREA_CLUSTER_DEGREES);
+  return `${latBucket}:${lngBucket}`;
+}
+
+function coordinateClusterLabel(lat, lng) {
+  return `Mapped official area near ${Number(lat).toFixed(3)}, ${Number(lng).toFixed(3)}`;
 }
 
 function firstValue(record = {}, keys = []) {
@@ -396,6 +416,7 @@ function zoneTypeForSourceMode(sourceMode = 'all') {
 
 export function calculateAccidentProneAreas(records = [], {
   publicOnly = false,
+  publicMinimumOfficialRiskLevel = 'High',
   filters = {},
   groupBy = 'barangay',
   sourceMode = 'all',
@@ -425,13 +446,24 @@ export function calculateAccidentProneAreas(records = [], {
       seenRecords.add(canonicalKey);
     }
 
-    const barangay = record.barangay || record.location || 'Unspecified Area';
-    const municipality = readMunicipality(record);
-    const areaName = groupByMunicipality ? municipality : barangay;
+    const [lat, lng] = getIncidentLatLng(record);
+    const namedArea = meaningfulAreaName(
+      record.barangay
+      || record.location
+      || record.locationText
+      || record.location_name
+      || record.placeOfIncident
+    );
     const sourceType = readSourceType(record);
+    const municipality = readMunicipality(record);
+    const clusterKey = coordinateClusterKey(lat, lng);
+    const barangay = namedArea || coordinateClusterLabel(lat, lng);
+    const areaName = groupByMunicipality ? municipality : barangay;
     const incidentDateResult = readIncidentDateResult(record);
     const inAnalysisWindow = incidentDateResult.date && incidentDateResult.date >= analysisWindowStart && incidentDateResult.date <= analysisWindowEnd;
-    const key = groupByMunicipality ? `municipality:${municipality}` : `barangay:${municipality}:${barangay}`;
+    const key = groupByMunicipality
+      ? `municipality:${municipality}`
+      : namedArea ? `barangay:${municipality}:${barangay}` : `coordinate:${municipality}:${clusterKey}`;
     const group = grouped.get(key) || {
       barangay: areaName,
       area_label: areaName,
@@ -452,7 +484,6 @@ export function calculateAccidentProneAreas(records = [], {
       webScrapedVerifiedCount: 0,
       webScrapedPendingCount: 0,
     };
-    const [lat, lng] = getIncidentLatLng(record);
     const normalizedRecord = {
       ...record,
       sourceType,
@@ -548,11 +579,12 @@ export function calculateAccidentProneAreas(records = [], {
     const representativePoint = representativePointRecord ? getIncidentLatLng(representativePointRecord) : null;
     const zoneType = zoneTypeForSourceMode(sourceMode);
     const allPublicVerified = group.records.every(record => record.reliability >= 1);
+    const publicOfficialRiskFloor = riskOrder[publicMinimumOfficialRiskLevel] || riskOrder.High;
     const isPublicVisible = pointHotspotEligible
       && allPublicVerified
       && (zoneType === ACCIDENT_ZONE_NEWS_CAUTION
         ? uniqueIncidentCount > 0
-        : ['High', 'Critical'].includes(recommendedRiskLevel));
+        : (riskOrder[recommendedRiskLevel] || 0) >= publicOfficialRiskFloor);
     const areaPrefix = sourceMode === 'official' ? 'APA' : sourceMode === 'scraped' ? 'NCA' : 'APA';
 
     return {

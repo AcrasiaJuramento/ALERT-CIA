@@ -468,6 +468,13 @@ export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
 
   return asRows(rows).map(row => {
     const dateValue = row.incident_date ? new Date(row.incident_date) : new Date();
+    const assessment = locationAssessment({
+      sourceKind: "pcr_report",
+      locationPrecision: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      coordinateSource: "official_incident_pin",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    });
     return {
       id: `INC-${String(row.incident_id).slice(0, 8)}`,
       recordId: row.pcr_id,
@@ -490,6 +497,17 @@ export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
       title: `${classificationToType(row.classification)} safety alert`,
       description: "Emergency response activity has been verified in this area. Keep distance and follow official guidance.",
       publicVisible: true,
+      is_verified: true,
+      is_public_visible: true,
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: assessment,
+      locationAccuracy: assessment.accuracy,
+      locationConfidenceLevel: assessment.level,
+      locationAccuracyLabel: assessment.label,
+      pointHotspotEligible: assessment.pointHotspotEligible,
+      approximateLocation: assessment.approximate,
     };
   });
 }
