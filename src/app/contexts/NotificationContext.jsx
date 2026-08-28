@@ -1,6 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from './AuthContext';
 import { isSupabaseConfigured, markNotificationAsRead, markNotificationsAsRead, listNotifications, supabase } from '../services/supabase';
+import { getDispatchRecord, getDispatchRecordByResponse } from '../services/supabase/dispatchService';
+import { getPCRReport } from '../services/supabase/pcrService';
 import { subscribeLiveSyncEvents } from '../network/live-sync-events';
 
 const NOTIFICATION_PREFS_KEY = 'alert-cia-notification-preferences';
@@ -31,20 +33,70 @@ function saveJson(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function friendlyNotificationCopy(type) {
+  const copy = {
+    pcr_created: ['New PCR report', 'A patient care report is ready to be completed.'],
+    pcr_submitted: ['PCR report submitted', 'A patient care report is ready for review.'],
+    pcr_updated: ['PCR report updated', 'A patient care report has new information.'],
+    dispatch_updated: ['Dispatch update', 'A response assignment has been updated.'],
+    response_completed: ['Response completed', 'The response team has returned to base.'],
+    incident_updated: ['Incident update', 'An incident record has new information.'],
+  }[type];
+  if (copy) {
+    return copy;
+  }
+  return null;
+}
+
+function friendlySystemCopy(title, message) {
+  const text = `${title || ''} ${message || ''}`.toLowerCase();
+  if (text.includes('pending review') || text.includes('submitted a standalone pcr')) {
+    return ['PCR submitted for review', 'A standalone PCR is waiting for dispatcher review.'];
+  }
+  if (text.includes('accepted by dispatcher')) {
+    return ['PCR accepted', 'The PCR was accepted and is ready to be sent to a response team.'];
+  }
+  if (text.includes('returned for correction') || text.includes('returned to field')) {
+    return ['PCR needs correction', 'Please update the PCR and submit it again.'];
+  }
+  return null;
+}
+
+function inferNotificationType(notification) {
+  if (notification.type && notification.type !== 'system') return notification.type;
+  const text = `${notification.title || ''} ${notification.message || ''}`.toLowerCase();
+  if (text.includes('dispatch')) return 'dispatch_updated';
+  if (text.includes('response') || text.includes('incident')) return 'incident_updated';
+  if (text.includes('pcr')) return text.includes('submitted') ? 'pcr_submitted' : 'pcr_updated';
+  return notification.type || 'system';
+}
+
+function linkedIdFromNotificationId(id, prefix) {
+  const value = String(id || '');
+  return value.startsWith(prefix) ? value.slice(prefix.length).replace(/-[^-]+$/, '') : null;
+}
+
 function normalizeNotification(notification) {
+  const type = inferNotificationType(notification);
+  const systemCopy = type === 'system' ? friendlySystemCopy(notification.title, notification.message) : null;
   return {
     id: notification.id || `notif-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    type: notification.type || 'system',
-    title: notification.title || 'ALERT-CIA Update',
-    message: notification.message || 'A system update was received.',
+    type,
+    title: friendlyNotificationCopy(type)?.[0] || systemCopy?.[0] || notification.title || 'ALERT-CIA Update',
+    message: friendlyNotificationCopy(type)?.[1] || systemCopy?.[1] || notification.message || 'There is a new update in ALERT-CIA.',
     timestamp: notification.timestamp || notification.created_at || new Date().toISOString(),
     read: Boolean(notification.read),
-    responseId: notification.responseId || notification.response_id || null,
-    dispatchId: notification.dispatchId || notification.dispatch_form_id || null,
+    responseId: notification.responseId || notification.response_id || linkedIdFromNotificationId(notification.id, 'live-response-'),
+    dispatchId: notification.dispatchId || notification.dispatch_form_id || linkedIdFromNotificationId(notification.id, 'live-dispatch-'),
     pcrId: notification.pcrId || notification.pcr_report_id || null,
     severity: notification.severity || notification.priority || 'normal',
     source: notification.source || 'app',
   };
+}
+
+function isUnresolvedNotification(notification) {
+  return ['incident_updated', 'dispatch_updated'].includes(notification.type)
+    && ['Incident update', 'Dispatch update'].includes(notification.title);
 }
 
 function isCritical(notification) {
@@ -93,17 +145,131 @@ function showBrowserNotification(notification) {
   }
 }
 
+function asNotificationList(value) {
+  if (Array.isArray(value)) return value.filter(Boolean).map(item => String(item).trim()).filter(Boolean);
+  return value ? [String(value).trim()] : [];
+}
+
+function incidentNotificationDetails(payload = {}) {
+  const response = payload.response || payload.responses || {};
+  const responseNumber = payload.responseNumber || payload.response_number || response.responseNumber || response.response_number;
+  const barangay = payload.barangay?.name || payload.barangay || response.barangay?.name || response.barangay;
+  const date = payload.dateOfIncident || payload.date_of_incident || response.dateOfIncident || response.date_of_incident;
+  const location = barangay || payload.placeOfIncident || payload.place_of_incident || payload.location || payload.locationText
+    || response.placeOfIncident || response.place_of_incident || response.locationText || response.location;
+  const types = [
+    ...asNotificationList(payload.traumaTypes || payload.trauma_types),
+    ...asNotificationList(payload.emergencyTypes || payload.emergency_types),
+    payload.incidentNature || payload.incident_nature || payload.typeOfIncident || payload.type_of_incident,
+  ];
+  const normalizedTypes = [...new Set(types.map(type => {
+    const normalized = type.toLowerCase();
+    if (normalized.includes('motor vehicle') || normalized.includes('vehicle crash') || normalized === 'mvc') return 'MVC';
+    return type;
+  }))];
+  const reference = responseNumber || payload.id || payload.pcrId || payload.pcr_id;
+  const team = payload.respondingTeam || payload.responding_team?.name || payload.team || response.team
+    || response.respondingTeam || response.responding_team?.name;
+  const formattedDate = date ? formatIncidentDate(date) : '';
+  const context = [location, formattedDate, normalizedTypes.join(' / ')].filter(Boolean);
+  return {
+    reference: reference || 'PCR record',
+    team: team || '',
+    context,
+    label: context.join(' | '),
+  };
+}
+
+function formatIncidentDate(value) {
+  const raw = String(value || '');
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? new Date(`${raw}T00:00:00`) : new Date(value);
+  if (Number.isNaN(date.getTime())) return raw;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function friendlyStatus(status) {
+  const normalized = String(status || 'updated').toLowerCase();
+  if (['completed', 'pcr_completed', 'verified'].includes(normalized)) return 'Completed';
+  if (['pcr_in_progress', 'in_progress'].includes(normalized)) return 'In Progress';
+  if (normalized === 'pending_dispatcher_review') return 'Waiting for Review';
+  return String(status || 'updated')
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function notificationAction(notification, record, fallback = 'Updated') {
+  if (notification.type === 'response_completed') return 'Response completed';
+  const status = String(record?.status || fallback).toLowerCase();
+  if (notification.type.startsWith('pcr') || notification.pcrId) {
+    if (['verified', 'accepted_by_dispatcher'].includes(status)) return 'PCR accepted';
+    if (['completed', 'pcr_completed'].includes(status)) return 'PCR completed';
+    if (['returned_for_correction', 'rejected', 'returned_to_field_officer'].includes(status)) return 'PCR rejected';
+    if (status.includes('submitted') || status.includes('pending')) return 'PCR submitted';
+    return 'PCR updated';
+  }
+  if (notification.type.startsWith('dispatch') || notification.dispatchId) {
+    if (status.includes('accepted')) return 'Dispatch accepted';
+    if (status.includes('sent')) return 'Dispatch sent';
+    if (['completed', 'pcr_completed'].includes(status)) return 'Response completed';
+    return 'Dispatch updated';
+  }
+  return 'Response updated';
+}
+
+function formatIncidentNotification(notification, record, action = 'Updated') {
+  const details = incidentNotificationDetails(record);
+  if (!details.label) return notification;
+  const recordAction = notificationAction(notification, record, action);
+  const teamText = details.team ? ` | ${details.team}` : '';
+  return {
+    ...notification,
+    title: `${recordAction} | ${details.label}${teamText}`,
+    message: `${details.reference} | ${friendlyStatus(record?.status || action)}${teamText}.`,
+  };
+}
+
+async function getNotificationResponse(responseId) {
+  if (!responseId || !supabase) return null;
+  const { data, error } = await supabase
+    .from('responses')
+    .select('id, response_number, date_of_incident, place_of_incident, type_of_incident, status, barangay:barangays(name)')
+    .eq('id', responseId)
+    .maybeSingle();
+  if (error) return null;
+  return data;
+}
+
+async function enrichNotification(notification) {
+  if (notification.pcrId) {
+    const report = await getPCRReport(notification.pcrId).catch(() => null);
+    const action = notification.type === 'pcr_submitted' ? 'Submitted' : 'Updated';
+    return report ? formatIncidentNotification(notification, report, action) : notification;
+  }
+  if (notification.dispatchId || notification.responseId) {
+    const record = notification.dispatchId
+      ? await getDispatchRecord(notification.dispatchId).catch(() => null)
+      : await getDispatchRecordByResponse(notification.responseId).catch(() => null);
+    if (record) return formatIncidentNotification(notification, record);
+    const response = await getNotificationResponse(notification.responseId);
+    return response ? formatIncidentNotification(notification, response) : null;
+  }
+  if (['incident_updated', 'dispatch_updated'].includes(notification.type)) return null;
+  return notification;
+}
+
 function notificationFromLiveEvent(event) {
   const payload = event.detail?.payload || event.detail?.new || event.detail?.record || event.detail || {};
   const source = event.source || 'local';
 
   if (event.type === 'pcr_changed') {
     const status = payload.status || payload.record?.status || 'updated';
-    const submittedStatus = status === 'Submitted' || status === 'Submitted on Device' || status === 'Submitted Locally';
+    const submittedStatus = String(status).toLowerCase().includes('submitted');
+    const details = incidentNotificationDetails(payload);
     return normalizeNotification({
+      id: `live-pcr-${payload.id || payload.pcrId || payload.pcr_id}-${status}`,
       type: submittedStatus ? 'pcr_submitted' : 'pcr_updated',
-      title: submittedStatus ? 'Patient Care Report Submitted' : 'Patient Care Report Updated',
-      message: `${payload.responseNumber || payload.response_id || payload.responseId || 'A PCR record'} was ${String(status).toLowerCase()}.`,
+      title: details.label ? `${notificationAction({ type: submittedStatus ? 'pcr_submitted' : 'pcr_updated' }, payload, status)} | ${details.label}${details.team ? ` | ${details.team}` : ''}` : `PCR report ${submittedStatus ? 'submitted' : 'updated'}`,
+      message: `${details.reference}: ${friendlyStatus(status)}.`,
       pcrId: payload.id || payload.pcrId || payload.pcr_id,
       responseId: payload.responseId || payload.response_id,
       source,
@@ -112,10 +278,12 @@ function notificationFromLiveEvent(event) {
 
   if (event.type === 'dispatch_changed') {
     const status = payload.status || payload.record?.status || 'updated';
+    const details = incidentNotificationDetails(payload);
     return normalizeNotification({
+      id: `live-dispatch-${payload.id || payload.dispatchId || payload.dispatch_form_id}-${status}`,
       type: 'dispatch_updated',
-      title: 'Dispatch Updated',
-      message: `${payload.responseNumber || payload.response_id || payload.responseId || 'A dispatch'} is now ${status}.`,
+      title: details.label ? `${notificationAction({ type: 'dispatch_updated' }, payload, status)} | ${details.label}${details.team ? ` | ${details.team}` : ''}` : 'Dispatch update',
+      message: `${details.reference}: ${friendlyStatus(status)}.`,
       dispatchId: payload.id || payload.dispatchId || payload.dispatch_form_id,
       responseId: payload.responseId || payload.response_id,
       source,
@@ -123,10 +291,12 @@ function notificationFromLiveEvent(event) {
   }
 
   if (event.type === 'response_changed') {
+    const details = incidentNotificationDetails(payload);
     return normalizeNotification({
+      id: `live-response-${payload.id || payload.responseId || payload.response_id}`,
       type: 'incident_updated',
-      title: 'Response Updated',
-      message: `${payload.response_number || payload.id || 'A response'} changed in cloud records.`,
+      title: details.label ? `${notificationAction({ type: 'incident_updated' }, payload, payload.status)} | ${details.label}${details.team ? ` | ${details.team}` : ''}` : 'Incident update',
+      message: `${details.reference}: New information is available.`,
       responseId: payload.id || payload.response_id,
       source,
     });
@@ -142,7 +312,7 @@ export function NotificationProvider({ children }) {
     ...readJson(NOTIFICATION_PREFS_KEY, {}),
   }));
   const [notifications, setNotifications] = useState(() =>
-    readJson(NOTIFICATIONS_CACHE_KEY, []).map(normalizeNotification)
+    readJson(NOTIFICATIONS_CACHE_KEY, []).map(normalizeNotification).filter(item => !isUnresolvedNotification(item))
   );
 
   const persistNotifications = useCallback(next => {
@@ -176,7 +346,13 @@ export function NotificationProvider({ children }) {
     listNotifications({ unreadOnly: true, limit: 50 })
       .then(rows => {
         if (!mounted) return;
-        setNotifications(prev => persistNotifications([...rows.map(normalizeNotification), ...prev].filter(item => !item.read)));
+        Promise.all(rows.map(row => enrichNotification(normalizeNotification(row)))).then(enrichedRows => {
+          if (!mounted) return;
+          setNotifications(prev => {
+            const merged = new Map([...prev, ...enrichedRows.filter(Boolean)].map(item => [item.id, item]));
+            return persistNotifications([...merged.values()].filter(item => !item.read && !isUnresolvedNotification(item)));
+          });
+        });
       })
       .catch(() => undefined);
     return () => {
@@ -189,7 +365,8 @@ export function NotificationProvider({ children }) {
     const channel = supabase
       .channel(`alert-cia-notifications-${user.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'notifications' }, payload => {
-        addNotification({ ...payload.new, source: 'cloud' });
+        const notification = normalizeNotification({ ...payload.new, source: 'cloud' });
+        enrichNotification(notification).then(enriched => enriched && addNotification(enriched));
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'notifications' }, payload => {
         const updated = normalizeNotification({ ...payload.new, source: 'cloud' });
@@ -206,7 +383,8 @@ export function NotificationProvider({ children }) {
 
   useEffect(() => subscribeLiveSyncEvents(event => {
     const notification = notificationFromLiveEvent(event);
-    if (notification) addNotification(notification);
+    if (!notification) return;
+    enrichNotification(notification).then(enriched => enriched && addNotification(enriched));
   }), [addNotification]);
 
   const markAsRead = useCallback(id => {
