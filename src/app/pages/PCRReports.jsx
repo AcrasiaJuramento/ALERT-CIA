@@ -175,7 +175,7 @@ export default function PCRReports() {
     if (freshRecord && freshRecord !== selected) setSelected(freshRecord);
   }, [records, selected]);
   useEffect(() => {
-    if (!selected?.id || selected.workflowOrigin !== 'reverse') { setWorkflowHistory([]); return; }
+    if (!selected?.id || !isReverseWorkflowRecord(selected)) { setWorkflowHistory([]); return; }
     listPCRWorkflowHistory(selected.id).then(setWorkflowHistory).catch(() => setWorkflowHistory([]));
   }, [selected?.id, selected?.workflowOrigin]);
 
@@ -254,7 +254,7 @@ export default function PCRReports() {
       toast.error('Please provide a reason for rejection.');
       return;
     }
-    if (rejectingRecord.workflowOrigin === 'reverse') {
+    if (isReverseWorkflowRecord(rejectingRecord)) {
       if (user?.role === 'dispatcher') dispatcherDecision(rejectingRecord, 'return', rejectionReason.trim());
       else adminDecision(rejectingRecord, 'return', rejectionReason.trim());
     } else normalDecision(rejectingRecord, 'return', rejectionReason.trim());
@@ -319,8 +319,8 @@ export default function PCRReports() {
                 {isCloudBacked(record) && user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${record.id}`)} title="Create connected Dispatch Form" className="p-2 hover:bg-blue-500/10 text-blue-400 rounded"><FilePlus2 size={15} /></button>}
                 {isCloudBacked(record) && user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(record, 'approve')} title="Verify connected records" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
                 {isCloudBacked(record) && user?.role === 'administrator' && record.status === 'Pending Admin Verification' && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
-                {isCloudBacked(record) && canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
-                {isCloudBacked(record) && canReview && record.workflowOrigin !== 'reverse' && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
+                {isCloudBacked(record) && canReview && !isReverseWorkflowRecord(record) && isReviewable(record) && <button onClick={() => normalDecision(record, 'approve')} title="Verify PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
+                {isCloudBacked(record) && canReview && !isReverseWorkflowRecord(record) && isReviewable(record) && <button onClick={() => setRejectingRecord(record)} title="Return for correction" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><XCircle size={15} /></button>}
                 {isCloudBacked(record) && canCreate && (record.archived
                   ? <button onClick={() => unarchive(record)} title="Restore" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><ArchiveRestore size={15} /></button>
                   : <button onClick={() => archive(record)} title="Archive" className="p-2 hover:bg-red-500/10 text-red-400 rounded"><Archive size={15} /></button>)}
@@ -345,8 +345,8 @@ export default function PCRReports() {
                 {isCloudBacked(selected) && user?.role === 'dispatcher' && isReverseWorkflowRecord(selected) && selected.status === 'Accepted by Dispatcher' && <button onClick={() => navigate(`/admin/dispatch/new?sourcePcr=${selected.id}`)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><FilePlus2 size={14} />Create Dispatch</button>}
                 {isCloudBacked(selected) && user?.role === 'administrator' && selected.status === 'Pending Admin Verification' && <button onClick={() => adminDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify Both</button>}
                 {isCloudBacked(selected) && isReverseWorkflowRecord(selected) && ((user?.role === 'dispatcher' && selected.status === 'Pending Dispatcher Review') || (user?.role === 'administrator' && selected.status === 'Pending Admin Verification')) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
-                {isCloudBacked(selected) && canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
-                {isCloudBacked(selected) && canReview && selected.workflowOrigin !== 'reverse' && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
+                {isCloudBacked(selected) && canReview && !isReverseWorkflowRecord(selected) && isReviewable(selected) && <button onClick={() => normalDecision(selected, 'approve')} className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-2 text-xs text-white"><CheckCircle2 size={14} />Verify</button>}
+                {isCloudBacked(selected) && canReview && !isReverseWorkflowRecord(selected) && isReviewable(selected) && <button onClick={() => setRejectingRecord(selected)} className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-2 text-xs text-white"><XCircle size={14} />Return</button>}
                 {canCreate && isEditable(selected) && <button onClick={() => edit(selected)} className="flex items-center gap-1 rounded-lg bg-secondary px-3 py-2 text-xs"><Edit3 size={14} />Edit</button>}
                 <button onClick={() => doPdf(selected)} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-2 text-xs text-white"><Download size={14} />PDF</button>
                 <button onClick={() => setSelected(null)} aria-label="Close PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
@@ -363,14 +363,14 @@ export default function PCRReports() {
         <div className="fixed inset-0 z-[5010] flex items-center justify-center bg-black/70 p-3">
           <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
             <div className="mb-4">
-              <h2 className="text-base font-bold text-foreground">{rejectingRecord.workflowOrigin === 'reverse' ? 'Return PCR to Field Officer' : 'Reject Patient Care Record'}</h2>
+              <h2 className="text-base font-bold text-foreground">{isReverseWorkflowRecord(rejectingRecord) ? 'Return PCR to Field Officer' : 'Reject Patient Care Record'}</h2>
               <p className="mt-1 text-xs text-muted-foreground">{rejectingRecord.responseNumber}</p>
             </div>
-            <label className="mb-2 block text-xs font-semibold text-muted-foreground">{rejectingRecord.workflowOrigin === 'reverse' ? 'Corrections required' : 'Reason for rejection'}</label>
+            <label className="mb-2 block text-xs font-semibold text-muted-foreground">{isReverseWorkflowRecord(rejectingRecord) ? 'Corrections required' : 'Reason for rejection'}</label>
             <textarea value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} rows={4} className="w-full resize-none rounded-lg border border-border bg-input-background p-3 text-sm text-foreground outline-none focus:border-red-500" placeholder="Explain what needs correction..." />
             <div className="mt-4 flex gap-2">
               <button onClick={() => { setRejectingRecord(null); setRejectionReason(''); }} className="flex-1 rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-foreground">Cancel</button>
-              <button onClick={rejectRecord} className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white">{rejectingRecord.workflowOrigin === 'reverse' ? 'Return to Field Officer' : 'Confirm Reject'}</button>
+              <button onClick={rejectRecord} className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white">{isReverseWorkflowRecord(rejectingRecord) ? 'Return to Field Officer' : 'Confirm Reject'}</button>
             </div>
           </div>
         </div>

@@ -849,6 +849,7 @@ export default function PCRModule() {
     try {
       const reverseSubmit = form.workflowOrigin === "reverse" && status !== "Draft";
       const preserveReturnedCompletion = form.status === "Returned for Correction";
+      const reverseLinkedCorrection = reverseSubmit && (preserveReturnedCompletion || Boolean(form.dispatchId || linkedDispatch?.dispatchId || linkedDispatch?.id || dispatchId));
       const submitTimeline = status === "Draft"
         ? form.timeline
         : { ...(form.timeline || {}), backToBase: preserveReturnedCompletion ? form.timeline?.backToBase || form.backToBase : "" };
@@ -858,7 +859,7 @@ export default function PCRModule() {
         responseClientId: firstRecordIdentifier(form.responseClientId, linkedDispatch?.responseClientId, linkedDispatch?.responseId, responseId),
         dispatchId: firstRecordIdentifier(form.dispatchId, linkedDispatch?.dispatchId, linkedDispatch?.id, dispatchId),
         dispatchClientId: firstRecordIdentifier(form.dispatchClientId, linkedDispatch?.dispatchClientId, linkedDispatch?.dispatchId, linkedDispatch?.id, dispatchId),
-        status: reverseSubmit ? "Draft" : status,
+        status: reverseSubmit ? (reverseLinkedCorrection ? "Returned for Correction" : "Draft") : status,
         id: form.id || randomUuid(),
         timeline: submitTimeline,
         backToBase: status === "Draft" || preserveReturnedCompletion ? form.backToBase : "",
@@ -871,7 +872,7 @@ export default function PCRModule() {
         : await hybridRepository.submitPcr(payload);
       if (reverseSubmit && !payload.offlineStandalone && !saved.offlineStandalone) {
         const pcrId = saved.id || saved.pcrId || form.id;
-        if (form.status === 'Returned for Correction') await resubmitReverseWorkflow(pcrId);
+        if (reverseLinkedCorrection) await resubmitReverseWorkflow(pcrId);
         else await submitStandalonePCR(pcrId);
       }
       saveManualReferencesToDropdowns(payload);
