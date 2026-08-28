@@ -66,7 +66,7 @@ function PublicPopup({ area }) {
   );
 }
 
-function AccidentProneAreaCircle({ area, publicSafe, selected, onAreaClick }) {
+function AccidentProneAreaCircle({ area, publicSafe, selected, onAreaClick, onMapClick }) {
   const circleRef = useRef(null);
   const style = riskStyles[area.risk_level] || riskStyles.Low;
   const isNewsCautionArea = area.zone_type === 'news_caution_area';
@@ -80,7 +80,12 @@ function AccidentProneAreaCircle({ area, publicSafe, selected, onAreaClick }) {
       ref={circleRef}
       center={[Number(area.latitude), Number(area.longitude)]}
       radius={getAccidentProneAreaRadiusMeters(area)}
-      eventHandlers={{ click: () => onAreaClick?.(area) }}
+      eventHandlers={{
+        click: (event) => {
+          onAreaClick?.(area);
+          onMapClick?.(event.latlng, event);
+        },
+      }}
       pathOptions={{
         color: selected ? '#f8fafc' : style.color,
         fillColor: style.color,
@@ -103,6 +108,7 @@ export function AccidentProneAreasLayer({
   excludeCritical = false,
   selectedAreaId,
   onAreaClick,
+  onMapClick,
 }) {
   if (!enabled) return null;
 
@@ -116,6 +122,7 @@ export function AccidentProneAreasLayer({
         publicSafe={publicSafe}
         selected={selectedAreaId === area.area_id}
         onAreaClick={onAreaClick}
+        onMapClick={onMapClick}
       />
     ));
 }

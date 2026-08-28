@@ -48,6 +48,15 @@ const severityWeights = {
   unknown: 0,
 };
 
+const RECENCY_WEIGHT_TIERS = [
+  { maxDays: 7, multiplier: 1.75 },
+  { maxDays: 30, multiplier: 1.5 },
+  { maxDays: 90, multiplier: 1.25 },
+  { maxDays: 365, multiplier: 1 },
+  { maxDays: 730, multiplier: 0.75 },
+  { maxDays: 1095, multiplier: 0.5 },
+];
+
 const riskOrder = {
   Low: 1,
   Caution: 2,
@@ -305,6 +314,31 @@ function formatLocalDate(date) {
   return date ? date.toISOString().slice(0, 10) : null;
 }
 
+function incidentAgeDays(record = {}, referenceDate = new Date()) {
+  const incidentDate = readIncidentDate(record);
+  const endDate = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  if (!incidentDate || !Number.isFinite(endDate.getTime())) return Infinity;
+  return Math.max(0, (endDate.getTime() - incidentDate.getTime()) / 86400000);
+}
+
+export function recencyWeightForIncident(record = {}, referenceDate = new Date()) {
+  const ageDays = incidentAgeDays(record, referenceDate);
+  return RECENCY_WEIGHT_TIERS.find(tier => ageDays <= tier.maxDays)?.multiplier ?? 0.5;
+}
+
+function severityBurdenForRecords(records = [], referenceDate = new Date()) {
+  const raw = records.reduce((sum, record) => sum + (severityWeights[readSeverity(record)] ?? severityWeights.unknown), 0);
+  const weighted = records.reduce((sum, record) => {
+    const severityWeight = severityWeights[readSeverity(record)] ?? severityWeights.unknown;
+    return sum + (severityWeight * recencyWeightForIncident(record, referenceDate));
+  }, 0);
+
+  return {
+    raw: Math.round(raw * 100) / 100,
+    weighted: Math.round(weighted * 100) / 100,
+  };
+}
+
 export function classifyRecommendedRisk({
   uniqueIncidentCount,
   severityBurden,
@@ -419,13 +453,15 @@ export function calculateAccidentProneAreas(records = [], {
   publicMinimumOfficialRiskLevel = 'High',
   filters = {},
   groupBy = 'barangay',
+  referenceDate = new Date(),
   sourceMode = 'all',
 } = {}) {
   const includePending = !publicOnly;
   const grouped = new Map();
   const seenRecords = new Set();
   const groupByMunicipality = groupBy === 'municipality';
-  const analysisWindowEnd = new Date();
+  const requestedWindowEnd = referenceDate instanceof Date ? referenceDate : new Date(referenceDate);
+  const analysisWindowEnd = Number.isFinite(requestedWindowEnd.getTime()) ? requestedWindowEnd : new Date();
   const analysisWindowStart = new Date(analysisWindowEnd);
   analysisWindowStart.setMonth(analysisWindowStart.getMonth() - 36);
 
@@ -566,7 +602,8 @@ export function calculateAccidentProneAreas(records = [], {
       else acc.unknown += 1;
       return acc;
     }, { low: 0, moderate: 0, high: 0, critical: 0, unknown: 0 });
-    const severityBurden = group.eligibleRecords.reduce((sum, record) => sum + (severityWeights[readSeverity(record)] ?? severityWeights.unknown), 0);
+    const severityBurdenScores = severityBurdenForRecords(group.eligibleRecords, analysisWindowEnd);
+    const severityBurden = severityBurdenScores.weighted;
     const recommendedRiskLevel = classifyRecommendedRisk({
       uniqueIncidentCount,
       severityBurden,
@@ -616,6 +653,7 @@ export function calculateAccidentProneAreas(records = [], {
       recommended_risk_level: recommendedRiskLevel,
       recommended_risk_label: riskStyles[recommendedRiskLevel]?.label || recommendedRiskLevel,
       severity_burden: severityBurden,
+      unweighted_severity_burden: severityBurdenScores.raw,
       severity_counts: severityCounts,
       recent_advisory: recentAdvisory(group.eligibleRecords, analysisWindowEnd),
       evidence_confidence: confidence.level,

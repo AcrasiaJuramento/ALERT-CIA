@@ -395,6 +395,7 @@ export function LeafletIncidentMap({
           publicSafe={publicSafeRiskPopups}
           selectedAreaId={selectedAccidentProneAreaId}
           onAreaClick={onAccidentProneAreaClick}
+          onMapClick={onMapClick}
         />
         <AccidentProneAreasLayer
           areas={pointAccidentProneAreas}
@@ -403,6 +404,7 @@ export function LeafletIncidentMap({
           excludeCritical
           selectedAreaId={selectedAccidentProneAreaId}
           onAreaClick={onAccidentProneAreaClick}
+          onMapClick={onMapClick}
         />
         <AccidentProneAreasLayer
           areas={pointAccidentProneAreas}
@@ -411,6 +413,7 @@ export function LeafletIncidentMap({
           criticalOnly
           selectedAreaId={selectedAccidentProneAreaId}
           onAreaClick={onAccidentProneAreaClick}
+          onMapClick={onMapClick}
         />
         <ClusteredIncidentMarkers
           incidents={effectiveLayers.incidents ? incidents : []}

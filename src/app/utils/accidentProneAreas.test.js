@@ -7,7 +7,10 @@ import {
   classifyRecommendedRisk,
   getCanonicalIncidentKey,
   readIncidentDate,
+  recencyWeightForIncident,
 } from "./accidentProneAreas.js";
+
+const REFERENCE_DATE = new Date("2026-08-28T00:00:00.000Z");
 
 const baseRecord = {
   classification: "mvc",
@@ -187,14 +190,15 @@ test("excludes missing incident dates from revised 36-month computation but repo
 
 test("uses severity burden across all eligible unique crashes", () => {
   const areas = calculateAccidentProneAreas([
-    record("a", { severity: "critical" }),
-    record("b", { severity: "high" }),
-    record("c", { severity: "moderate" }),
-    record("d", { severity: "low" }),
-    record("e", { severity: "critical" }),
-  ]);
+    record("a", { severity: "critical", incidentDate: "2026-08-01" }),
+    record("b", { severity: "high", incidentDate: "2026-07-01" }),
+    record("c", { severity: "moderate", incidentDate: "2026-05-30" }),
+    record("d", { severity: "low", incidentDate: "2025-08-28" }),
+    record("e", { severity: "critical", incidentDate: "2024-08-28" }),
+  ], { referenceDate: REFERENCE_DATE });
 
-  assert.equal(areas[0].severity_burden, 9);
+  assert.equal(areas[0].severity_burden, 10.5);
+  assert.equal(areas[0].unweighted_severity_burden, 9);
   assert.deepEqual(areas[0].severity_counts, {
     low: 1,
     moderate: 1,
@@ -204,12 +208,36 @@ test("uses severity burden across all eligible unique crashes", () => {
   });
 });
 
+test("weights recent accidents more strongly than older accidents", () => {
+  assert.equal(recencyWeightForIncident(record("week", { incidentDate: "2026-08-21" }), REFERENCE_DATE), 1.75);
+  assert.equal(recencyWeightForIncident(record("month", { incidentDate: "2026-07-30" }), REFERENCE_DATE), 1.5);
+  assert.equal(recencyWeightForIncident(record("quarter", { incidentDate: "2026-06-01" }), REFERENCE_DATE), 1.25);
+  assert.equal(recencyWeightForIncident(record("year", { incidentDate: "2025-12-01" }), REFERENCE_DATE), 1);
+  assert.equal(recencyWeightForIncident(record("two-years", { incidentDate: "2025-02-01" }), REFERENCE_DATE), 0.75);
+  assert.equal(recencyWeightForIncident(record("three-years", { incidentDate: "2024-02-01" }), REFERENCE_DATE), 0.5);
+});
+
+test("classifies the example recency-weighted accident mix as critical", () => {
+  const areas = calculateAccidentProneAreas([
+    record("black-this-week", { severity: "black", incidentDate: "2026-08-21" }),
+    record("red-month-a", { severity: "red", incidentDate: "2026-07-30" }),
+    record("red-month-b", { severity: "red", incidentDate: "2026-07-30" }),
+    record("red-month-c", { severity: "red", incidentDate: "2026-07-30" }),
+    record("yellow-old", { severity: "yellow", incidentDate: "2024-08-28" }),
+  ], { referenceDate: REFERENCE_DATE });
+
+  assert.equal(areas[0].unique_incident_count, 5);
+  assert.equal(areas[0].unweighted_severity_burden, 10);
+  assert.equal(areas[0].severity_burden, 15);
+  assert.equal(areas[0].risk_level, "Critical");
+});
+
 test("separates recent advisory from recommended risk classification", () => {
-  const today = new Date();
+  const today = REFERENCE_DATE;
   const recentCritical = today.toISOString().slice(0, 10);
   const areas = calculateAccidentProneAreas([
     record("recent-critical", { incidentDate: recentCritical, severity: "critical" }),
-  ]);
+  ], { referenceDate: REFERENCE_DATE });
 
   assert.equal(areas[0].recommended_risk_level, "Caution");
   assert.equal(areas[0].risk_level, "Caution");
