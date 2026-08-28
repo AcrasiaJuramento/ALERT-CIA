@@ -9,8 +9,6 @@ import { createPCR, exportPCRToPdf, GCS_OPTIONS, INTERVENTIONS, newGcsRow, newVi
 import { getDispatchRecord, getDispatchRecordByResponse, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams, resubmitReverseWorkflow, submitStandalonePCR } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import { hybridRepository } from "../api/hybrid-client";
-import { localServerClient } from "../api/local-server-client";
-import { getConnectionState } from "../network/connection-manager";
 import { firstRecordIdentifier, normalizeRecordIdentifier, randomUuid } from "../utils/uuid";
 import { formatDateAndTime, formatLongDate } from "../utils/dateFormat";
 import { mergePcrSources, pcrSeedFromDispatch as mapDispatchToPcr } from "../utils/pcrDispatchMapping";
@@ -513,7 +511,7 @@ export default function PCRModule() {
         setCrewOptions(next.crew);
         if ([teamsResult, vehiclesResult, crewResult].some(result => result.status === "fulfilled")) writePcrReferenceCache(next);
         const failed = [teamsResult, vehiclesResult, crewResult].find(result => result.status === "rejected");
-        if (failed && getConnectionState().mode !== "local") {
+        if (failed) {
           toast.error(failed.reason?.message || "Unable to load some form reference data.");
         }
       });
@@ -533,14 +531,17 @@ export default function PCRModule() {
     async function loadPCR() {
       if (!editId && !dispatchId) {
         if (mounted) {
-          setForm(restoreLocalDraft(createPCR()));
+          setForm(restoreLocalDraft({
+            ...createPCR(),
+            workflowOrigin: "reverse",
+            offlineStandalone: true,
+          }));
           setDraftReady(true);
         }
         return;
       }
       setLoading(true);
       try {
-        const localMode = getConnectionState().mode === "local";
         const loadCachedDispatchByResponse = async linkedResponseId => {
           if (!linkedResponseId) return null;
           const cached = await hybridRepository.getLocalDispatchRecords().catch(() => []);
@@ -549,28 +550,18 @@ export default function PCRModule() {
         const loadLinkedDispatch = async (linkedDispatchId, linkedResponseId) => {
           let dispatch = null;
           if (linkedDispatchId) {
-            dispatch = localMode
-              ? await localServerClient.getDispatch(linkedDispatchId).catch(() => null)
-              : await getDispatchRecord(linkedDispatchId).catch(() => null);
+            dispatch = await getDispatchRecord(linkedDispatchId).catch(() => null);
             if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(linkedDispatchId).catch(() => null);
-            if (!dispatch && getConnectionState().localOnline) dispatch = await localServerClient.getDispatch(linkedDispatchId).catch(() => null);
           }
-          if (!dispatch && linkedResponseId && !localMode) dispatch = await getDispatchRecordByResponse(linkedResponseId).catch(() => null);
+          if (!dispatch && linkedResponseId) dispatch = await getDispatchRecordByResponse(linkedResponseId).catch(() => null);
           if (!dispatch) dispatch = await loadCachedDispatchByResponse(linkedResponseId);
           return dispatch;
         };
         if (editId) {
-          let record = localMode
-            ? await localServerClient.getPcr(editId).catch(() => null)
-            : await getPCRReport(editId).catch(() => null);
+          let record = await getPCRReport(editId).catch(() => null);
           if (!record) record = await hybridRepository.getLocalPcrReport(editId).catch(() => null);
-          if (!record && getConnectionState().localOnline) {
-            record = await localServerClient.getPcr(editId).catch(() => null);
-          }
           if (!record && responseId) {
-            record = localMode
-              ? await localServerClient.getPcrByResponse(responseId).catch(() => null)
-              : await getPCRReportByResponse(responseId).catch(() => null);
+            record = await getPCRReportByResponse(responseId).catch(() => null);
           }
           const linkedResponseId = firstRecordIdentifier(record?.responseId, responseId);
           const dispatch = await loadLinkedDispatch(firstRecordIdentifier(dispatchId, record?.dispatchId), linkedResponseId);
@@ -586,18 +577,11 @@ export default function PCRModule() {
             throw new Error("This Patient Care Report and its linked dispatch could not be loaded.");
           }
         } else if (dispatchId) {
-          let dispatch = localMode
-            ? await localServerClient.getDispatch(dispatchId).catch(() => null)
-            : await getDispatchRecord(dispatchId).catch(() => null);
+          let dispatch = await getDispatchRecord(dispatchId).catch(() => null);
           if (!dispatch) dispatch = await hybridRepository.getLocalDispatchRecord(dispatchId).catch(() => null);
-          if (!dispatch && getConnectionState().localOnline) {
-            dispatch = await localServerClient.getDispatch(dispatchId).catch(() => null);
-          }
           if (mounted && dispatch) {
             const pcrShell = dispatch.responseId
-              ? localMode
-                ? await localServerClient.getPcrByResponse(dispatch.responseId).catch(() => null)
-                : await getPCRReportByResponse(dispatch.responseId).catch(() => null)
+              ? await getPCRReportByResponse(dispatch.responseId).catch(() => null)
               : null;
             const freshPcr = createPCR();
             setLinkedDispatch(dispatch);
@@ -885,7 +869,7 @@ export default function PCRModule() {
       const saved = status === "Draft" || reverseSubmit
         ? await hybridRepository.savePcrDraft(payload)
         : await hybridRepository.submitPcr(payload);
-      if (reverseSubmit) {
+      if (reverseSubmit && !payload.offlineStandalone && !saved.offlineStandalone) {
         const pcrId = saved.id || saved.pcrId || form.id;
         if (form.status === 'Returned for Correction') await resubmitReverseWorkflow(pcrId);
         else await submitStandalonePCR(pcrId);

@@ -1,21 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Bell, Check, DatabaseZap, Monitor, Radio, RotateCcw, Save, Volume2 } from 'lucide-react';
+import { useState } from 'react';
+import { Bell, Check, DatabaseZap, Monitor, Radio, RotateCcw, Volume2 } from 'lucide-react';
 import { useAccessibility } from '../contexts/AccessibilityContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { checkConnection } from '../network/connection-manager';
-import { checkLocalHealth } from '../network/health-checks';
-import { getLocalServerConfig, localServerUrl, resetLocalServerConfig, saveLocalServerConfig } from '../services/device-service';
-import { formatLongDateTime } from '../utils/dateFormat';
 import { logAuditEvent } from '../services/supabase/auditService';
 
 const tabs = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'display', label: 'Display', icon: Monitor },
-  { id: 'local-server', label: 'Local Server', icon: Radio },
 ];
 
-const inputClass = 'w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500';
 const labelClass = 'block text-xs font-semibold text-muted-foreground mb-1.5';
 
 function Toggle({ checked, onChange, disabled = false }) {
@@ -63,8 +57,6 @@ function SaveBanner({ saved }) {
 export default function SystemSettings() {
   const [activeTab, setActiveTab] = useState('notifications');
   const [saved, setSaved] = useState(false);
-  const [localServer, setLocalServer] = useState({ protocol: 'http', host: '192.168.100.8', port: '4000', timeoutMs: 2500, discoveryEnabled: false, lastSuccessfulConnection: null });
-  const [localTest, setLocalTest] = useState('');
   const { isDarkMode, setThemeMode } = useTheme();
   const {
     fontSizeIndex,
@@ -83,57 +75,23 @@ export default function SystemSettings() {
     notifications,
   } = useNotifications();
 
-  const localServerOrigin = useMemo(() => localServerUrl(localServer), [localServer]);
-
-  useEffect(() => {
-    getLocalServerConfig().then(setLocalServer).catch(() => undefined);
-  }, []);
-
   const flashSaved = () => {
     setSaved(true);
     window.setTimeout(() => setSaved(false), 1800);
   };
 
-  const updateLocal = (key, value) => setLocalServer(current => ({ ...current, [key]: value }));
-
-  const saveLocal = async () => {
-    const next = await saveLocalServerConfig(localServer);
-    setLocalServer(next);
-    await checkConnection({ force: true });
-    flashSaved();
-    void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: 'local-server', description: 'Local server connection settings were updated.', platform: 'Web', metadata: { setting: 'local_server_connection' } });
-  };
-
   const updateNotificationPreference = (key, value) => {
     const previous = preferences[key];
     updatePreferences({ [key]: value });
+    flashSaved();
     void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: key, description: `${key} notification preference was updated.`, platform: 'Web', metadata: { setting: key, previous, next: value } });
   };
 
   const updateTheme = mode => {
     const previous = isDarkMode ? 'dark' : 'light';
     setThemeMode(mode);
-    if (previous !== mode) void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: 'theme', description: 'Display theme was updated.', platform: 'Web', metadata: { setting: 'theme', previous, next: mode } });
-  };
-
-  const testLocal = async () => {
-    setLocalTest('Testing connection...');
-    const ok = await checkLocalHealth(localServer);
-    if (!ok) {
-      setLocalTest('Local ALERT-CIA server is unreachable.');
-      return;
-    }
-    const next = await saveLocalServerConfig({ ...localServer, lastSuccessfulConnection: new Date().toISOString() });
-    setLocalServer(next);
-    setLocalTest('Local ALERT-CIA server connected.');
-    await checkConnection({ force: true });
-  };
-
-  const resetLocal = async () => {
-    const next = await resetLocalServerConfig();
-    setLocalServer(next);
-    setLocalTest('');
     flashSaved();
+    if (previous !== mode) void logAuditEvent({ action: 'SETTINGS_UPDATED', module: 'SETTINGS', recordReference: 'theme', description: 'Display theme was updated.', platform: 'Web', metadata: { setting: 'theme', previous, next: mode } });
   };
 
   const enableBrowserNotifications = async value => {
@@ -179,7 +137,7 @@ export default function SystemSettings() {
           <div>
             <div className="mb-4">
               <h2 className="text-sm font-bold text-foreground">Realtime Notifications</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">Controls apply to cloud realtime events and local server events.</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">Controls apply to ALERT-CIA cloud realtime events.</p>
             </div>
             <SettingRow icon={Bell} label="In-app notifications" desc="Show alerts in the notification drawer." checked={preferences.inAppEnabled} onChange={value => updateNotificationPreference('inAppEnabled', value)} />
             <SettingRow icon={Bell} label="PCR updates" desc="Notify when patient care reports are submitted or updated." checked={preferences.pcrEnabled} onChange={value => updateNotificationPreference('pcrEnabled', value)} />
@@ -229,54 +187,6 @@ export default function SystemSettings() {
           </div>
         )}
 
-        {activeTab === 'local-server' && (
-          <div>
-            <div className="mb-4">
-              <h2 className="text-sm font-bold text-foreground">Local ALERT-CIA Server</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">Used by tablets on the ALERT-CIA Wi-Fi when internet is unavailable.</p>
-            </div>
-            <div className="grid gap-4">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div>
-                  <label className={labelClass}>Protocol</label>
-                  <select className={inputClass} value={localServer.protocol} onChange={event => updateLocal('protocol', event.target.value)}>
-                    <option value="http">HTTP</option>
-                    <option value="https">HTTPS</option>
-                  </select>
-                </div>
-                <div>
-                  <label className={labelClass}>Hostname or IP address</label>
-                  <input className={inputClass} value={localServer.host} onChange={event => updateLocal('host', event.target.value)} placeholder="192.168.100.8" />
-                </div>
-                <div>
-                  <label className={labelClass}>Port</label>
-                  <input className={inputClass} value={localServer.port} onChange={event => updateLocal('port', event.target.value)} />
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className={labelClass}>Connection timeout</label>
-                  <input type="number" min="500" step="250" className={inputClass} value={localServer.timeoutMs} onChange={event => updateLocal('timeoutMs', event.target.value)} />
-                </div>
-                <div className="rounded-lg border border-border bg-secondary/40 p-3 text-xs text-muted-foreground">
-                  <div className="font-semibold text-foreground">Current local URL</div>
-                  <div className="mt-1 break-all">{localServerOrigin}</div>
-                  <div className="mt-2 font-semibold text-foreground">Last successful connection</div>
-                  <div className="mt-1">{localServer.lastSuccessfulConnection ? formatLongDateTime(localServer.lastSuccessfulConnection) : 'Never'}</div>
-                </div>
-              </div>
-              {localTest && <div className={`rounded-lg border px-3 py-2 text-xs ${localTest.includes('connected') ? 'border-green-500/30 bg-green-500/10 text-green-500' : localTest.includes('Testing') ? 'border-blue-500/30 bg-blue-500/10 text-blue-500' : 'border-red-500/30 bg-red-500/10 text-red-500'}`}>{localTest}</div>}
-              <div className="flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={testLocal} className="rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold">Test Connection</button>
-                <button type="button" onClick={resetLocal} className="rounded-lg border border-border px-4 py-2.5 text-sm font-semibold text-muted-foreground">Reset</button>
-                <button type="button" onClick={saveLocal} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white">
-                  <Save className="h-4 w-4" />
-                  Save
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

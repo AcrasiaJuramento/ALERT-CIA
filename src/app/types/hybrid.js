@@ -2,7 +2,6 @@ import { randomUuid } from "../utils/uuid";
 
 export const CONNECTION_MODES = Object.freeze({
   CLOUD: "cloud",
-  LOCAL: "local",
   OFFLINE: "offline",
 });
 
@@ -24,13 +23,11 @@ export const SYNC_STATUSES = Object.freeze({
 
 export const RECORD_SOURCES = Object.freeze({
   CLOUD: "cloud",
-  LOCAL_SERVER: "local_server",
   OFFLINE_DEVICE: "offline_device",
 });
 
 export const SYNC_DESTINATIONS = Object.freeze({
   CLOUD: "cloud",
-  LOCAL: "local",
 });
 
 export const SYNC_ENTITY_ORDER = [

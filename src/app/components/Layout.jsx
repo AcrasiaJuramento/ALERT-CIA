@@ -12,7 +12,6 @@ import { listIncidents, supabase } from '../services/supabase';
 import { isIncidentCompleted } from '../utils/incidentStatus';
 import { formatLongDate } from '../utils/dateFormat';
 import ConnectionIndicator from './ConnectionIndicator';
-import PwaStatusPrompts from './PwaStatusPrompts';
 import HazardWarningMonitor from './HazardWarningMonitor';
 import { useGeolocation } from '../contexts/GeolocationContext';
 
@@ -271,7 +270,6 @@ export default function Layout() {
           </div>
         )}
       </div>
-      <PwaStatusPrompts />
     </div>
   );
 }

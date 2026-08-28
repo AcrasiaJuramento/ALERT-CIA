@@ -3,46 +3,8 @@ import { isValidIncidentCoordinate, patientBirthdayFromRecord, pcrPayloadFromRec
 import { locationAssessment } from "../../utils/locationAccuracy";
 import { firstRecordIdentifier, isUuidIdentifier, randomUuid } from "../../utils/uuid";
 
-const TIME_PATTERN = /^\d{1,2}:\d{2}(:\d{2})?$/;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
 function validUuid(value) {
   return isUuidIdentifier(value);
-}
-
-function validTime(value) {
-  return typeof value === "string" && TIME_PATTERN.test(value);
-}
-
-function validDate(value) {
-  return typeof value === "string" && DATE_PATTERN.test(value);
-}
-
-function validNumber(value) {
-  if (value === null || value === undefined || value === "") return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? String(value) : null;
-}
-
-function lanDispatchParentPayload(record = {}) {
-  const payload = { ...record };
-  const uuidFields = ["id", "dispatchId", "dispatchClientId", "responseId", "responseClientId", "respondingTeamId", "vehicleId", "dispatchPatientId", "patientId"];
-  uuidFields.forEach(field => {
-    if (payload[field] && !validUuid(payload[field])) delete payload[field];
-  });
-  ["dateOfIncident", "birthday"].forEach(field => {
-    if (payload[field] && !validDate(payload[field])) delete payload[field];
-  });
-  ["timeOfIncident", "dispatchedTime", "dispatchTime", "arrivalScene", "departureScene", "arrivalHospital", "departureHospital", "backToBase"].forEach(field => {
-    if (payload[field] && !validTime(payload[field])) delete payload[field];
-  });
-  const latitude = validNumber(payload.latitude);
-  const longitude = validNumber(payload.longitude);
-  payload.latitude = latitude;
-  payload.longitude = longitude;
-  if (payload.age && !/^\d{1,3}$/.test(String(payload.age))) delete payload.age;
-  if (payload.numberOfPatients && !/^\d+$/.test(String(payload.numberOfPatients))) delete payload.numberOfPatients;
-  return payload;
 }
 
 const PCR_SELECT = `
@@ -715,34 +677,9 @@ async function resolveCloudDispatchFormId(client, record) {
   return { data: byResponse.data?.[0]?.id || null, error: null };
 }
 
-async function ensureLanDispatchParent(client, record) {
-  if (!validUuid(record.responseId) || !validUuid(record.dispatchId)) return { data: null, error: null };
-  const { data: existingResponse, error: responseError } = await client
-    .from("responses")
-    .select("id, responding_team_id")
-    .eq("id", record.responseId)
-    .limit(1)
-    .maybeSingle();
-  if (responseError) return { data: null, error: responseError };
-  if (existingResponse?.responding_team_id) return { data: existingResponse, error: null };
-
-  const shouldMaterializeParent = record.source === "local_server"
-    || record.localStatus
-    || record.responseClientId
-    || record.dispatchClientId;
-  if (!shouldMaterializeParent) return { data: null, error: null };
-
-  return client.rpc("sync_lan_dispatch_parent", {
-    dispatch_payload: lanDispatchParentPayload({
-      ...record,
-      status: "PCR In Progress",
-    }),
-  });
-}
-
 export async function upsertPCRReport(record, { submit = false } = {}) {
   let pcrId = validUuid(record.pcrId) ? record.pcrId : validUuid(record.id) ? record.id : validUuid(record.pcrClientId) ? record.pcrClientId : randomUuid();
-  const syncStatus = submit || record.status === "Completed" || record.status === "Submitted Locally"
+  const syncStatus = submit || record.status === "Completed" || record.status === "Submitted on Device" || record.status === "Submitted Locally"
     ? "Submitted"
     : record.status;
 
@@ -757,22 +694,6 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
     const resolvedParent = await resolveCloudParentIds(client, normalizedRecord);
     if (resolvedParent.error) return { data: null, error: resolvedParent.error };
     let syncRecord = resolvedParent.data || record;
-
-    const parentResult = await ensureLanDispatchParent(client, syncRecord);
-    if (parentResult.error && parentResult.error.code !== "PGRST202" && parentResult.error.code !== "42883") {
-      return parentResult;
-    }
-    if (parentResult.data?.id) {
-      syncRecord = {
-        ...syncRecord,
-        dispatchId: parentResult.data.id,
-        dispatchClientId: parentResult.data.client_generated_id || syncRecord.dispatchClientId || syncRecord.dispatchId,
-        responseId: parentResult.data.response_id || syncRecord.responseId,
-      };
-      const refreshedParent = await resolveCloudParentIds(client, syncRecord);
-      if (refreshedParent.error) return { data: null, error: refreshedParent.error };
-      syncRecord = refreshedParent.data || syncRecord;
-    }
 
     if (!validUuid(syncRecord.responseId)) {
       throw new Error("This PCR is not linked to a valid dispatch response. Reopen it from Received Dispatches and try again.");

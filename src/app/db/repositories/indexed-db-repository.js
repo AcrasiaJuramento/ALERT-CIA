@@ -61,7 +61,7 @@ function dependencyKeys(deviceId, type, entityType, payload) {
   if (entityType === "dispatch" && type === "update" && dispatchId) {
     keys.push([deviceId, "cloud", "dispatch", dispatchId, "create"].join(":"));
   }
-  if (entityType === "pcr" && payload.source !== RECORD_SOURCES.LOCAL_SERVER) {
+  if (entityType === "pcr") {
     const linkedDispatchId = payload.dispatchId;
     if (linkedDispatchId) {
       keys.push([deviceId, "cloud", "dispatch", linkedDispatchId, "create"].join(":"));
@@ -73,6 +73,12 @@ function dependencyKeys(deviceId, type, entityType, payload) {
 
 function destinationKey(destination) {
   return destination || "cloud";
+}
+
+function isStandalonePcr(payload = {}) {
+  return payload.workflowOrigin === "reverse"
+    || payload.offlineStandalone === true
+    || (!payload.dispatchId && !payload.dispatchClientId && !payload.responseId && !payload.responseClientId);
 }
 
 function manualDispatchShellFromPcr(record) {
@@ -87,7 +93,7 @@ function manualDispatchShellFromPcr(record) {
     responseClientId: responseId,
     responseNumber: record.responseNumber || `RESP-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`,
     status: record.status === "Draft" ? "PCR In Progress" : "Submitted",
-    localStatus: record.status === "Draft" ? "PCR Draft Locally" : "Submitted Locally",
+    localStatus: record.status === "Draft" ? "PCR Draft on Device" : "Submitted on Device",
     dateOfIncident: record.dateOfIncident || record.timeline?.dateOfIncident || new Date().toISOString().slice(0, 10),
     timeOfIncident: record.timeOfIncident || record.timeline?.timeOfIncident || "",
     placeOfIncident: record.placeOfIncident || record.timeline?.placeOfIncident || record.locationText || "",
@@ -133,13 +139,18 @@ function manualDispatchShellFromPcr(record) {
     departureHospital: record.departureHospital || record.timeline?.departureHospital || "",
     backToBase: record.backToBase || record.timeline?.backToBase || "",
     numberOfPatients: 1,
-    syncLabel: "Pending cloud synchronization",
+    syncLabel: "Waiting for internet",
     createdAt: record.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
 }
 
 async function ensureManualPcrParent(payload) {
+  if (isStandalonePcr(payload)) return {
+    ...payload,
+    workflowOrigin: "reverse",
+    offlineStandalone: true,
+  };
   if (payload.responseId && payload.dispatchId) return payload;
   const dispatch = withLocalFields(manualDispatchShellFromPcr(payload), "dispatch", RECORD_SOURCES.OFFLINE_DEVICE);
   await putRecord("local_dispatches", dispatch);
@@ -324,8 +335,8 @@ export const indexedDbRepository = {
     const dispatchRecord = withLocalFields({
       ...dispatch,
       status: dispatch.status || "PCR In Progress",
-      localStatus: dispatch.localStatus || "Dispatch Received Locally",
-    }, "dispatch", RECORD_SOURCES.LOCAL_SERVER);
+      localStatus: dispatch.localStatus || "Dispatch Received on Device",
+    }, "dispatch", RECORD_SOURCES.OFFLINE_DEVICE);
     await putRecord("local_dispatches", dispatchRecord);
 
     if (pcr) {
@@ -334,7 +345,7 @@ export const indexedDbRepository = {
         dispatchId: pcr.dispatchId || dispatchRecord.id,
         responseId: pcr.responseId || dispatchRecord.responseId,
         status: pcr.status || "In Progress",
-      }, "pcr", RECORD_SOURCES.LOCAL_SERVER);
+      }, "pcr", RECORD_SOURCES.OFFLINE_DEVICE);
       await putRecord("local_pcr_reports", pcrRecord);
       await queue("save_draft", "pcr", pcrRecord, "cloud");
     }
@@ -358,12 +369,11 @@ export const indexedDbRepository = {
       id,
       dispatchId: payload.dispatchId || existing?.dispatchId || id,
       status: payload.status || "Sent to Responding Team",
-      localStatus: payload.localStatus || "Sent to Responding Team Locally",
+      localStatus: payload.localStatus || "Sent to Responding Team on Device",
       sentAt: payload.sentAt || existing?.sentAt || new Date().toISOString(),
-    }, "dispatch", payload.source || existing?.source || RECORD_SOURCES.LOCAL_SERVER);
+    }, "dispatch", payload.source || existing?.source || RECORD_SOURCES.OFFLINE_DEVICE);
     await putRecord("local_dispatches", record);
     await queue("update", "dispatch", record, "cloud");
-    await queue("send", "assignment", record, "local");
     return record;
   },
 
@@ -380,7 +390,8 @@ export const indexedDbRepository = {
     const record = withLocalFields({
       ...mergePreservingExisting(existing, parentedPayload),
       status: payload.status || "Draft",
-      localStatus: payload.localStatus || "PCR Draft Locally",
+      localStatus: payload.localStatus || "PCR Draft on Device",
+      syncLabel: "Waiting for internet",
     }, "pcr");
     await putRecord("local_pcr_reports", record);
     await queue("save_draft", "pcr", record);
@@ -394,7 +405,8 @@ export const indexedDbRepository = {
     const record = withLocalFields({
       ...mergePreservingExisting(existing, parentedPayload),
       status: completedLocally ? "Submitted" : "Submitted",
-      localStatus: completedLocally ? "Submitted Locally" : payload.localStatus,
+      localStatus: completedLocally ? "Submitted on Device" : payload.localStatus,
+      syncLabel: "Waiting for internet",
       submittedAt: payload.submittedAt || new Date().toISOString(),
       completedAt: payload.completedAt || "",
       backToBase: payload.backToBase || "",
@@ -413,9 +425,9 @@ export const indexedDbRepository = {
       ...dispatch,
       id,
       dispatchId: id,
-      status: dispatch.status || "Submitted Locally",
-      localStatus: dispatch.localStatus || "Submitted Locally",
-    }, "dispatch", RECORD_SOURCES.LOCAL_SERVER);
+      status: dispatch.status || "Submitted on Device",
+      localStatus: dispatch.localStatus || "Submitted on Device",
+    }, "dispatch", RECORD_SOURCES.OFFLINE_DEVICE);
     await putRecord("local_dispatches", record);
     await queue("update", "dispatch", record, "cloud");
     return record;
@@ -434,11 +446,11 @@ export const indexedDbRepository = {
       pcrId: existing.pcrId || existing.id,
       responseId,
       status: "Submitted",
-      localStatus: payload.localStatus || "Submitted Locally",
+      localStatus: payload.localStatus || "Submitted on Device",
       completedAt,
       sync_status: "pending",
       updatedAt: completedAt,
-    }, "pcr", existing.source || RECORD_SOURCES.LOCAL_SERVER);
+    }, "pcr", existing.source || RECORD_SOURCES.OFFLINE_DEVICE);
     await putRecord("local_pcr_reports", record);
     await queue("update", "pcr", record, "cloud");
     await queue("completion_status", "completion_status", record, "cloud");

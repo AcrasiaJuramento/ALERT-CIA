@@ -6,6 +6,7 @@ import {
 } from "../services/supabase/dispatchService";
 import { createIncident } from "../services/supabase/incidentService";
 import { getPCRReport, replacePCRAttachments, replacePCRInterventions, replacePCRMedications, replacePCRVitals, upsertPCRReport } from "../services/supabase/pcrService";
+import { createStandalonePCRShell, submitStandalonePCR } from "../services/supabase/reverseWorkflowService";
 import { firstRecordIdentifier, isUuidIdentifier, randomUuid } from "../utils/uuid";
 
 async function replacePCRChildRows(pcrId, payload) {
@@ -166,6 +167,32 @@ async function ensureManualPcrParent(payload) {
   };
 }
 
+function isOfflineStandalonePcr(payload = {}) {
+  return payload.offlineStandalone === true && payload.workflowOrigin === "reverse";
+}
+
+async function saveOfflineStandalonePcr(payload, { submit = false } = {}) {
+  const shellId = await createStandalonePCRShell(payload);
+  const shell = await getPCRReport(shellId);
+  const parentedPayload = {
+    ...payload,
+    id: shellId,
+    pcrId: shellId,
+    responseId: shell.responseId,
+    responseClientId: shell.responseClientId || shell.responseId,
+    dispatchId: null,
+    dispatchClientId: null,
+    workflowOrigin: "reverse",
+    offlineStandalone: false,
+    status: "Draft",
+  };
+  const saved = await upsertPCRReport(parentedPayload);
+  await replacePCRChildRows(saved.id, payload);
+  if (!submit) return getPCRReport(saved.id);
+  await submitStandalonePCR(saved.id);
+  return getPCRReport(saved.id);
+}
+
 export const cloudClient = {
   createIncident,
   createDispatch: createDispatchRecord,
@@ -173,12 +200,14 @@ export const cloudClient = {
   sendDispatch: sendDispatchToRespondingTeam,
   markResponseBackToBase,
   async savePcrDraft(payload) {
+    if (isOfflineStandalonePcr(payload)) return saveOfflineStandalonePcr(payload);
     const parentedPayload = await ensureManualPcrParent(payload);
     const saved = await upsertPCRReport(parentedPayload);
     await replacePCRChildRows(saved.id, payload);
     return getPCRReport(saved.id);
   },
   async submitPcr(payload) {
+    if (isOfflineStandalonePcr(payload)) return saveOfflineStandalonePcr(payload, { submit: true });
     const parentedPayload = await ensureManualPcrParent(payload);
     const saved = await upsertPCRReport(parentedPayload, { submit: true });
     await replacePCRChildRows(saved.id, payload);

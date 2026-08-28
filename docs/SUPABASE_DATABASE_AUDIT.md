@@ -74,7 +74,7 @@ The largest bug found was that the offline-to-cloud PCR RPC path received raw PC
 After deploying this code:
 
 1. Create a dispatch with patient, nature, location, team, vehicle, driver, main aider, group leader, and assistant aider.
-2. Send through offline LAN.
+2. Send after a temporary offline standalone PCR draft.
 3. Accept as Field Officer and complete PCR with:
    - Multiple vital rows
    - Multiple GCS rows
@@ -82,7 +82,7 @@ After deploying this code:
    - Intervention checklist and details
    - Signatures
    - Waiver/notes/body map
-4. Submit while offline/LAN.
+4. Submit while temporarily offline, then reconnect and sync.
 5. Reconnect cloud and run Sync Now.
 6. Verify Supabase:
    - `responses` has response, patient, location, and team data.

@@ -26,7 +26,6 @@ import {
 } from "../utils/dispatchWorkflow";
 import { hybridRepository } from "../api/hybrid-client";
 import { cloudClient } from "../api/cloud-client";
-import { localServerClient } from "../api/local-server-client";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { subscribeLiveSyncEvents } from "../network/live-sync-events";
 import { getPCRReportByResponse, listDispatchRecords, listPCRReportsByResponses } from "../services/supabase";
@@ -52,10 +51,8 @@ const formatDate = value => {
 
 const SOURCE_RANK = {
   device: 1,
-  local_server: 2,
-  cloud: 3,
+  cloud: 2,
 };
-const LOCAL_REFRESH_MS = 15000;
 const CLOUD_REFRESH_MS = 30000;
 const PCR_SYNC_LOG = "[ALERT-CIA PCR Sync]";
 const DISPATCH_FILTER_STATUSES = [
@@ -63,21 +60,17 @@ const DISPATCH_FILTER_STATUSES = [
   "Draft",
   "Sent to Field Officer",
   "Sent to Responding Team",
-  "Sent to Responding Team Locally",
+  "Sent to Responding Team on Device",
   "Accepted by Responding Team",
   "PCR In Progress",
   "PCR Completed",
   "Submitted",
-  "Submitted Locally",
+  "Submitted on Device",
   "Pending Admin Verification",
   "Returned for Correction",
   "Verified",
   "Cancelled",
 ];
-
-function localResponseId(record = {}) {
-  return record.responseClientId || record.responseId;
-}
 
 function compactIdSet(values = []) {
   return new Set(values.filter(Boolean).map(value => String(value)));
@@ -139,19 +132,16 @@ function sameLinkedPcrForDispatch(record = {}, pcr = {}) {
 }
 
 async function getLocalPcrForDispatch(record = {}) {
-  const ids = [...new Set([localResponseId(record), record.responseId].filter(Boolean))];
-  for (const id of ids) {
-    const pcr = await localServerClient.getPcrByResponse(id).catch(() => null);
-    if (pcr) return pcr;
-  }
-  return null;
+  const rows = await hybridRepository.getLocalPcrReports().catch(() => []);
+  return rows.find(pcr => sameLinkedPcrForDispatch(record, pcr)) || null;
 }
 
 function displayStatus(record, linkedPcr = null) {
   const pcrStatus = linkedPcr?.recordSource === "cloud"
     ? linkedPcr?.status
     : linkedPcr?.localStatus || linkedPcr?.status;
-  if (["Submitted", "Submitted Locally", "Verified"].includes(pcrStatus)) return pcrStatus;
+  if (pcrStatus === "Submitted Locally") return "Submitted on Device";
+  if (["Submitted", "Submitted on Device", "Verified"].includes(pcrStatus)) return pcrStatus;
   return record.localStatus || record.status || "Draft";
 }
 
@@ -168,22 +158,22 @@ function needsCloudUpload(record = {}, linkedPcr = null) {
     && (
       !linkedPcr?.synced_to_cloud
       || linkedPcrSyncText.includes("pending")
-      || linkedPcrSyncText.includes("saved on local server")
-      || String(linkedPcr.localStatus || "").toLowerCase().includes("locally")
+      || linkedPcrSyncText.includes("waiting for internet")
+      || String(linkedPcr.localStatus || "").toLowerCase().includes("device")
     );
   if (linkedPcrNeedsCloud) return true;
   const cloudSynced = record.synced_to_cloud === true || syncText.includes("cloud synced");
   if (cloudSynced && !syncText.includes("pending")) return false;
   return (
       syncText.includes("pending")
-      || syncText.includes("saved on local server")
-      || localStatusText.includes("submitted locally")
-      || localStatusText.includes("pcr completed locally")
-      || statusText.includes("submitted locally")
+      || syncText.includes("waiting for internet")
+      || localStatusText.includes("submitted on device")
+      || localStatusText.includes("pcr draft on device")
+      || statusText.includes("submitted on device")
       || statusText.includes("pcr completed")
-      || displayText.includes("submitted locally")
+      || displayText.includes("submitted on device")
       || displayText.includes("pcr completed")
-      || (hasLinkedPcr && record.recordSource === "local_server")
+      || (hasLinkedPcr && record.recordSource === "device")
     );
 }
 
@@ -383,32 +373,15 @@ export default function DispatchRecords() {
         return [];
       });
       const localDeviceRows = await hybridRepository.getLocalDispatchRecords().catch(() => []);
-      const localServerRows = getConnectionState().localOnline
-        ? await localServerClient.listDispatches().catch(() => [])
-        : [];
       if (cloudRows.length) {
         await hybridRepository.reconcileCloudDispatches(cloudRows).catch(() => 0);
       }
       const reconciledLocalRows = cloudRows.length
         ? await hybridRepository.getLocalDispatchRecords().catch(() => localDeviceRows)
         : localDeviceRows;
-      const localDeviceById = new Map(reconciledLocalRows.map(record => [record.id || record.dispatchId, record]));
-      await Promise.all(localServerRows
-        .filter(record => record.status === DISPATCH_STATUSES.PCR_COMPLETED || record.localStatus === "PCR Completed Locally" || record.status === "Submitted Locally" || record.localStatus === "Submitted Locally")
-        .filter(record => {
-          const cached = localDeviceById.get(record.id || record.dispatchId);
-          return !cached
-            || !["PCR Completed Locally", "Submitted Locally"].includes(displayStatus(cached))
-            || String(cached.updatedAt || "") !== String(record.updatedAt || "");
-        })
-        .map(record => hybridRepository.cacheCompletedDispatch(record).catch(() => null)));
       const localPcrRows = await hybridRepository.getLocalPcrReports().catch(() => []);
-      const localServerPcrRows = getConnectionState().localOnline
-        ? await localServerClient.listPcrReports().catch(() => [])
-        : [];
       const rows = mergeDispatchRecords([
         ...reconciledLocalRows.map(record => ({ ...record, recordSource: "device" })),
-        ...localServerRows.map(record => ({ ...record, recordSource: "local_server" })),
         ...cloudRows.map(record => ({ ...record, recordSource: "cloud" })),
       ]);
       if (!mountedRef.current) return;
@@ -442,10 +415,10 @@ export default function DispatchRecords() {
           });
           return [key, cloudPcr];
         }
-        const localPcr = [...localServerPcrRows, ...localPcrRows]
+        const localPcr = localPcrRows
           .find(pcr => sameLinkedPcrForDispatch(record, pcr));
         if (localPcr) {
-          logPcrSync("Linked local/LAN PCR to dispatch", {
+          logPcrSync("Linked device PCR to dispatch", {
             key,
             responseId: record.responseId,
             responseClientId: record.responseClientId,
@@ -483,8 +456,8 @@ export default function DispatchRecords() {
         }
         return [key, localPcr ? {
           ...localPcr,
-          recordSource: localPcr.recordSource || localPcr.source || "local_server",
-          syncLabel: localPcr.syncLabel || "Saved on local server",
+          recordSource: localPcr.recordSource || localPcr.source || "device",
+          syncLabel: localPcr.syncLabel || "Waiting for internet",
         } : null];
       }));
       if (!mountedRef.current) return;
@@ -534,7 +507,7 @@ export default function DispatchRecords() {
     if (connection.mode === "offline") return undefined;
     const interval = window.setInterval(() => {
       if (document.visibilityState === "visible") refresh({ silent: true });
-    }, connection.mode === "cloud" ? CLOUD_REFRESH_MS : LOCAL_REFRESH_MS);
+    }, CLOUD_REFRESH_MS);
     return () => window.clearInterval(interval);
   }, [connection.mode, refresh]);
 
@@ -670,7 +643,7 @@ export default function DispatchRecords() {
         ...record,
         id: record.dispatchId || record.id,
         dispatchId: record.dispatchId || record.id,
-        status: displayStatus(record, localPcr) === "Submitted Locally" ? "PCR Completed" : record.status,
+        status: ["Submitted on Device", "Submitted Locally"].includes(displayStatus(record, localPcr)) ? "PCR Completed" : record.status,
       });
       if (localPcr) {
         const savedPcr = await cloudClient.submitPcrHeader({
@@ -686,8 +659,8 @@ export default function DispatchRecords() {
           respondingTeamId: record.respondingTeamId || localPcr.respondingTeamId,
           team: record.team || localPcr.team || localPcr.respondingTeam,
           status: "Submitted",
-          localStatus: "Submitted Locally",
-          source: localPcr.source || record.source || "local_server",
+          localStatus: "Submitted on Device",
+          source: localPcr.source || record.source || "offline_device",
         });
         const confirmedPcr = await confirmCloudPcrUpload(savedPcr, { ...record, ...localPcr });
         logPcrSync("Cloud PCR upload confirmed", {

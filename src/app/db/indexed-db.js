@@ -170,25 +170,30 @@ export async function retryFailedSyncOperations() {
 function isFieldOfficerCachedDispatch(operation) {
   const localStatus = operation.payload?.localStatus;
   const status = operation.payload?.status;
+  const receivedOnDeviceStatuses = ["Dispatch Received on Device", "Dispatch Received Locally"];
+  const completedOnDeviceStatuses = ["PCR Completed on Device", "PCR Completed Locally"];
+  const submittedOnDeviceStatuses = ["Submitted on Device", "Submitted Locally"];
   return operation.entity_type === "dispatch"
     && ["create", "update"].includes(operation.operation_type)
     && operation.destination === "cloud"
     && (
-      localStatus === "Dispatch Received Locally"
-      || localStatus === "PCR Completed Locally"
-      || (localStatus === "Submitted Locally" && status !== "Sent to Responding Team")
+      receivedOnDeviceStatuses.includes(localStatus)
+      || completedOnDeviceStatuses.includes(localStatus)
+      || (submittedOnDeviceStatuses.includes(localStatus) && status !== "Sent to Responding Team")
     );
 }
 
 function isDispatcherOwnedLocalDispatch(operation) {
   const localStatus = operation.payload?.localStatus;
   const status = operation.payload?.status;
+  const fieldOfficerDeviceStatuses = ["Dispatch Received on Device", "Dispatch Received Locally", "PCR Completed on Device", "PCR Completed Locally"];
+  const submittedOnDeviceStatuses = ["Submitted on Device", "Submitted Locally"];
   return operation.entity_type === "dispatch"
     && ["create", "update"].includes(operation.operation_type)
     && operation.destination === "cloud"
-    && operation.payload?.source === "local_server"
-    && !["Dispatch Received Locally", "PCR Completed Locally"].includes(localStatus)
-    && !(localStatus === "Submitted Locally" && status !== "Sent to Responding Team");
+    && operation.payload?.source === "offline_device"
+    && !fieldOfficerDeviceStatuses.includes(localStatus)
+    && !(submittedOnDeviceStatuses.includes(localStatus) && status !== "Sent to Responding Team");
 }
 
 export async function repairPoisonedSyncOperations() {
@@ -223,7 +228,7 @@ export async function repairPoisonedSyncOperations() {
       ...row,
       sync_status: "cancelled",
       error_category: "authorization",
-      blocked_reason: "Cancelled field-officer cached dispatch cloud write. The dispatcher-owned dispatch/response must sync from the dispatcher or trusted local server.",
+      blocked_reason: "Cancelled field-officer cached dispatch cloud write. The dispatcher-owned dispatch/response must sync from the dispatcher account.",
       next_attempt_at: null,
       updated_at_device: now,
     });

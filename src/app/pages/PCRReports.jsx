@@ -8,7 +8,6 @@ import {
 import { toast } from 'sonner';
 import { PERMISSIONS, ROLES } from '../access/rbac';
 import { hybridRepository } from '../api/hybrid-client';
-import { localServerClient } from '../api/local-server-client';
 import { PrintablePCR } from '../components/PCRWidgets';
 import { useAuth } from '../contexts/AuthContext';
 import { getConnectionState, subscribeConnection } from '../network/connection-manager';
@@ -45,10 +44,9 @@ function localRecord(record, recordSource) {
   };
 }
 
-function mergePCRRecords(localServerRecords, localDeviceRecords, cloudRecords) {
+function mergePCRRecords(localDeviceRecords, cloudRecords) {
   const byRecord = new Map();
   [
-    ...localServerRecords.map(record => localRecord(record, 'local_server')),
     ...localDeviceRecords.map(record => localRecord(record, 'device')),
     ...cloudRecords.map(record => ({ ...record, recordSource: 'cloud', syncLabel: 'Cloud synced' })),
   ].forEach(record => {
@@ -85,7 +83,7 @@ export default function PCRReports() {
     try {
       const connection = getConnectionState();
       let cloudError = null;
-      const [cloudRecords, localDeviceRecords, localServerRecords] = await Promise.all([
+      const [cloudRecords, localDeviceRecords] = await Promise.all([
         connection.cloudOnline
           ? listPCRReports({
             limit: pageSize,
@@ -98,7 +96,6 @@ export default function PCRReports() {
           })
           : Promise.resolve([]),
         hybridRepository.getLocalPcrReports().catch(() => []),
-        connection.localOnline ? localServerClient.listPcrReports().catch(() => []) : Promise.resolve([]),
       ]);
       if (cloudRecords.length) {
         await hybridRepository.reconcileCloudPcrReports(cloudRecords).catch(() => 0);
@@ -106,11 +103,7 @@ export default function PCRReports() {
       const reconciledDeviceRecords = cloudRecords.length
         ? await hybridRepository.getLocalPcrReports().catch(() => localDeviceRecords)
         : localDeviceRecords;
-      const localDeviceKeys = new Set(reconciledDeviceRecords.map(logicalRecordKey).filter(Boolean));
-      const visibleLocalServerRecords = user?.role === ROLES.FIELD_OFFICER
-        ? localServerRecords.filter(record => localDeviceKeys.has(logicalRecordKey(record)))
-        : localServerRecords;
-      const mergedRecords = mergePCRRecords(visibleLocalServerRecords, reconciledDeviceRecords, cloudRecords);
+      const mergedRecords = mergePCRRecords(reconciledDeviceRecords, cloudRecords);
       setRecords(mergedRecords);
       const cloudKeys = new Set(cloudRecords.map(logicalRecordKey).filter(Boolean));
       const unsyncedLocalCount = mergedRecords.filter(record => record.recordSource !== 'cloud' && !cloudKeys.has(logicalRecordKey(record))).length;
@@ -236,7 +229,7 @@ export default function PCRReports() {
       if (!getConnectionState().cloudOnline) {
         sessionStorage.removeItem(PCR_EDIT_KEY);
         navigate('/admin/pcr/new');
-        toast.info('Offline standalone PCR opened. Save Draft to keep it on this device until synchronization is available.');
+        toast.info('Offline standalone PCR opened. Save Draft to keep it on this device until internet returns.');
         return;
       }
       const pcrId = await createStandalonePCRShell({ dateOfIncident: new Date().toISOString().slice(0, 10) });

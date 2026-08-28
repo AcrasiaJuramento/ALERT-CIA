@@ -1,6 +1,5 @@
 import { getAllRecords, getPendingSyncOperations, logSyncEvent, putIdMapping, putRecord, remapQueuedDispatchParentIds } from "../db/indexed-db";
 import { cloudClient } from "../api/cloud-client";
-import { localServerClient } from "../api/local-server-client";
 import { getConnectionState, checkConnection } from "../network/connection-manager";
 import { SYNC_ENTITY_ORDER } from "../types/hybrid";
 import { selectDeliveryTarget } from "./sync-routing";
@@ -68,14 +67,6 @@ function dependencySatisfied(rows, key) {
 
 export function findWaitingDependency(operation, rows) {
   const payload = operation.payload || {};
-  const canMaterializeLanParent = operation.entity_type === "pcr"
-    && (
-      payload.source === "local_server"
-      || payload.localStatus
-      || payload.responseClientId
-      || payload.dispatchClientId
-    );
-  if (canMaterializeLanParent) return null;
   const explicit = (operation.dependency_keys || []).find(key => !dependencySatisfied(rows, key));
   if (explicit) return explicit;
   if (operation.entity_type === "pcr") {
@@ -209,18 +200,15 @@ async function coalesceOperations(operations) {
   return operations.filter(operation => !cancelledIds.has(operation.id));
 }
 
-function successState(operation, target, syncedAt) {
-  const syncedToCloud = target === "cloud" ? true : Boolean(operation.synced_to_cloud);
-  const syncedToLocal = target === "local" ? true : Boolean(operation.synced_to_local);
-  const complete = operation.destination === "local" ? syncedToLocal : syncedToCloud;
+function successState(syncedAt) {
   return {
-    sync_status: complete ? "synced" : "partially_synced",
-    synced_to_cloud: syncedToCloud,
-    synced_to_local: syncedToLocal,
-    cloud_synced_at: target === "cloud" ? syncedAt : operation.cloud_synced_at,
-    local_synced_at: target === "local" ? syncedAt : operation.local_synced_at,
-    next_attempt_at: complete ? null : new Date(Date.now() + WAIT_FOR_CONNECTION_MS).toISOString(),
-    blocked_reason: complete ? null : "Staged locally. Waiting for cloud connection to complete synchronization.",
+    sync_status: "synced",
+    synced_to_cloud: true,
+    synced_to_local: false,
+    cloud_synced_at: syncedAt,
+    local_synced_at: null,
+    next_attempt_at: null,
+    blocked_reason: null,
   };
 }
 
@@ -236,16 +224,7 @@ async function markOperationWaiting(operation, route) {
 }
 
 async function deliver(operation, target) {
-  if (target === "local") {
-    try {
-      return await localServerClient.syncOperation(operation);
-    } catch (error) {
-      if (String(error?.message || "").includes("Local ALERT-CIA dev endpoint not found")) {
-        return { accepted: true, skipped: true, operationId: operation.operation_id };
-      }
-      throw error;
-    }
-  }
+  if (target !== "cloud") throw new Error("Unsupported sync destination.");
   if (operation.entity_type === "dispatch" && operation.operation_type === "create") {
     return cloudClient.createDispatch(operation.payload);
   }
@@ -264,7 +243,7 @@ async function deliver(operation, target) {
   if (operation.entity_type === "incident") {
     return cloudClient.createIncident(operation.payload);
   }
-  return localServerClient.syncOperation(operation);
+  throw new Error(`Unsupported sync operation: ${operation.entity_type}/${operation.operation_type}`);
 }
 
 async function recordIdMappings(operation, result) {
@@ -410,7 +389,7 @@ export async function runSyncNow({ includeNotDue = false } = {}) {
         await recordIdMappings(operation, result);
         const syncedAt = new Date().toISOString();
         if (route.target === "cloud") await markLocalRecordSynced(operation, result, syncedAt);
-        const syncedState = successState(operation, route.target, syncedAt);
+        const syncedState = successState(syncedAt);
         await putRecord("sync_queue", {
           ...operation,
           attempts,

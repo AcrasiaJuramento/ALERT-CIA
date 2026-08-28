@@ -1,6 +1,5 @@
 import { CONNECTION_MODES } from "../types/hybrid";
-import { readOfflineSettings } from "../pwa/offline-settings";
-import { checkCloudHealth, discoverLocalServer } from "./health-checks";
+import { checkCloudHealth } from "./health-checks";
 
 const CLOUD_CHECK_INTERVAL_MS = 30000;
 const FALLBACK_CHECK_INTERVAL_MS = 15000;
@@ -16,7 +15,6 @@ let state = {
   checking: false,
   lastCheckedAt: null,
   lastCloudOnlineAt: null,
-  lastLocalOnlineAt: null,
   error: null,
 };
 
@@ -28,22 +26,6 @@ function sleep(ms) {
 
 function emit() {
   for (const subscriber of subscribers) subscriber(state);
-}
-
-function modeFromHealth(cloudOnline, localOnline, preferredMode) {
-  if (typeof window !== "undefined") {
-    if ((window.location.protocol === "https:" || window.location.hostname.endsWith("vercel.app")) && cloudOnline) {
-      return CONNECTION_MODES.CLOUD;
-    }
-    if ((window.location.port === "4000" || /^192\.168\./.test(window.location.hostname) || window.location.hostname === "127.0.0.1") && localOnline) {
-      return CONNECTION_MODES.LOCAL;
-    }
-  }
-  if (preferredMode === CONNECTION_MODES.CLOUD && cloudOnline) return CONNECTION_MODES.CLOUD;
-  if (preferredMode === CONNECTION_MODES.LOCAL && localOnline) return CONNECTION_MODES.LOCAL;
-  if (localOnline) return CONNECTION_MODES.LOCAL;
-  if (cloudOnline) return CONNECTION_MODES.CLOUD;
-  return CONNECTION_MODES.OFFLINE;
 }
 
 function checkIntervalForMode(mode) {
@@ -65,8 +47,7 @@ export function getConnectionState() {
 export function forceConnectionMode(mode) {
   state = {
     ...state,
-    mode,
-    preferredMode: mode,
+    mode: mode === CONNECTION_MODES.CLOUD ? CONNECTION_MODES.CLOUD : CONNECTION_MODES.OFFLINE,
   };
   emit();
   return state;
@@ -88,23 +69,16 @@ export async function checkConnection({ force = false } = {}) {
   state = { ...state, checking: true, error: null };
   emit();
   inflight = (async () => {
-    const [localConfig, cloudOnline] = await Promise.all([
-      discoverLocalServer(),
-      checkCloudWithRetries(),
-    ]);
-    const localOnline = Boolean(localConfig);
-    const preferredMode = readOfflineSettings().preferredMode;
+    const cloudOnline = await checkCloudWithRetries();
     const checkedAt = new Date().toISOString();
     state = {
       ...state,
       cloudOnline,
-      localOnline,
-      mode: modeFromHealth(cloudOnline, localOnline, preferredMode),
-      preferredMode,
+      localOnline: false,
+      mode: cloudOnline ? CONNECTION_MODES.CLOUD : CONNECTION_MODES.OFFLINE,
       checking: false,
       lastCheckedAt: checkedAt,
       lastCloudOnlineAt: cloudOnline ? checkedAt : state.lastCloudOnlineAt,
-      lastLocalOnlineAt: localOnline ? checkedAt : state.lastLocalOnlineAt,
     };
     emit();
     return state;

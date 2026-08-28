@@ -9,8 +9,8 @@ import rescueLogoAsset from "../../assets/rescue-logo.png?inline";
 const isPcrCompleted = (record) =>
   String(record?.status || "").includes("PCR Completed") ||
   String(record?.localStatus || "").includes("PCR Completed") ||
-  ["Submitted", "Submitted Locally", "Verified"].includes(record?.status) ||
-  ["Submitted Locally", "Verified"].includes(record?.localStatus);
+  ["Submitted", "Submitted on Device", "Submitted Locally", "Verified"].includes(record?.status) ||
+  ["Submitted on Device", "Submitted Locally", "Verified"].includes(record?.localStatus);
 
 const checkbox = (value) =>
   value

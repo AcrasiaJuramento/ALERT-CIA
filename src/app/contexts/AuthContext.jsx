@@ -1,7 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { ROLES, ROLE_LABELS, hasPermission } from '../access/rbac';
-import { localServerClient } from '../api/local-server-client';
-import { checkConnection, getConnectionState } from '../network/connection-manager';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import { logAuditEvent } from '../services/supabase/auditService';
 import { refreshPCRReferenceCache } from '../services/pcrReferenceCache';
@@ -56,7 +54,6 @@ async function saveOfflineLogin(user, password) {
     updatedAt: new Date().toISOString(),
   };
   localStorage.setItem(OFFLINE_AUTH_KEY, JSON.stringify(offlineAuth));
-  await localServerClient.cacheUser({ user, password }).catch(() => null);
 }
 
 async function loginWithOfflineVerifier(email, password) {
@@ -93,29 +90,6 @@ function isNetworkAuthError(error) {
     || message.includes('networkerror')
     || message.includes('network request failed')
     || message.includes('load failed');
-}
-
-async function loginWithLocalServer(email, password) {
-  await checkConnection({ force: true }).catch(() => null);
-  const state = getConnectionState();
-  if (state.cloudOnline && !state.localOnline) return null;
-  const localUser = await localServerClient.login({ email, password });
-  return {
-    id: localUser.id,
-    email: localUser.email,
-    name: localUser.name,
-    role: localUser.role || ROLES.FIELD_OFFICER,
-    status: localUser.status || 'active',
-    source: 'local_server',
-  };
-}
-
-async function tryLocalServerLogin(email, password) {
-  try {
-    return await loginWithLocalServer(email, password);
-  } catch {
-    return null;
-  }
 }
 
 export function AuthProvider({ children }) {
@@ -179,8 +153,7 @@ export function AuthProvider({ children }) {
         data = result.data;
       } catch (error) {
         if (!isNetworkAuthError(error)) throw error;
-        const localUser = await tryLocalServerLogin(email, password);
-        const offlineUser = localUser || await loginWithOfflineVerifier(email, password);
+        const offlineUser = await loginWithOfflineVerifier(email, password);
         if (!offlineUser) throw error;
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(offlineUser));
         setUser(offlineUser);
@@ -209,14 +182,6 @@ export function AuthProvider({ children }) {
       return nextUser;
     }
 
-    const localUser = await tryLocalServerLogin(email, password);
-    if (localUser) {
-      await saveOfflineLogin(localUser, password);
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(localUser));
-      setUser(localUser);
-      return localUser;
-    }
-
     const offlineUser = await loginWithOfflineVerifier(email, password);
     if (offlineUser) {
       localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(offlineUser));
@@ -224,7 +189,7 @@ export function AuthProvider({ children }) {
       return offlineUser;
     }
 
-    throw new Error('Unable to sign in. Connect to the internet or the local ALERT-CIA server.');
+    throw new Error('Unable to sign in. Connect to the internet and try again.');
   };
 
   const logout = async () => {

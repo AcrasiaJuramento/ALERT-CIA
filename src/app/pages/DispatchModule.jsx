@@ -14,8 +14,6 @@ import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import SyncStatusPanel from "../components/SyncStatusPanel";
 import { hybridRepository } from "../api/hybrid-client";
-import { localServerClient } from "../api/local-server-client";
-import { checkConnection, getConnectionState } from "../network/connection-manager";
 import { randomUuid } from "../utils/uuid";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
@@ -540,7 +538,7 @@ export default function DispatchModule({ onBack }) {
         setVehicleOptions(vehiclesResult.status === "fulfilled" ? vehiclesResult.value : []);
         setCrewOptions(crewResult.status === "fulfilled" ? crewResult.value : []);
         const failed = [teamsResult, vehiclesResult, crewResult].find(result => result.status === "rejected");
-        if (failed && getConnectionState().mode !== "local") {
+        if (failed) {
           toast.error(failed.reason?.message || "Unable to load some form reference data.");
         }
       });
@@ -556,14 +554,9 @@ export default function DispatchModule({ onBack }) {
       if (!editId) return;
       setLoading(true);
       try {
-        const mode = getConnectionState().mode;
-        const found = mode === "local"
-          ? await localServerClient.getDispatch(editId).catch(() => getCachedDispatch(editId))
-          : await getDispatchRecord(editId).catch(() => getCachedDispatch(editId));
+        const found = await getDispatchRecord(editId).catch(() => getCachedDispatch(editId));
         if (mounted && found) {
-          const pcr = mode === "local"
-            ? await localServerClient.getPcrByResponse(found.responseId).catch(() => null)
-            : await getPCRReportByResponse(found.responseId).catch(() => null);
+          const pcr = await getPCRReportByResponse(found.responseId).catch(() => null);
           if (mounted) {
             const hydrated = mergeDispatchWithPCR(found, pcr);
             setForm({
@@ -711,23 +704,6 @@ export default function DispatchModule({ onBack }) {
     }
   };
 
-  const mirrorSentDispatchToLan = async (record) => {
-    const state = await checkConnection({ force: true });
-    if (!state.localOnline) return null;
-    const dispatchId = record.dispatchId || record.id || form.dispatchId || editId;
-    if (!dispatchId) return null;
-    const payload = {
-      ...form,
-      ...record,
-      id: dispatchId,
-      dispatchId,
-      status: DISPATCH_STATUSES.SENT,
-      localStatus: "Sent to Responding Team Locally",
-    };
-    const localRecord = await localServerClient.updateDispatch(dispatchId, payload);
-    return localServerClient.sendDispatch(localRecord.dispatchId || localRecord.id || dispatchId);
-  };
-
   const handleSendToFieldOfficer = async () => {
     if (!requirePinnedLocation()) return;
     if (!form.team) {
@@ -739,11 +715,10 @@ export default function DispatchModule({ onBack }) {
         ? await hybridRepository.updateDispatch(form.dispatchId || editId, form)
         : await hybridRepository.createDispatch(form);
       const result = await hybridRepository.sendDispatch(savedDispatch.dispatchId || savedDispatch.id);
-      const lanResult = await mirrorSentDispatchToLan(result);
-      const finalResult = lanResult || result;
+      const finalResult = result;
       setForm({ ...newDispatch(), ...finalResult, patients: finalResult.patients?.length ? finalResult.patients : [newPatient()] });
-      setSaved(lanResult ? "Dispatch sent to the local LAN server." : result.hybridMessage || "Dispatch sent to the selected responding team.");
-      toast.success(lanResult ? "Dispatch sent to local LAN. Field officer can receive it now." : result.hybridMessage || "Dispatch sent to responding team.");
+      setSaved(result.hybridMessage || "Dispatch sent to the selected responding team.");
+      toast.success(result.hybridMessage || "Dispatch sent to responding team.");
       setTimeout(() => setSaved(""), 3000);
     } catch (error) {
       toast.error(error.message || "Unable to send dispatch.");

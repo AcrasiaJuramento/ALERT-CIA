@@ -12,7 +12,6 @@ import {
   listReceivedDispatchRecords,
   markResponseBackToBase,
 } from "../services/supabase";
-import { localServerClient } from "../api/local-server-client";
 import { hybridRepository } from "../api/hybrid-client";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { subscribeLiveSyncEvents } from "../network/live-sync-events";
@@ -20,7 +19,6 @@ import SyncStatusPanel from "../components/SyncStatusPanel";
 import { formatDateAndTime } from "../utils/dateFormat";
 
 const inputClass = "w-full rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm text-foreground outline-none focus:border-blue-500";
-const LOCAL_REFRESH_MS = 15000;
 const CLOUD_REFRESH_MS = 30000;
 const RECEIVED_STATUSES = [
   DISPATCH_STATUSES.SENT,
@@ -28,9 +26,7 @@ const RECEIVED_STATUSES = [
   DISPATCH_STATUSES.PCR_IN_PROGRESS,
   DISPATCH_STATUSES.PCR_COMPLETED,
   "Sent to Field Officer",
-  "Sent to Responding Team Locally",
   "Submitted",
-  "Submitted Locally",
   "Pending Admin Verification",
   "Returned for Correction",
   "Verified",
@@ -38,14 +34,11 @@ const RECEIVED_STATUSES = [
 const ACTIVE_STATUS_KEYS = new Set([
   "sent_to_responding_team",
   "sent_to_field_officer",
-  "assigned_locally",
   "accepted_by_responding_team",
   "pcr_in_progress",
   "submitted",
-  "submitted_locally",
   "pending_admin_verification",
   "returned_for_correction",
-  "dispatch_received_locally",
 ]);
 const BACK_TO_BASE_STATUS_KEYS = new Set(["back_to_base", "returned_to_base"]);
 const RESOLVED_STATUS_KEYS = new Set(["pcr_completed", "verified", "completed", "resolved", "closed"]);
@@ -87,19 +80,6 @@ function joinValues(value) {
   if (Array.isArray(value)) return value.join(" ");
   if (value && typeof value === "object") return Object.values(value).join(" ");
   return value || "";
-}
-
-function localResponseId(record = {}) {
-  return record.responseClientId || record.responseId;
-}
-
-async function getLocalPcrForDispatch(record = {}) {
-  const ids = [...new Set([localResponseId(record), record.responseId].filter(Boolean))];
-  for (const id of ids) {
-    const pcr = await localServerClient.getPcrByResponse(id).catch(() => null);
-    if (pcr) return pcr;
-  }
-  return null;
 }
 
 function isResolvedDispatch(record = {}, pcr = null) {
@@ -183,12 +163,11 @@ export default function ReceivedDispatches() {
     setError("");
     try {
       const state = getConnectionState();
-      const [localRows, cloudRows] = await Promise.all([
-        localServerClient.listReceivedDispatches().catch(() => []),
-        state.cloudOnline ? listReceivedDispatchRecords({ limit: 100 }).catch(() => []) : Promise.resolve([]),
-      ]);
+      const cloudRows = state.cloudOnline
+        ? await listReceivedDispatchRecords({ limit: 100 }).catch(() => [])
+        : [];
       const byDispatch = new Map();
-      [...localRows, ...cloudRows].forEach(record => {
+      cloudRows.forEach(record => {
         const key = record.dispatchId || record.id || record.responseId;
         if (!key) return;
         const existing = byDispatch.get(key);
@@ -205,12 +184,6 @@ export default function ReceivedDispatches() {
       }
       if (!mountedRef.current) return;
       setRecords(rows);
-      const localPairs = state.localOnline
-        ? await Promise.all(rows.map(async record => {
-          const pcr = await getLocalPcrForDispatch(record);
-          return [record.responseId, pcr];
-        }))
-        : [];
       const cloudPairs = state.cloudOnline
         ? await (() => {
           const byResponse = new Map();
@@ -233,7 +206,7 @@ export default function ReceivedDispatches() {
             .catch(() => rows.map(record => [record.responseId, null]));
         })()
         : [];
-      const pcrByResponse = new Map(localPairs);
+      const pcrByResponse = new Map();
       cloudPairs.forEach(([responseId, pcr]) => {
         if (responseId && pcr) pcrByResponse.set(responseId, pcr);
       });
@@ -287,7 +260,7 @@ export default function ReceivedDispatches() {
     intervalEffectStartedRef.current = true;
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") loadRecords({ silent: true });
-    }, connection.mode === "cloud" ? CLOUD_REFRESH_MS : LOCAL_REFRESH_MS);
+    }, CLOUD_REFRESH_MS);
     return () => clearInterval(interval);
   }, [connection.mode, loadRecords]);
 
@@ -321,22 +294,12 @@ export default function ReceivedDispatches() {
 
   const accept = async record => {
     try {
-      const localMode = getConnectionState().mode === "local";
-      const result = localMode
-        ? await localServerClient.acceptDispatchByResponse(localResponseId(record))
-        : await acceptDispatchByResponse(record.responseId);
-      const pcrId = localMode ? result.pcrId : result;
+      const pcrId = await acceptDispatchByResponse(record.responseId);
       if (!pcrId) throw new Error("The dispatch was accepted, but its linked PCR ID was not returned.");
-      if (localMode) {
-        await hybridRepository.cacheAcceptedDispatch(
-          { ...record, status: DISPATCH_STATUSES.PCR_IN_PROGRESS },
-          result.pcr,
-        );
-      }
-      toast.success(localMode ? "Dispatch accepted from local server. Opening offline-ready PCR." : "Dispatch accepted. Opening linked PCR report.");
+      toast.success("Dispatch accepted. Opening linked PCR report.");
       await loadRecords();
       const query = new URLSearchParams({ edit: pcrId, dispatch: record.dispatchId || record.id });
-      const linkedResponseId = record.responseId || localResponseId(record);
+      const linkedResponseId = record.responseId || record.responseClientId;
       if (linkedResponseId) query.set("response", linkedResponseId);
       navigate(`/admin/pcr/new?${query.toString()}`);
     } catch (requestError) {
@@ -349,7 +312,7 @@ export default function ReceivedDispatches() {
     const linkedPcrId = pcr?.id || pcr?.pcrId || record.linkedPcrId;
     if (linkedPcrId) {
       const query = new URLSearchParams({ edit: linkedPcrId, dispatch: record.dispatchId || record.id });
-      const linkedResponseId = record.responseId || localResponseId(record);
+      const linkedResponseId = record.responseId || record.responseClientId;
       if (linkedResponseId) query.set("response", linkedResponseId);
       navigate(`/admin/pcr/new?${query.toString()}`);
     }
@@ -358,15 +321,9 @@ export default function ReceivedDispatches() {
 
   const completeResponse = async record => {
     try {
-      const localMode = getConnectionState().mode === "local";
-      if (localMode) {
-        const result = await localServerClient.markResponseBackToBase(localResponseId(record));
-        await hybridRepository.markPcrCompletedByResponse(localResponseId(record), result.pcr);
-      } else {
-        await markResponseBackToBase(record.responseId);
-      }
+      await markResponseBackToBase(record.responseId);
       await loadRecords();
-      toast.success(localMode ? "Back to base time recorded on the local server. Pending cloud synchronization." : "Back to base time recorded. Response is now resolved.");
+      toast.success("Back to base time recorded. Response is now resolved.");
     } catch (error) {
       toast.error(error.message || "Unable to mark this dispatch as resolved.");
     }

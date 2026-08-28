@@ -99,9 +99,10 @@ function notificationFromLiveEvent(event) {
 
   if (event.type === 'pcr_changed') {
     const status = payload.status || payload.record?.status || 'updated';
+    const submittedStatus = status === 'Submitted' || status === 'Submitted on Device' || status === 'Submitted Locally';
     return normalizeNotification({
-      type: status === 'Submitted' || status === 'Submitted Locally' ? 'pcr_submitted' : 'pcr_updated',
-      title: status === 'Submitted' || status === 'Submitted Locally' ? 'Patient Care Report Submitted' : 'Patient Care Report Updated',
+      type: submittedStatus ? 'pcr_submitted' : 'pcr_updated',
+      title: submittedStatus ? 'Patient Care Report Submitted' : 'Patient Care Report Updated',
       message: `${payload.responseNumber || payload.response_id || payload.responseId || 'A PCR record'} was ${String(status).toLowerCase()}.`,
       pcrId: payload.id || payload.pcrId || payload.pcr_id,
       responseId: payload.responseId || payload.response_id,
