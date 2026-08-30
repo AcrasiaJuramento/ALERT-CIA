@@ -172,6 +172,57 @@ test("clusters unnamed official coordinate pins into public accident-prone areas
   assert.equal(areas[0].is_public_visible, true);
 });
 
+test("clusters precise official pins by coordinates when barangay is unavailable", () => {
+  const records = [
+    record("named-place-pin", {
+      pcrId: "PCR-NAMED-PIN",
+      sourceKind: "pcr_report",
+      barangay: null,
+      location: "Quezon",
+      lat: 16.6959405,
+      lng: 121.6248585,
+      severity: "high",
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    }),
+    record("coordinate-pin-a", {
+      pcrId: "PCR-COORDINATE-A",
+      sourceKind: "pcr_report",
+      barangay: null,
+      location: "16.696017, 121.625171",
+      lat: 16.6960169,
+      lng: 121.6251712,
+      severity: "high",
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    }),
+    record("coordinate-pin-b", {
+      pcrId: "PCR-COORDINATE-B",
+      sourceKind: "pcr_report",
+      barangay: null,
+      location: "16.696231, 121.625304",
+      lat: 16.6962308,
+      lng: 121.6253037,
+      severity: "high",
+      locationPrecision: "official_incident_pin",
+      coordinateSource: "official_incident_pin",
+      mappingStatus: "exact_geocode",
+      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+    }),
+  ];
+
+  const areas = calculateOfficialAccidentProneAreas(records, { publicOnly: true });
+
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0].risk_level, "High");
+  assert.equal(areas[0].unique_incident_count, 3);
+  assert.match(areas[0].barangay, /^Mapped official area near /);
+});
+
 test("reads incident date without falling back to scraper collection timestamps", () => {
   assert.equal(readIncidentDate({ scrapedAt: "2026-08-23", createdAt: "2026-08-23" }), null);
   assert.equal(readIncidentDate({ incidentAt: "2026-01-02T06:00:00.000Z" }).toISOString(), "2026-01-02T06:00:00.000Z");

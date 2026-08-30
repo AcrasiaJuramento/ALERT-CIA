@@ -130,6 +130,20 @@ function coordinateClusterLabel(lat, lng) {
   return `Mapped official area near ${Number(lat).toFixed(3)}, ${Number(lng).toFixed(3)}`;
 }
 
+function areaNameForRecord(record = {}) {
+  const barangay = meaningfulAreaName(record.barangay);
+  if (barangay) return barangay;
+
+  if (canUseForPointHotspot(record)) return '';
+
+  return meaningfulAreaName(
+    record.location
+    || record.locationText
+    || record.location_name
+    || record.placeOfIncident
+  );
+}
+
 function firstValue(record = {}, keys = []) {
   for (const key of keys) {
     if (record[key] !== undefined && record[key] !== null && record[key] !== '') return record[key];
@@ -483,13 +497,7 @@ export function calculateAccidentProneAreas(records = [], {
     }
 
     const [lat, lng] = getIncidentLatLng(record);
-    const namedArea = meaningfulAreaName(
-      record.barangay
-      || record.location
-      || record.locationText
-      || record.location_name
-      || record.placeOfIncident
-    );
+    const namedArea = areaNameForRecord(record);
     const sourceType = readSourceType(record);
     const municipality = readMunicipality(record);
     const clusterKey = coordinateClusterKey(lat, lng);
