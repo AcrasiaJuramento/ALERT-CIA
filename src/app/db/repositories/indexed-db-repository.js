@@ -294,19 +294,19 @@ async function reconcileStoreWithCloud(storeName, entityType, cloudRecords, matc
         await createLocalConflict({ storeName, entityType, localRecord: local, cloudRecord, changes, syncedAt });
         continue;
       }
+      const mergedRecord = mergePreservingExisting(local, cloudRecord);
       await putRecord(storeName, {
-        ...local,
-        ...cloudRecord,
+        ...mergedRecord,
         id: local.id || cloudRecord.id,
-        dispatchId: entityType === "dispatch" ? local.dispatchId || cloudRecord.dispatchId || cloudRecord.id : local.dispatchId || cloudRecord.dispatchId,
-        pcrId: entityType === "pcr" ? local.pcrId || cloudRecord.pcrId || cloudRecord.id : local.pcrId || cloudRecord.pcrId,
+        dispatchId: entityType === "dispatch" ? local.dispatchId || mergedRecord.dispatchId || mergedRecord.id : local.dispatchId || mergedRecord.dispatchId,
+        pcrId: entityType === "pcr" ? local.pcrId || mergedRecord.pcrId || mergedRecord.id : local.pcrId || mergedRecord.pcrId,
         localStatus: null,
         syncLabel: "Cloud synced",
         sync_status: "synced",
         synced_to_cloud: true,
-        cloud_synced_at: cloudRecord.cloud_synced_at || syncedAt,
+        cloud_synced_at: mergedRecord.cloud_synced_at || syncedAt,
         last_sync_error: null,
-        updatedAt: cloudRecord.updatedAt || cloudRecord.updated_at || syncedAt,
+        updatedAt: mergedRecord.updatedAt || mergedRecord.updated_at || syncedAt,
       });
       reconciled += 1;
     }

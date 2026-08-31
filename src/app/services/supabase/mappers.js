@@ -1,4 +1,4 @@
-import { normalizeDateTimeLocalValue, normalizeTimeValue } from "../../utils/pcrStorage";
+import { normalizeDateTimeLocalValue, normalizeTimeValue } from "../../utils/pcrStorage.js";
 
 const DISPATCH_STATUS_TO_DB = {
   Draft: "draft",
@@ -163,7 +163,7 @@ const PCR_EXTENDED_FIELDS = [
   "mainAider", "groupLeader", "assistantAider",
   "natureOfCall", "natureTypes", "otherMedical", "otherTrauma", "otherNature",
   "dateOfIncident", "timeOfIncident", "placeOfIncident", "barangay",
-  "locationText", "latitude", "longitude", "locationGeography", "dispatchTime", "arrivalScene",
+  "locationText", "latitude", "longitude", "locationGeography", "boundarySource", "dispatchTime", "arrivalScene",
   "departureScene", "arrivalHospital", "departureHospital", "backToBase", "timeline",
   "patientName", "age", "birthday", "birthYear", "birthMonth", "birthDay",
   "gender", "civilStatus", "address", "contactPerson", "contactAddress",

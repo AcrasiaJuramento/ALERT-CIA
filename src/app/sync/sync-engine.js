@@ -98,6 +98,33 @@ function shouldStopRetrying(operation, attempts) {
   return attempts >= Number(operation.max_attempts || 6);
 }
 
+function hasMeaningfulValue(value) {
+  if (value === null || value === undefined || value === "") return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.values(value).some(hasMeaningfulValue);
+  return true;
+}
+
+function mergePreservingExisting(existing = {}, incoming = {}) {
+  const merged = { ...(existing || {}) };
+  for (const [key, value] of Object.entries(incoming || {})) {
+    if (!hasMeaningfulValue(value)) continue;
+    if (
+      value
+      && typeof value === "object"
+      && !Array.isArray(value)
+      && merged[key]
+      && typeof merged[key] === "object"
+      && !Array.isArray(merged[key])
+    ) {
+      merged[key] = mergePreservingExisting(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
 function formatSyncError(error) {
   return [
     error?.message,
@@ -318,11 +345,11 @@ async function markLocalRecordSynced(operation, result, syncedAt) {
   if (operation.entity_type === "pcr") {
     const id = payload.id || payload.pcrId || operation.entity_id;
     if (!id) return;
+    const record = mergePreservingExisting(payload, result);
     await putRecord("local_pcr_reports", {
-      ...payload,
-      ...result,
+      ...record,
       id,
-      pcrId: payload.pcrId || result.pcrId || result.id || id,
+      pcrId: payload.pcrId || record.pcrId || record.id || id,
       status: result.status || payload.status,
       localStatus: null,
       syncLabel: "Cloud synced",

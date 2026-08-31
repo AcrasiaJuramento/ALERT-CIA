@@ -32,6 +32,33 @@ const isReverseWorkflowRecord = record => record?.workflowOrigin === 'reverse'
   || (!record?.dispatchId && ['Pending Dispatcher Review', 'Accepted by Dispatcher'].includes(displayStatus(record)));
 const logicalRecordKey = record => record?.responseId || record?.response_id || record?.pcrId || record?.id || record?.responseNumber;
 
+function hasMeaningfulValue(value) {
+  if (value === null || value === undefined || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.values(value).some(hasMeaningfulValue);
+  return true;
+}
+
+function mergePreservingExisting(existing = {}, incoming = {}) {
+  const merged = { ...(existing || {}) };
+  Object.entries(incoming || {}).forEach(([key, value]) => {
+    if (!hasMeaningfulValue(value)) return;
+    if (
+      value
+      && typeof value === 'object'
+      && !Array.isArray(value)
+      && merged[key]
+      && typeof merged[key] === 'object'
+      && !Array.isArray(merged[key])
+    ) {
+      merged[key] = mergePreservingExisting(merged[key], value);
+    } else {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
 function localRecord(record, recordSource) {
   const cloudSynced = Boolean(
     record.synced_to_cloud
@@ -52,7 +79,7 @@ function mergePCRRecords(localDeviceRecords, cloudRecords) {
   ].forEach(record => {
     const key = logicalRecordKey(record);
     if (!key) return;
-    byRecord.set(key, { ...(byRecord.get(key) || {}), ...record });
+    byRecord.set(key, mergePreservingExisting(byRecord.get(key) || {}, record));
   });
   return [...byRecord.values()].sort((a, b) => String(b.updatedAt || b.updated_at || b.createdAt || '').localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || '')));
 }
@@ -119,7 +146,7 @@ export default function PCRReports() {
     } finally {
       setLoading(false);
     }
-  }, [archiveView, page, status, user?.role]);
+  }, [archiveView, page, status]);
 
   useEffect(() => {
     loadReports();
@@ -177,7 +204,7 @@ export default function PCRReports() {
   useEffect(() => {
     if (!selected?.id || !isReverseWorkflowRecord(selected)) { setWorkflowHistory([]); return; }
     listPCRWorkflowHistory(selected.id).then(setWorkflowHistory).catch(() => setWorkflowHistory([]));
-  }, [selected?.id, selected?.workflowOrigin]);
+  }, [selected]);
 
   const edit = record => {
     sessionStorage.setItem(PCR_EDIT_KEY, record.id);
