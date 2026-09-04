@@ -131,6 +131,8 @@ export default function IncidentLocationPicker({
   scope = 'echague',
   locationNotice = '',
   approximate = false,
+  compactAfterPin = false,
+  showSearch = true,
 }) {
   const [echagueGeoJson, setEchagueGeoJson] = useState(null);
   const [isabelaGeoJson, setIsabelaGeoJson] = useState(null);
@@ -244,10 +246,12 @@ export default function IncidentLocationPicker({
     onChange?.({ ...resolved, locationText: searchQuery.trim() || resolved.locationText, pinAdjusted: draftAdjusted });
     setPickerOpen(false);
   };
+  const selectedCoordinateText = hasPin ? `${selectedLat.toFixed(6)}, ${selectedLng.toFixed(6)}` : '';
+  const selectedLocationText = value.locationText || value.placeOfIncident || locationText || selectedCoordinateText;
 
   return (
     <div className="space-y-3">
-      <div className="relative rounded-xl border border-border bg-card p-3">
+      {showSearch && <div className="relative rounded-xl border border-border bg-card p-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="flex min-w-0 items-center gap-3 sm:flex-1">
             <Search className="h-4 w-4 shrink-0 text-cyan-400" />
@@ -260,7 +264,26 @@ export default function IncidentLocationPicker({
           <button type="button" onClick={searchLocation} className="w-full rounded-lg bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 sm:w-auto">{searching ? 'Searching...' : 'Search'}</button>
         </div>
         {searchResults.length > 0 && <div className="absolute left-3 right-3 top-full z-[1200] mt-1 overflow-hidden rounded-lg border border-border bg-card shadow-xl">{searchResults.map(result => <button type="button" key={result.place_id} onClick={() => chooseSearchResult(result)} className="block w-full border-b border-border px-3 py-2 text-left text-xs hover:bg-secondary">{result.display_name}</button>)}</div>}
-      </div>
+      </div>}
+      {compactAfterPin && hasPin ? (
+        <div className="rounded-xl border border-border bg-card p-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-xs font-bold text-foreground">
+                <MapPin className="h-4 w-4 text-blue-500" />
+                <span className="truncate">{selectedLocationText || 'Pinned incident location'}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                <span>{value.barangay || 'Barangay pending'}</span>
+                <span>{selectedCoordinateText}</span>
+              </div>
+            </div>
+            <button type="button" onClick={openPicker} className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-700">
+              Edit Pin
+            </button>
+          </div>
+        </div>
+      ) : (
       <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
@@ -305,6 +328,7 @@ export default function IncidentLocationPicker({
               : 'Search a location or tap the map to place the incident pin.')}
       </div>
     </div>
+      )}
       <LocationPickerDialog
         open={pickerOpen}
         scope={scope}

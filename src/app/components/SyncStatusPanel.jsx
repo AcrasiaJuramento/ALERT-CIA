@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Bug, ChevronDown, ChevronUp, GitMerge, RefreshCw, Wrench } from "lucide-react";
+import { AlertTriangle, Bug, CheckCircle2, ChevronDown, ChevronUp, GitMerge, RefreshCw, Wrench } from "lucide-react";
 import { getAllRecords, repairPoisonedSyncOperations, resolveSyncConflict, retryFailedSyncOperations } from "../db/indexed-db";
 import { getConnectionState, subscribeConnection } from "../network/connection-manager";
 import { runSyncNow } from "../sync/sync-engine";
@@ -95,6 +95,7 @@ export default function SyncStatusPanel() {
   const failedOperations = operations
     .filter(row => ["failed", "waiting_dependency", "retry_scheduled", "authorization_required", "permanent_failure"].includes(row.sync_status))
     .sort((a, b) => String(b.updated_at_device || "").localeCompare(String(a.updated_at_device || "")));
+  const hasAttention = counts.pending > 0 || counts.waiting > 0 || counts.failed > 0 || conflicts.length > 0;
 
   const onSync = async () => {
     setSyncing(true);
@@ -140,8 +141,30 @@ export default function SyncStatusPanel() {
     }
   };
 
+  if (!checkerOpen && !hasAttention) {
+    return (
+      <div className="rounded-xl border border-green-500/20 bg-green-500/10 px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-green-400">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>Cloud Synced</span>
+            <span className="truncate text-xs font-normal text-muted-foreground">Mode: {connection.mode}</span>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => setCheckerOpen(true)} className="rounded-lg bg-secondary px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-secondary/80">
+              Details
+            </button>
+            <button onClick={onSync} disabled={syncing} className="flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">
+              <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} /> Sync
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
+    <div className={`rounded-xl border bg-card p-4 ${hasAttention ? "border-amber-500/30" : "border-border"}`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Device Sync</div>

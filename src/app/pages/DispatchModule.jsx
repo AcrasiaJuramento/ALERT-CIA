@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  ArrowLeft, Save, Plus, Trash2, FileText, Radio, Clock, Users, Phone, CheckCircle2, Send
+  AlertTriangle, ArrowLeft, CalendarDays, CheckCircle2, ChevronDown, ChevronUp,
+  ClipboardList, Clock, FileText, MapPin, Phone, Plus, Radio, Save, Send,
+  Trash2, UserCheck, Users
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -15,6 +17,7 @@ import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import SyncStatusPanel from "../components/SyncStatusPanel";
 import { hybridRepository } from "../api/hybrid-client";
 import { randomUuid } from "../utils/uuid";
+import { useAuth } from "../contexts/AuthContext";
 
 // ─── Shared style tokens ────────────────────────────────────────────────────
 const input = "w-full px-3 py-2 bg-input-background border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-blue-500";
@@ -31,14 +34,27 @@ function Field({ label, children, wide = false, className = "" }) {
 }
 
 // ─── Section wrapper ─────────────────────────────────────────────────────────
-function Section({ title, icon, children }) {
+function Section({ title, icon, children, collapsible = false, defaultOpen = true, summary = "" }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const header = (
+    <h3 className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-foreground">
+      {icon && <span className="text-blue-500">{icon}</span>}
+      <span className="min-w-0 flex-1">{title}</span>
+      {summary && <span className="hidden truncate text-[11px] font-semibold normal-case tracking-normal text-muted-foreground sm:block">{summary}</span>}
+      {collapsible && (open ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />)}
+    </h3>
+  );
   return (
-    <section className="border border-border rounded-xl overflow-hidden">
-      <h3 className="px-4 py-2.5 bg-secondary flex items-center gap-2 text-sm font-bold text-foreground uppercase tracking-wide">
-        {icon && <span className="text-blue-500">{icon}</span>}
-        {title}
-      </h3>
-      <div className="p-4">{children}</div>
+    <section className="overflow-hidden rounded-xl border border-border bg-card">
+      {collapsible ? (
+        <button type="button" onClick={() => setOpen(value => !value)} className="w-full bg-secondary text-left hover:bg-secondary/80">
+          {header}
+          {summary && !open && <div className="border-t border-border/70 px-4 pb-3 text-xs text-muted-foreground sm:hidden">{summary}</div>}
+        </button>
+      ) : (
+        <div className="bg-secondary">{header}</div>
+      )}
+      {(!collapsible || open) && <div className="p-4">{children}</div>}
     </section>
   );
 }
@@ -58,12 +74,31 @@ const ASSISTANCE_OPTIONS = ["PNP", "BFP", "BRGY. OFFICIALS", "OTHERS"];
 const MEDICAL_TYPES = ["Conduction", "Transport", "Transfer", "Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
 const TRAUMA_TYPES = ["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident", "Motor Vehicle Crash"];
 const VEHICLE_INVOLVED_OPTIONS = ["Bicycle", "Tricycle", "Single Motor", "Private Vehicle", "Public Utility Vehicle", "Truck", "Other"];
+const NATURE_OPTIONS = ["Conduction", "Medical", "Motor Vehicle Crash", "Trauma"];
+const CONDUCTION_TYPES = ["Conduction", "Transport", "Transfer"];
+const MEDICAL_INCIDENT_TYPES = ["Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"];
+const TRAUMA_INCIDENT_TYPES = TRAUMA_TYPES.filter(type => type !== "Motor Vehicle Crash");
 const MONTH_OPTIONS = [
   ["01", "Jan"], ["02", "Feb"], ["03", "Mar"], ["04", "Apr"], ["05", "May"], ["06", "Jun"],
   ["07", "Jul"], ["08", "Aug"], ["09", "Sep"], ["10", "Oct"], ["11", "Nov"], ["12", "Dec"],
 ];
 const BIRTH_YEARS = Array.from({ length: 111 }, (_, index) => String(new Date().getFullYear() - index));
 const BIRTH_DAYS = Array.from({ length: 31 }, (_, index) => String(index + 1).padStart(2, "0"));
+
+function currentDateInput() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function currentTimeInput() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function userDisplayName(user) {
+  return user?.name || user?.email || "";
+}
 
 // ─── Default patient record ──────────────────────────────────────────────────
 function newPatient() {
@@ -88,6 +123,7 @@ function newPatient() {
 function newDispatch() {
   const id = randomUuid();
   const responseId = randomUuid();
+  const today = currentDateInput();
   return {
     id,
     dispatchId: id,
@@ -132,7 +168,7 @@ function newDispatch() {
     locationGeography: "",
     boundarySource: "",
     timeOfIncident: "",
-    dateOfIncident: "",
+    dateOfIncident: today,
     assistanceNeeded: [],
     assistanceOther: "",
     // Timeline
@@ -145,7 +181,7 @@ function newDispatch() {
     nameOfHospital: "",
     // Dispatcher
     dispatcher: "",
-    date: "",
+    date: today,
     // Patients (up to 3)
     patients: [newPatient()],
   };
@@ -272,19 +308,6 @@ function TimelineField({ label, value, onChange, error }) {
   );
 }
 
-function FloatingTimePrompt({ label, value, onChange }) {
-  if (value) return null;
-  return (
-    <div className="sticky top-3 z-30 ml-auto w-full max-w-xs rounded-lg border border-blue-500/30 bg-card p-3 shadow-xl">
-      <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-blue-400">
-        <Clock size={14} />
-        {label}
-      </div>
-      <input type="time" className={input} value={value || ""} onChange={event => onChange(event.target.value)} />
-    </div>
-  );
-}
-
 function SelectField({ label, value, options, onChange, placeholder = "Select" }) {
   return (
     <Field label={label}>
@@ -375,7 +398,24 @@ async function getCachedDispatch(editId) {
 }
 
 // ─── Patient card ────────────────────────────────────────────────────────────
-function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
+function hasPatientDetails(patient = {}) {
+  return [
+    patient.name, patient.age, patient.birthdate, patient.gender, patient.address,
+    patient.assessmentFindings, patient.bp, patient.pr, patient.rr, patient.temp,
+    patient.o2Sat, patient.gcs, patient.helmet, patient.alcoholBreath, patient.driversLicense,
+    patient.g, patient.p, patient.t, patient.pa, patient.l, patient.lmp, patient.aog,
+    patient.edc, patient.fht, patient.ie, patient.bow,
+  ].some(value => value !== null && value !== undefined && String(value).trim() !== "")
+    || Boolean(patient.conscious || patient.unconscious || patient.ambulatory || patient.nonAmbulatory || patient.driver || patient.passenger || patient.pedestrian);
+}
+
+function isPcrComplete(pcr) {
+  return ["Submitted", "Verified", "Completed", "Pending Admin Review", "Accepted by Dispatcher"]
+    .includes(String(pcr?.status || "").trim());
+}
+
+function PatientCard({ patient, index, onChange, onRemove, canRemove, pcrStatus = "Awaiting PCR" }) {
+  const [open, setOpen] = useState(false);
   const up = (key, val) => onChange({ ...patient, [key]: val });
   const updateAge = value => {
     const yearHints = possibleBirthYears(value);
@@ -395,21 +435,42 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
     });
   };
   const toggle = key => onChange({ ...patient, [key]: !patient[key] });
+  const hasDetails = hasPatientDetails(patient);
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
-      <div className="px-4 py-2.5 bg-secondary/60 flex items-center justify-between">
-        <span className="text-sm font-bold text-foreground flex items-center gap-2">
-          <Users size={14} className="text-blue-500" />
-          Patient / Victim #{index + 1}
-        </span>
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className="flex flex-wrap items-center justify-between gap-2 bg-secondary/60 px-4 py-2.5">
+        <button type="button" onClick={() => setOpen(value => !value)} className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm font-bold text-foreground">
+          <Users size={14} className="shrink-0 text-blue-500" />
+          <span className="truncate">Patient / Victim #{index + 1}</span>
+          <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${pcrStatus === "PCR Completed" ? "bg-green-500/15 text-green-400" : "bg-amber-500/15 text-amber-400"}`}>
+            {pcrStatus}
+          </span>
+          {open ? <ChevronUp className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronDown className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />}
+        </button>
         {canRemove && (
-          <button type="button" onClick={onRemove} className="text-red-500 hover:text-red-400 p-1 rounded">
+          <button type="button" onClick={onRemove} className="rounded p-1 text-red-500 hover:text-red-400" aria-label={`Remove patient ${index + 1}`}>
             <Trash2 size={14} />
           </button>
         )}
       </div>
-      <div className="p-4 space-y-4">
+      {!open && (
+        <div className="grid gap-2 px-4 py-3 text-sm md:grid-cols-3">
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Name</div>
+            <div className="mt-1 font-semibold text-foreground">{patient.name || (hasDetails ? "-" : "Pending field report")}</div>
+          </div>
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Age / Gender</div>
+            <div className="mt-1 font-semibold text-foreground">{[patient.age, patient.gender].filter(Boolean).join(" / ") || "-"}</div>
+          </div>
+          <div>
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Initial Assessment</div>
+            <div className="mt-1 truncate font-semibold text-foreground">{patient.assessmentFindings || "Awaiting PCR"}</div>
+          </div>
+        </div>
+      )}
+      {open && <div className="space-y-4 p-4">
         {/* Basic info */}
         <div className="grid md:grid-cols-4 gap-3">
           <Field label="Patient Name" wide>
@@ -505,7 +566,7 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
             </Field>
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }
@@ -514,6 +575,7 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove }) {
 // ─── Main Dispatch Module ────────────────────────────────────────────────────
 export default function DispatchModule({ onBack }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [params] = useSearchParams();
   const editId = params.get("edit") || sessionStorage.getItem(DISPATCH_EDIT_KEY);
   const sourcePcrId = params.get("sourcePcr");
@@ -524,6 +586,17 @@ export default function DispatchModule({ onBack }) {
   const [teamOptions, setTeamOptions] = useState([]);
   const [vehicleOptions, setVehicleOptions] = useState([]);
   const [crewOptions, setCrewOptions] = useState([]);
+
+  useEffect(() => {
+    const dispatcher = userDisplayName(user);
+    if (!dispatcher) return;
+    setForm(current => ({
+      ...current,
+      dispatcher: current.dispatcher || dispatcher,
+      date: current.date || currentDateInput(),
+      dateOfIncident: current.dateOfIncident || currentDateInput(),
+    }));
+  }, [user]);
 
   useEffect(() => {
     let mounted = true;
@@ -595,9 +668,21 @@ export default function DispatchModule({ onBack }) {
   }, [sourcePcrId]);
 
   const update = (key, value) => setForm(f => ({ ...f, [key]: value }));
+  const firstCrewName = (role, teamId) => crewOptions
+    .find(member => member.role === role && (!teamId || !member.responding_team_id || member.responding_team_id === teamId))
+    ?.name || "";
   const updateTeam = teamId => {
     const team = effectiveTeamOptions.find(option => option.id === teamId);
-    setForm(f => ({ ...f, respondingTeamId: teamId, team: team?.name || "" }));
+    setForm(f => {
+      const teamChanged = f.respondingTeamId !== teamId;
+      return {
+        ...f,
+        respondingTeamId: teamId,
+        team: team?.name || "",
+        mainAider: teamChanged ? firstCrewName("main_aider", teamId) : f.mainAider || firstCrewName("main_aider", teamId),
+        groupLeader: teamChanged ? firstCrewName("group_leader", teamId) : f.groupLeader || firstCrewName("group_leader", teamId),
+      };
+    });
   };
   const updateVehicle = vehicleId => {
     const vehicle = effectiveVehicleOptions.find(option => option.id === vehicleId);
@@ -619,6 +704,18 @@ export default function DispatchModule({ onBack }) {
   }, [form.vehicle, form.vehicleId, vehicleOptions]);
   const selectedTeamId = form.respondingTeamId || effectiveTeamOptions.find(team => team.name === form.team)?.id || "";
   const selectedVehicleId = form.vehicleId || effectiveVehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
+  useEffect(() => {
+    if (!selectedTeamId || !crewOptions.length) return;
+    setForm(current => {
+      const autoCrewName = role => crewOptions
+        .find(member => member.role === role && (!member.responding_team_id || member.responding_team_id === selectedTeamId))
+        ?.name || "";
+      const mainAider = current.mainAider || autoCrewName("main_aider");
+      const groupLeader = current.groupLeader || autoCrewName("group_leader");
+      if (mainAider === current.mainAider && groupLeader === current.groupLeader) return current;
+      return { ...current, mainAider, groupLeader };
+    });
+  }, [crewOptions, selectedTeamId]);
   const savedCrewByRole = {
     driver: form.driver,
     main_aider: form.mainAider,
@@ -653,16 +750,40 @@ export default function DispatchModule({ onBack }) {
     toast.error("Please pin the exact incident location inside Echague before saving this report.");
     return false;
   };
-  const toggleNature = (type) => {
-    const current = form.natureTypes;
-    update("natureTypes", current.includes(type) ? current.filter(x => x !== type) : [...current, type]);
-  };
+  const natureHas = (t) => form.natureTypes.includes(t);
   const toggleIncidentNature = (nature) => {
     update("incidentNature", form.incidentNature === nature ? "" : nature);
   };
   const toggleAssistance = (opt) => {
     const current = form.assistanceNeeded;
     update("assistanceNeeded", current.includes(opt) ? current.filter(x => x !== opt) : [...current, opt]);
+  };
+  const selectedNature = useMemo(() => {
+    if (form.natureTypes.includes("Motor Vehicle Crash")) return "Motor Vehicle Crash";
+    if (form.natureTypes.some(type => CONDUCTION_TYPES.includes(type))) return "Conduction";
+    if (form.natureTypes.some(type => MEDICAL_INCIDENT_TYPES.includes(type))) return "Medical";
+    if (form.natureTypes.some(type => TRAUMA_INCIDENT_TYPES.includes(type))) return "Trauma";
+    return "";
+  }, [form.natureTypes]);
+  const incidentTypeOptions = useMemo(() => {
+    if (selectedNature === "Conduction") return CONDUCTION_TYPES;
+    if (selectedNature === "Medical") return MEDICAL_INCIDENT_TYPES;
+    if (selectedNature === "Motor Vehicle Crash") return ["Motor Vehicle Crash"];
+    if (selectedNature === "Trauma") return TRAUMA_INCIDENT_TYPES;
+    return [];
+  }, [selectedNature]);
+  const selectedIncidentType = incidentTypeOptions.find(type => natureHas(type)) || "";
+  const updateNatureOfCall = value => {
+    const defaults = {
+      Conduction: "Conduction",
+      Medical: "Medical",
+      "Motor Vehicle Crash": "Motor Vehicle Crash",
+      Trauma: "Trauma",
+    };
+    setForm(current => ({ ...current, natureTypes: value ? [defaults[value]] : [] }));
+  };
+  const updateIncidentType = value => {
+    setForm(current => ({ ...current, natureTypes: value ? [value] : [] }));
   };
 
   const addPatient = () => {
@@ -674,15 +795,23 @@ export default function DispatchModule({ onBack }) {
   const updatePatient = (id, updated) => {
     update("patients", form.patients.map(p => p.id === id ? updated : p));
   };
+  const withAutoGeneratedFields = (source, { includeDispatchTime = false } = {}) => ({
+    ...source,
+    dispatcher: source.dispatcher || userDisplayName(user),
+    date: source.date || currentDateInput(),
+    dateOfIncident: source.dateOfIncident || currentDateInput(),
+    ...(includeDispatchTime ? { dispatchedTime: source.dispatchedTime || currentTimeInput() } : {}),
+  });
 
   const handleSave = async () => {
     if (!requirePinnedLocation()) return;
+    const draftPayload = withAutoGeneratedFields(form);
     try {
       if (reverseSourcePcrId) {
-        const existingDispatchId = form.dispatchId || editId;
-        const dispatchId = existingDispatchId || await createDispatchFromPCR(reverseSourcePcrId, form);
+        const existingDispatchId = draftPayload.dispatchId || editId;
+        const dispatchId = existingDispatchId || await createDispatchFromPCR(reverseSourcePcrId, draftPayload);
         await hybridRepository.updateDispatch(dispatchId, {
-          ...form,
+          ...draftPayload,
           id: dispatchId,
           dispatchId,
           sourcePcrId: reverseSourcePcrId,
@@ -692,9 +821,9 @@ export default function DispatchModule({ onBack }) {
         navigate(`/admin/dispatch/new?edit=${dispatchId}`);
         return;
       }
-      const next = form.dispatchId || editId
-        ? await hybridRepository.updateDispatch(form.dispatchId || editId, form)
-        : await hybridRepository.createDispatch(form);
+      const next = draftPayload.dispatchId || editId
+        ? await hybridRepository.updateDispatch(draftPayload.dispatchId || editId, draftPayload)
+        : await hybridRepository.createDispatch(draftPayload);
       setForm({ ...newDispatch(), ...next, patients: next.patients?.length ? next.patients : [newPatient()] });
       setSaved(next.hybridMessage || "Dispatch form saved to Supabase.");
       toast.success(next.hybridMessage || "Dispatch form saved.");
@@ -710,10 +839,11 @@ export default function DispatchModule({ onBack }) {
       toast.error("Please select a responding team before sending this dispatch.");
       return;
     }
+    const sendPayload = withAutoGeneratedFields(form, { includeDispatchTime: true });
     try {
-      const savedDispatch = form.dispatchId || editId
-        ? await hybridRepository.updateDispatch(form.dispatchId || editId, form)
-        : await hybridRepository.createDispatch(form);
+      const savedDispatch = sendPayload.dispatchId || editId
+        ? await hybridRepository.updateDispatch(sendPayload.dispatchId || editId, sendPayload)
+        : await hybridRepository.createDispatch(sendPayload);
       const result = await hybridRepository.sendDispatch(savedDispatch.dispatchId || savedDispatch.id);
       const finalResult = result;
       setForm({ ...newDispatch(), ...finalResult, patients: finalResult.patients?.length ? finalResult.patients : [newPatient()] });
@@ -726,8 +856,6 @@ export default function DispatchModule({ onBack }) {
   };
 
   const handlePrimarySend = () => isReverseWorkflow ? handleSave() : handleSendToFieldOfficer();
-
-  const natureHas = (t) => form.natureTypes.includes(t);
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
@@ -757,14 +885,6 @@ export default function DispatchModule({ onBack }) {
             </div>
           </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={handleSave} className="px-4 py-2 rounded-lg bg-secondary text-sm flex gap-2 items-center hover:bg-secondary/80">
-            <Save size={15} /> Save Draft
-          </button>
-          <button onClick={handlePrimarySend} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm flex gap-2 items-center hover:bg-green-500">
-            <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
-          </button>
-        </div>
       </div>
 
       {saved && (
@@ -773,253 +893,257 @@ export default function DispatchModule({ onBack }) {
         </div>
       )}
 
-      <div className="mb-4">
-        <SyncStatusPanel />
-      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="space-y-4">
+          <Section title="Incident Information" icon={<FileText size={14} />}>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Time of Incident">
+                <input type="time" className={input} value={form.timeOfIncident} onChange={e => update("timeOfIncident", e.target.value)} />
+              </Field>
+              <Field label="Nature of Call">
+                <select className={input} value={selectedNature} onChange={e => updateNatureOfCall(e.target.value)}>
+                  <option value="">Select nature</option>
+                  {NATURE_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </Field>
+              <Field label="Incident Type">
+                <select className={input} value={selectedIncidentType} onChange={e => updateIncidentType(e.target.value)} disabled={!incidentTypeOptions.length}>
+                  <option value="">Select type</option>
+                  {incidentTypeOptions.map(option => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </Field>
+              <Field label="Number of Patients / Victims">
+                <select className={input} value={form.numberOfPatients} onChange={e => update("numberOfPatients", e.target.value)}>
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                </select>
+              </Field>
+              <Field label="Place of Incident">
+                <input className={input} value={form.placeOfIncident} onChange={e => setForm(f => ({ ...f, placeOfIncident: e.target.value, locationText: e.target.value }))} />
+              </Field>
+              <Field label="Barangay">
+                <input className={input} value={form.barangay || ""} onChange={e => update("barangay", e.target.value)} />
+              </Field>
+            </div>
 
-      <div className="mb-4 grid gap-3 md:grid-cols-3">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Dispatch Status</div>
-          <div className="mt-2 text-sm font-bold text-foreground">{form.status || "Draft"}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Linked Incident</div>
-          <div className="mt-2 truncate text-sm font-bold text-foreground">{form.incidentId || "Not synced yet"}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Linked PCR</div>
-          {linkedPCR ? (
-            <button onClick={() => navigate(`/admin/pcr/new?edit=${linkedPCR.id}`)} className="mt-2 text-left text-sm font-bold text-blue-400 hover:text-blue-300">
-              {linkedPCR.responseNumber || linkedPCR.id} · {linkedPCR.status}
-            </button>
-          ) : (
-            <div className="mt-2 text-sm font-bold text-muted-foreground">PCR creates after team accepts</div>
-          )}
-        </div>
-      </div>
+            {selectedNature === "Motor Vehicle Crash" && (
+              <div className="mt-4 grid gap-3 rounded-lg border border-border bg-secondary/20 p-3 md:grid-cols-3">
+                <div className="flex items-end gap-4">
+                  <CB label="Self-Accident" checked={form.selfAccident} onChange={() => update("selfAccident", !form.selfAccident)} />
+                  <CB label="Collision" checked={form.collision} onChange={() => update("collision", !form.collision)} />
+                </div>
+                <Field label="Vehicle Involved" className="md:col-span-2">
+                  <select className={input} value={form.vehicleInvolved} onChange={e => update("vehicleInvolved", e.target.value)}>
+                    <option value="">Select vehicle</option>
+                    {VEHICLE_INVOLVED_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </Field>
+              </div>
+            )}
 
-      <div className="space-y-4">
-        <FloatingTimePrompt label="Dispatch Time" value={form.dispatchedTime} onChange={value => update("dispatchedTime", value)} />
+            {selectedNature === "Medical" && (
+              <div className="mt-4 grid gap-3 rounded-lg border border-border bg-secondary/20 p-3 md:grid-cols-3">
+                <Field label="Other Medical Details">
+                  <input className={input} value={form.otherMedical} onChange={e => update("otherMedical", e.target.value)} />
+                </Field>
+                <Field label="If Ingestion - Specify">
+                  <input className={input} value={form.ifIngestion} onChange={e => update("ifIngestion", e.target.value)} />
+                </Field>
+                <Field label="Quantity">
+                  <input className={input} value={form.quantity} onChange={e => update("quantity", e.target.value)} />
+                </Field>
+              </div>
+            )}
 
-        {/* ── Unit & Response Info ── */}
-        <Section title="Response & Unit Details" icon={<Radio size={14} />}>
-          <div className="grid md:grid-cols-3 gap-3">
-            <Field label="Response No.">
-              <input className={`${input} font-mono text-blue-400`} value={form.responseNumber} readOnly />
-            </Field>
-            <Field label="Number of Patients / Victims">
-              <select className={input} value={form.numberOfPatients} onChange={e => update("numberOfPatients", e.target.value)}>
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-              </select>
-            </Field>
-            <SelectField label="Responding Team" value={selectedTeamId} options={effectiveTeamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team" />
-            <SelectField label="Vehicle" value={selectedVehicleId} options={effectiveVehicleOptions.map(unit => ({ value: unit.id, label: `${unit.call_sign}${unit.plate_number ? ` - ${unit.plate_number}` : ""}` }))} onChange={updateVehicle} placeholder="Select available ambulance" />
-            <SelectField label="Driver" value={form.driver} options={crewSelectOptions("driver")} onChange={value => update("driver", value)} placeholder="Select driver" />
-            <SelectField label="Main Aider" value={form.mainAider} options={crewSelectOptions("main_aider")} onChange={value => update("mainAider", value)} placeholder="Select main aider" />
-            <SelectField label="Group Leader" value={form.groupLeader} options={crewSelectOptions("group_leader")} onChange={value => update("groupLeader", value)} placeholder="Select group leader" />
+            {selectedNature === "Trauma" && (
+              <div className="mt-4 grid gap-3 rounded-lg border border-border bg-secondary/20 p-3 md:grid-cols-2">
+                <Field label="Assault - Specify">
+                  <input className={input} value={form.assaultDetails} onChange={e => update("assaultDetails", e.target.value)} />
+                </Field>
+                <Field label="Animal Bite - Specify">
+                  <input className={input} value={form.animalBiteDetails} onChange={e => update("animalBiteDetails", e.target.value)} />
+                </Field>
+                <Field label="If Fall - Specify">
+                  <input className={input} value={form.ifFall} onChange={e => update("ifFall", e.target.value)} />
+                </Field>
+                <Field label="Other Trauma">
+                  <input className={input} value={form.otherTrauma} onChange={e => update("otherTrauma", e.target.value)} />
+                </Field>
+              </div>
+            )}
+          </Section>
+
+          <Section title="Exact Location" icon={<MapPin size={14} />} summary={form.barangay || "No barangay set"}>
+            <IncidentLocationPicker
+              value={form}
+              locationText={form.placeOfIncident}
+              onChange={updateIncidentLocation}
+              height={190}
+              compactAfterPin
+            />
+          </Section>
+
+          <Section title="Caller Information" icon={<Phone size={14} />}>
+            <div className="grid gap-3 md:grid-cols-3">
+              <Field label="Contact Person">
+                <input className={input} value={form.callerName} onChange={e => update("callerName", e.target.value)} />
+              </Field>
+              <Field label="Contact Number">
+                <input className={input} value={form.callerContact} onChange={e => update("callerContact", e.target.value)} />
+              </Field>
+              <Field label="Contact Address">
+                <input className={input} value={form.callerAddress} onChange={e => update("callerAddress", e.target.value)} />
+              </Field>
+            </div>
+          </Section>
+
+          <Section title="Responding Unit" icon={<Radio size={14} />}>
+            <div className="grid gap-3 md:grid-cols-2">
+              <SelectField label="Responding Team" value={selectedTeamId} options={effectiveTeamOptions.map(team => ({ value: team.id, label: team.name }))} onChange={updateTeam} placeholder="Select responding team" />
+              <SelectField label="Vehicle" value={selectedVehicleId} options={effectiveVehicleOptions.map(unit => ({ value: unit.id, label: unit.call_sign + (unit.plate_number ? " - " + unit.plate_number : "") }))} onChange={updateVehicle} placeholder="Select available ambulance" />
+              <SelectField label="Driver" value={form.driver} options={crewSelectOptions("driver")} onChange={value => update("driver", value)} placeholder="Select driver" />
+              <SelectField label="Main Aider" value={form.mainAider} options={crewSelectOptions("main_aider")} onChange={value => update("mainAider", value)} placeholder="Auto set" />
+              <SelectField label="Group Leader" value={form.groupLeader} options={crewSelectOptions("group_leader")} onChange={value => update("groupLeader", value)} placeholder="Auto set" />
+            </div>
+          </Section>
+
+          <Section title="Additional Unit Members" icon={<UserCheck size={14} />} collapsible defaultOpen={false} summary={form.assistantAider || "Assistant aider optional"}>
             <SelectField label="Assistant Aider" value={form.assistantAider} options={crewSelectOptions("assistant_aider")} onChange={value => update("assistantAider", value)} placeholder="Select assistant aider" />
-          </div>
-        </Section>
+          </Section>
 
-        {/* ── Caller Data ── */}
-        <Section title="Contact Person / Caller Data" icon={<Phone size={14} />}>
-          <div className="grid md:grid-cols-3 gap-3">
-            <Field label="Contact Person">
-              <input className={input} value={form.callerName} onChange={e => update("callerName", e.target.value)} />
-            </Field>
-            <Field label="Contact Address">
-              <input className={input} value={form.callerAddress} onChange={e => update("callerAddress", e.target.value)} />
-            </Field>
-            <Field label="Contact Number">
-              <input className={input} value={form.callerContact} onChange={e => update("callerContact", e.target.value)} />
-            </Field>
-          </div>
-        </Section>
-
-        {/* ── Nature of Call ── */}
-        <Section title="Nature of Call" icon={<FileText size={14} />}>
-          <div className="grid lg:grid-cols-[1fr_1fr_.9fr] gap-4">
-
-            {/* Medical / conduction types */}
-            <div className="border border-border rounded-xl p-3 space-y-2 bg-secondary/20">
-              <span className="block text-xs font-bold uppercase tracking-wide text-foreground mb-1">Type</span>
-              <div className="grid grid-cols-2 gap-y-2 gap-x-3">
-                {["Conduction", "Transport", "Transfer"].map(t => (
-                  <CB key={t} label={t} checked={natureHas(t)} onChange={() => toggleNature(t)} />
-                ))}
-              </div>
-              <hr className="border-border my-1" />
-              <span className="block text-xs font-bold uppercase tracking-wide text-foreground">Medical</span>
-              <div className="grid grid-cols-2 gap-y-2 gap-x-3">
-                {["Medical", "Pediatric", "Psychiatric", "Surgical", "Obstetrical", "Drowning"].map(t => (
-                  <CB key={t} label={t} checked={natureHas(t)} onChange={() => toggleNature(t)} />
-                ))}
-              </div>
-              <input
-                className={`${smallInput} mt-1`}
-                placeholder="Others (medical)"
-                value={form.otherMedical}
-                onChange={e => update("otherMedical", e.target.value)}
-              />
-            </div>
-
-            {/* Trauma types */}
-            <div className="border border-border rounded-xl p-3 space-y-2 bg-secondary/20">
-              <span className="block text-xs font-bold uppercase tracking-wide text-foreground mb-1">Trauma</span>
-              <div className="space-y-1.5">
-                {["Trauma", "Fall", "Electrocution", "Domestic Violence", "Water Rescue Incident", "Fire Incident"].map(t => (
-                  <CB key={t} label={t} checked={natureHas(t)} onChange={() => toggleNature(t)} />
-                ))}
-              </div>
-              <Field label="Assault – specify">
-                <input className={smallInput} placeholder="Hacking, stabbing, shooting, stoning..." value={form.assaultDetails} onChange={e => update("assaultDetails", e.target.value)} />
+          <Section title="Additional Incident Details" icon={<ClipboardList size={14} />} collapsible defaultOpen={false} summary={form.incidentNature || form.nameOfHospital || "Collapsed"}>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Date of Incident">
+                <input type="date" className={input} value={form.dateOfIncident} onChange={e => update("dateOfIncident", e.target.value)} />
               </Field>
-              <Field label="Animal Bite – specify">
-                <input className={smallInput} placeholder="Dog / Cat / Snake / Others" value={form.animalBiteDetails} onChange={e => update("animalBiteDetails", e.target.value)} />
+              <Field label="Name of Hospital / Facility">
+                <input className={input} value={form.nameOfHospital} onChange={e => update("nameOfHospital", e.target.value)} />
               </Field>
-              <CB label="Motor Vehicle Crash" checked={natureHas("Motor Vehicle Crash")} onChange={() => toggleNature("Motor Vehicle Crash")} />
-              <input className={`${smallInput} mt-1`} placeholder="Other/s" value={form.otherTrauma} onChange={e => update("otherTrauma", e.target.value)} />
-            </div>
-
-            {/* Incident details column */}
-            <div className="border border-border rounded-xl p-3 bg-card space-y-3">
-              <span className="block text-xs font-bold uppercase tracking-wide text-foreground mb-1">Incident Details</span>
               <div>
-                <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Nature</span>
-                <div className="flex gap-3">
+                <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Nature</span>
+                <div className="flex flex-wrap gap-3">
                   {["Self-Inflicted", "Accidental"].map(n => (
-                    <label key={n} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                    <label key={n} className="flex cursor-pointer items-center gap-1.5 text-xs">
                       <input type="checkbox" checked={form.incidentNature === n} onChange={() => toggleIncidentNature(n)} className="accent-blue-600" />
                       {n}
                     </label>
                   ))}
                 </div>
               </div>
-              <Field label="If Ingestion – specify">
-                <input className={smallInput} placeholder="Chemical / Object / Others" value={form.ifIngestion} onChange={e => update("ifIngestion", e.target.value)} />
-              </Field>
-              <Field label="Quantity">
-                <input className={smallInput} value={form.quantity} onChange={e => update("quantity", e.target.value)} />
-              </Field>
-              <Field label="If Fall – specify">
-                <input className={smallInput} value={form.ifFall} onChange={e => update("ifFall", e.target.value)} />
-              </Field>
-
-              <hr className="border-border" />
-
-              {/* Crash type */}
-              <div className="flex gap-3">
-                <CB label="Self-Accident" checked={form.selfAccident} onChange={() => update("selfAccident", !form.selfAccident)} />
-                <CB label="Collision" checked={form.collision} onChange={() => update("collision", !form.collision)} />
-              </div>
-              <Field label="Vehicle Involved">
-                <select className={smallInput} value={form.vehicleInvolved} onChange={e => update("vehicleInvolved", e.target.value)}>
-                  <option value="">Select vehicle</option>
-                  {VEHICLE_INVOLVED_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
-                </select>
-              </Field>
             </div>
-          </div>
+          </Section>
 
-          {/* Incident location, time, assistance */}
-          <div className="grid md:grid-cols-3 gap-3 mt-4">
-            <Field label="Place of Incident" wide>
-              <input className={input} value={form.placeOfIncident} onChange={e => setForm(f => ({ ...f, placeOfIncident: e.target.value, locationText: e.target.value }))} />
-            </Field>
-            <Field label="Barangay">
-              <input className={input} value={form.barangay || ""} onChange={e => update("barangay", e.target.value)} />
-            </Field>
-            <div className="md:col-span-3">
+          <Section title="Assistance Needed" icon={<AlertTriangle size={14} />} collapsible defaultOpen={false} summary={form.assistanceNeeded.length ? form.assistanceNeeded.join(", ") : "No outside assistance selected"}>
+            <div className="flex flex-wrap gap-3">
+              {ASSISTANCE_OPTIONS.map(opt => (
+                <CB key={opt} label={opt} checked={form.assistanceNeeded.includes(opt)} onChange={() => toggleAssistance(opt)} />
+              ))}
+              {form.assistanceNeeded.includes("OTHERS") && (
+                <input className={smallInput + " w-full sm:w-48"} placeholder="Specify others" value={form.assistanceOther} onChange={e => update("assistanceOther", e.target.value)} />
+              )}
+            </div>
+          </Section>
+
+          <Section title="Patient / Victim Data" icon={<Users size={14} />} collapsible defaultOpen={false} summary={linkedPCR ? "Status: " + (isPcrComplete(linkedPCR) ? "PCR Completed" : linkedPCR.status) : "Status: Awaiting PCR"}>
+            <div className="space-y-3">
+              {form.patients.map((p, i) => (
+                <PatientCard
+                  key={p.id}
+                  patient={p}
+                  index={i}
+                  onChange={updated => updatePatient(p.id, updated)}
+                  onRemove={() => removePatient(p.id)}
+                  canRemove={form.patients.length > 1}
+                  pcrStatus={linkedPCR ? (isPcrComplete(linkedPCR) ? "PCR Completed" : linkedPCR.status) : "Awaiting PCR"}
+                />
+              ))}
+              {form.patients.length < 3 && (
+                <button
+                  type="button"
+                  onClick={addPatient}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-blue-400/50 py-3 text-sm font-semibold text-blue-500 transition-colors hover:bg-blue-500/5"
+                >
+                  <Plus size={16} /> Add Patient / Victim
+                </button>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Response Timeline" icon={<Clock size={14} />} collapsible defaultOpen={false} summary={form.dispatchedTime ? "Dispatch " + form.dispatchedTime : "Dispatch time auto-records on send"}>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+              <TimelineField label="Dispatch Time" value={form.dispatchedTime} onChange={v => update("dispatchedTime", v)} />
+              <TimelineField label="Arrival at Scene" value={form.arrivalScene} onChange={v => update("arrivalScene", v)} />
+              <TimelineField label="Departure at Scene" value={form.departureScene} onChange={v => update("departureScene", v)} />
+              <TimelineField label="Arrival at Hospital" value={form.arrivalHospital} onChange={v => update("arrivalHospital", v)} />
+              <TimelineField label="Departure at Hospital" value={form.departureHospital} onChange={v => update("departureHospital", v)} />
+              <TimelineField label="Arrival at Office" value={form.arrivalOffice} onChange={v => update("arrivalOffice", v)} />
+            </div>
+          </Section>
+        </div>
+
+        <aside className="space-y-4 lg:sticky lg:top-4 lg:self-start">
+          <SyncStatusPanel />
+          <section className="overflow-hidden rounded-xl border border-border bg-card">
+            <div className="flex items-center gap-2 bg-secondary px-4 py-2.5 text-sm font-bold uppercase tracking-wide text-foreground">
+              <MapPin size={14} className="text-blue-500" /> Map Preview
+            </div>
+            <div className="p-3">
               <IncidentLocationPicker
                 value={form}
                 locationText={form.placeOfIncident}
                 onChange={updateIncidentLocation}
+                height={180}
+                showSearch={false}
               />
             </div>
-            <Field label="Time of Incident">
-              <input type="time" className={input} value={form.timeOfIncident} onChange={e => update("timeOfIncident", e.target.value)} />
-            </Field>
-            <Field label="Date of Incident">
-              <input type="date" className={input} value={form.dateOfIncident} onChange={e => update("dateOfIncident", e.target.value)} />
-            </Field>
-            <div className="md:col-span-3">
-              <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">Assistance Needed</span>
-              <div className="flex flex-wrap gap-3">
-                {ASSISTANCE_OPTIONS.map(opt => (
-                  <CB key={opt} label={opt} checked={form.assistanceNeeded.includes(opt)} onChange={() => toggleAssistance(opt)} />
-                ))}
-                {form.assistanceNeeded.includes("OTHERS") && (
-                  <input className={smallInput + " w-40"} placeholder="Specify others" value={form.assistanceOther} onChange={e => update("assistanceOther", e.target.value)} />
-                )}
-              </div>
+          </section>
+          <section className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide">
+              <ClipboardList size={14} className="text-blue-500" /> Dispatch Summary
             </div>
-          </div>
-        </Section>
-
-        {/* ── Timeline ── */}
-        <Section title="Response Timeline" icon={<Clock size={14} />}>
-          <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-3">
-            <TimelineField label="Dispatched Time" value={form.dispatchedTime} onChange={v => update("dispatchedTime", v)} />
-            <TimelineField label="Arrival at Scene" value={form.arrivalScene} onChange={v => update("arrivalScene", v)} />
-            <TimelineField label="Departure at Scene" value={form.departureScene} onChange={v => update("departureScene", v)} />
-            <TimelineField label="Arrival at Hospital" value={form.arrivalHospital} onChange={v => update("arrivalHospital", v)} />
-            <TimelineField label="Departure at Hospital" value={form.departureHospital} onChange={v => update("departureHospital", v)} />
-            <TimelineField label="Arrival at Office" value={form.arrivalOffice} onChange={v => update("arrivalOffice", v)} />
-          </div>
-          <Field label="Name of Hospital / Facility">
-            <input className={input} value={form.nameOfHospital} onChange={e => update("nameOfHospital", e.target.value)} />
-          </Field>
-        </Section>
-
-        {/* ── Patient / Victim Data ── */}
-        <Section title="Patient / Victim Data" icon={<Users size={14} />}>
-          <div className="space-y-4">
-            {form.patients.map((p, i) => (
-              <PatientCard
-                key={p.id}
-                patient={p}
-                index={i}
-                onChange={updated => updatePatient(p.id, updated)}
-                onRemove={() => removePatient(p.id)}
-                canRemove={form.patients.length > 1}
-              />
-            ))}
-            {form.patients.length < 3 && (
-              <button
-                type="button"
-                onClick={addPatient}
-                className="w-full py-3 border-2 border-dashed border-blue-400/50 rounded-xl text-blue-500 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-blue-500/5 transition-colors"
-              >
-                <Plus size={16} /> Add Patient / Victim (max 3)
+            <div className="space-y-3 text-sm">
+              {[
+                ["Response Number", form.responseNumber],
+                ["Dispatch Time", form.dispatchedTime || "On send"],
+                ["Date", form.date || currentDateInput()],
+                ["Dispatcher", form.dispatcher || userDisplayName(user) || "-"],
+                ["Status", form.status || "Draft"],
+              ].map(([label, value]) => (
+                <div key={label} className="flex items-start justify-between gap-3 border-b border-border/70 pb-2 last:border-b-0 last:pb-0">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <span className="max-w-[180px] truncate text-right font-semibold text-foreground">{value}</span>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section className="rounded-xl border border-border bg-card p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-bold uppercase tracking-wide">
+              <CalendarDays size={14} className="text-blue-500" /> Quick Actions
+            </div>
+            <div className="space-y-2">
+              <button type="button" onClick={() => navigate("/admin/dispatch")} className="flex w-full items-center justify-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs font-semibold hover:bg-secondary/80">
+                <ArrowLeft size={14} /> Dispatch Records
               </button>
-            )}
-          </div>
-        </Section>
-
-        {/* ── Dispatcher Sign-off ── */}
-        <Section title="Dispatcher Sign-off" icon={<CheckCircle2 size={14} />}>
-          <div className="grid md:grid-cols-2 gap-3">
-            <Field label="Dispatcher/s">
-              <input className={input} value={form.dispatcher} onChange={e => update("dispatcher", e.target.value)} />
-            </Field>
-            <Field label="Date">
-              <input type="date" className={input} value={form.date} onChange={e => update("date", e.target.value)} />
-            </Field>
-          </div>
-        </Section>
-
+              {linkedPCR && (
+                <button type="button" onClick={() => navigate("/admin/pcr/new?edit=" + linkedPCR.id)} className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-500">
+                  <FileText size={14} /> Open Linked PCR
+                </button>
+              )}
+            </div>
+          </section>
+        </aside>
       </div>
 
-      {/* ── Footer actions ── */}
-      <div className="flex flex-wrap justify-end gap-2 mt-5">
-        <button onClick={handleSave} className="px-4 py-2 bg-secondary rounded-lg flex gap-2 text-sm items-center hover:bg-secondary/80">
-          <Save size={15} /> Save Draft
-        </button>
-        <button onClick={handlePrimarySend} className="px-5 py-2 bg-green-600 text-white rounded-lg flex gap-2 text-sm items-center hover:bg-green-500">
-          <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
-        </button>
+      <div className="sticky bottom-0 z-30 -mx-4 mt-5 border-t border-border bg-background/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6">
+        <div className="mx-auto flex max-w-7xl flex-wrap justify-end gap-2">
+          <button onClick={handleSave} className="flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm hover:bg-secondary/80">
+            <Save size={15} /> Save Draft
+          </button>
+          <button onClick={handlePrimarySend} className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2 text-sm text-white hover:bg-green-500">
+            <Send size={15} /> {isReverseWorkflow ? 'Send to Admin' : 'Send to Responding Team'}
+          </button>
+        </div>
       </div>
 
       {/* ── Print styles ── */}
