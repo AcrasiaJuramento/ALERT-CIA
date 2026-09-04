@@ -44,6 +44,89 @@ export async function listRespondingTeams({ activeOnly = true } = {}) {
   }, "Unable to load responding teams.", { ttlMs: REFERENCE_TTL_MS });
 }
 
+export async function createRespondingTeam({ name }) {
+  const teamName = String(name || "").trim();
+  if (!teamName) throw new Error("Responding team name is required.");
+
+  const saved = await runSupabaseRequest(async client => {
+    const { data: existingTeams, error: findError } = await client
+      .from("responding_teams")
+      .select(TEAM_SELECT);
+
+    if (findError) return { data: null, error: findError };
+
+    const normalizedTeamName = normalizeName(teamName);
+    const inactiveMatch = (existingTeams || []).find(team => normalizeName(team.name) === normalizedTeamName);
+
+    if (inactiveMatch?.deleted_at || inactiveMatch?.active === false) {
+      return client
+        .from("responding_teams")
+        .update({
+          name: teamName,
+          status: "available",
+          active: true,
+          deleted_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", inactiveMatch.id)
+        .select(TEAM_SELECT)
+        .single();
+    }
+
+    if (inactiveMatch) {
+      return {
+        data: null,
+        error: new Error("A responding team with this name already exists."),
+      };
+    }
+
+    return client
+      .from("responding_teams")
+      .insert({ name: teamName, status: "available", active: true })
+      .select(TEAM_SELECT)
+      .single();
+  }, "Unable to create responding team.");
+
+  clearSupabaseRequestCache("reference:responding_teams");
+  return saved;
+}
+
+export async function deleteRespondingTeam(teamId) {
+  const deletedAt = new Date().toISOString();
+  const saved = await runSupabaseRequest(async client => {
+    const { error: memberError } = await client
+      .from("team_members")
+      .update({ left_at: deletedAt })
+      .eq("team_id", teamId)
+      .is("left_at", null);
+
+    if (memberError) return { data: null, error: memberError };
+
+    const { error: crewError } = await client
+      .from("crew_members")
+      .update({ responding_team_id: null, updated_at: deletedAt })
+      .eq("responding_team_id", teamId);
+
+    if (crewError) return { data: null, error: crewError };
+
+    return client
+      .from("responding_teams")
+      .update({
+        status: "off_duty",
+        active: false,
+        deleted_at: deletedAt,
+        updated_at: deletedAt,
+      })
+      .eq("id", teamId)
+      .select(TEAM_SELECT)
+      .single();
+  }, "Unable to delete responding team.");
+
+  clearSupabaseRequestCache("reference:responding_teams");
+  clearSupabaseRequestCache("reference:crew_members");
+  return saved;
+}
+
 export async function findRespondingTeamByName(name) {
   const normalizedName = normalizeName(name);
   if (!normalizedName) return null;

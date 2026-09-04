@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Copy, Edit2, Eye, EyeOff, Plus, Power, Radio, Save, Search, Shield, UserCog, X } from 'lucide-react';
-import { assignProfileRole, assignProfileToRespondingTeam, createCrewMember, createOfficerAccountByAdmin, deactivateProfile, getActiveTeamMembership, listCrewMembers, listProfiles, listRespondingTeams, updateCrewMember, updateProfile } from '../services/supabase';
+import { CheckCircle2, ChevronDown, ChevronRight, Copy, Edit2, Eye, EyeOff, Plus, Power, Radio, Save, Search, Shield, Trash2, UserCog, X } from 'lucide-react';
+import { assignProfileRole, assignProfileToRespondingTeam, createCrewMember, createOfficerAccountByAdmin, createRespondingTeam, deactivateProfile, deleteRespondingTeam, getActiveTeamMembership, listCrewMembers, listProfiles, listRespondingTeams, updateCrewMember, updateProfile } from '../services/supabase';
 
 const roleBadge = {
   administrator: 'bg-red-500/20 text-red-400 border border-red-500/30',
@@ -98,6 +98,9 @@ export default function UserManagement() {
   const [roleUser, setRoleUser] = useState(null);
   const [teamUser, setTeamUser] = useState(null);
   const [teamOptions, setTeamOptions] = useState([]);
+  const [teamForm, setTeamForm] = useState({ name: '' });
+  const [respondingTeamsOpen, setRespondingTeamsOpen] = useState(false);
+  const [teamSavingId, setTeamSavingId] = useState('');
   const [crewRoster, setCrewRoster] = useState([]);
   const [crewForm, setCrewForm] = useState({ name: '', role: 'driver', contactNumber: '', respondingTeamId: '' });
   const [editingCrew, setEditingCrew] = useState({});
@@ -106,10 +109,12 @@ export default function UserManagement() {
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [provisionedAccount, setProvisionedAccount] = useState(null);
   const [formError, setFormError] = useState('');
+  const [resourceError, setResourceError] = useState('');
 
   const loadUsers = async () => {
     setLoading(true);
     setError('');
+    setResourceError('');
     try {
       const rows = await listProfiles();
       setUserList(rows.map(profileToRow));
@@ -143,8 +148,21 @@ export default function UserManagement() {
       return [...current, nextRow].sort((a, b) => a.name.localeCompare(b.name));
     });
   };
+  const upsertTeamOption = team => {
+    setTeamOptions(current => {
+      const next = current.some(row => row.id === team.id)
+        ? current.map(row => (row.id === team.id ? team : row))
+        : [...current, team];
+      return next.sort((a, b) => a.name.localeCompare(b.name));
+    });
+  };
 
   const teamNameById = teamId => teamOptions.find(team => team.id === teamId)?.name || '';
+  const teamSummaries = useMemo(() => teamOptions.map(team => ({
+    ...team,
+    assignedUsers: userList.filter(user => user.teamId === team.id && user.status !== 'inactive').length,
+    activeCrew: crewRoster.filter(member => member.responding_team_id === team.id && member.active).length,
+  })), [crewRoster, teamOptions, userList]);
   const groupLeadersForTeam = teamId => crewRoster
     .filter(member => member.active)
     .filter(member => member.role === 'group_leader')
@@ -317,10 +335,54 @@ export default function UserManagement() {
     }
   };
 
+  const handleAddRespondingTeam = async event => {
+    event.preventDefault();
+    const name = teamForm.name.trim();
+    if (!name) {
+      setResourceError('Responding team name is required.');
+      return;
+    }
+
+    setResourceError('');
+    setTeamSavingId('new');
+    try {
+      const saved = await createRespondingTeam({ name });
+      upsertTeamOption(saved);
+      setTeamForm({ name: '' });
+    } catch (requestError) {
+      setResourceError(requestError.message || 'Unable to create responding team.');
+    } finally {
+      setTeamSavingId('');
+    }
+  };
+
+  const handleDeleteRespondingTeam = async team => {
+    if (!window.confirm(`Delete ${team.name}? Active officer assignments for this team will be removed.`)) return;
+
+    setResourceError('');
+    setTeamSavingId(team.id);
+    try {
+      await deleteRespondingTeam(team.id);
+      setTeamOptions(current => current.filter(row => row.id !== team.id));
+      setCrewRoster(current => current.map(member => (
+        member.responding_team_id === team.id ? { ...member, responding_team_id: null } : member
+      )));
+      setUserList(current => current.map(user => (
+        user.teamId === team.id
+          ? { ...user, teamId: '', teamName: '', teamRole: 'Field Officer', isTeamLeader: false }
+          : user
+      )));
+    } catch (requestError) {
+      setResourceError(requestError.message || 'Unable to delete responding team.');
+    } finally {
+      setTeamSavingId('');
+    }
+  };
+
   const handleAddCrew = async event => {
     event.preventDefault();
     if (!crewForm.name.trim()) return;
-    setFormError('');
+    setResourceError('');
     try {
       const saved = await createCrewMember({
         name: crewForm.name.trim(),
@@ -331,7 +393,7 @@ export default function UserManagement() {
       setCrewRoster(current => [...current, saved].sort((a, b) => `${a.role}${a.name}`.localeCompare(`${b.role}${b.name}`)));
       setCrewForm({ name: '', role: crewForm.role, contactNumber: '', respondingTeamId: crewForm.respondingTeamId });
     } catch (requestError) {
-      setFormError(requestError.message || 'Unable to add crew member.');
+      setResourceError(requestError.message || 'Unable to add crew member.');
     }
   };
 
@@ -340,7 +402,7 @@ export default function UserManagement() {
       const saved = await updateCrewMember(member.id, { active: !member.active });
       setCrewRoster(current => current.map(row => row.id === saved.id ? saved : row));
     } catch (requestError) {
-      setFormError(requestError.message || 'Unable to update crew member.');
+      setResourceError(requestError.message || 'Unable to update crew member.');
     }
   };
 
@@ -361,7 +423,7 @@ export default function UserManagement() {
         return next;
       });
     } catch (requestError) {
-      setFormError(requestError.message || 'Unable to save crew member.');
+      setResourceError(requestError.message || 'Unable to save crew member.');
     }
   };
 
@@ -438,6 +500,74 @@ export default function UserManagement() {
             className="w-full pl-9 pr-4 py-2 bg-input-background border border-border rounded-lg text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:border-blue-500 transition-all"
           />
         </div>
+      </div>
+
+      <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-bold text-foreground">Responding Teams</h2>
+            <p className="text-xs text-muted-foreground">Manage teams available for field officer assignment, dispatch, and PCR forms.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRespondingTeamsOpen(open => !open)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground"
+          >
+            {respondingTeamsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            {respondingTeamsOpen ? 'Hide Teams' : `Show Teams (${teamSummaries.length})`}
+          </button>
+        </div>
+        <form onSubmit={handleAddRespondingTeam} className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto]">
+          <input
+            value={teamForm.name}
+            onChange={event => setTeamForm({ name: event.target.value })}
+            className="rounded-lg border border-border bg-input-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+            placeholder="Responding team name"
+          />
+          <button
+            type="submit"
+            disabled={teamSavingId === 'new'}
+            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:bg-cyan-900"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Team
+          </button>
+        </form>
+        {resourceError && <div className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-400">{resourceError}</div>}
+        {respondingTeamsOpen && (
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-xs">
+              <thead className="bg-secondary/50 text-muted-foreground">
+                <tr>
+                  {['Team name', 'Status', 'Assigned users', 'Crew', 'Actions'].map(label => <th key={label} className="px-3 py-2 text-left font-semibold">{label}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {teamSummaries.map(team => (
+                  <tr key={team.id} className="border-t border-border">
+                    <td className="px-3 py-2 font-semibold text-foreground">{team.name}</td>
+                    <td className="px-3 py-2 capitalize text-muted-foreground">{String(team.status || 'available').replaceAll('_', ' ')}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{team.assignedUsers}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{team.activeCrew}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteRespondingTeam(team)}
+                        disabled={teamSavingId === team.id}
+                        className="inline-flex items-center gap-1 rounded bg-red-500/10 px-2 py-1 font-semibold text-red-400 hover:bg-red-500/20 disabled:opacity-50"
+                        title="Delete responding team"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!teamSummaries.length && <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">No responding teams yet</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="bg-card border border-border rounded-xl p-4 transition-colors duration-300">
