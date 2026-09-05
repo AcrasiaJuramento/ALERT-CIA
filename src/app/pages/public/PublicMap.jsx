@@ -1,5 +1,7 @@
+import { subscribeToPublicDataChanges } from '../../services/supabase/publicRealtime';
+import { createInformationalRefresh } from '../../utils/informationalRefresh';
+import { invalidatePublicData, ANALYSIS_TTL } from '../../services/supabase/publicDataService';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
 import {
   AlertTriangle, Car, Clock, Crosshair, LocateFixed, MapPin,
   Megaphone, Navigation, RefreshCw, Route, Search, ShieldAlert, X, Volume2, VolumeX
@@ -8,8 +10,8 @@ import { LeafletIncidentMap } from '../../components/map/LeafletIncidentMap';
 import navVoice from '../../utils/navigationVoice';
 import {
   listPublishedAdvisories,
+  subscribeToPublicAdvisories,
   listPublicHazardZones,
-  supabase,
 } from '../../services/supabase';
 import { ECHAGUE_CENTER, getIncidentLatLng, getZoneLatLng, hasValidLatLng } from '../../utils/mapData';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
@@ -437,6 +439,29 @@ function isPracticalRoute(route, startPoint, destinationPoint, baseRoute) {
 export default function PublicMap() {
   const geolocation = useGeolocation();
   const [incidents, setIncidents] = useState([]);
+  const [visibleIncidents, setVisibleIncidents] = useState([]);
+  const boundsRef = useRef(null);
+  const markerRequest = useRef(0);
+  const panTimer = useRef(null);
+  const mountedRef = useRef(true);
+  const loadMarkers = useCallback(async () => {
+    if (!boundsRef.current || document.visibilityState !== 'visible') return;
+    const requestId = ++markerRequest.current;
+    try {
+      const rows = await loadPublicAccidentIncidents({ bounds: boundsRef.current });
+      if (mountedRef.current && requestId === markerRequest.current) setVisibleIncidents(rows);
+    } catch (error) { if (mountedRef.current) setError(error.message); }
+  }, []);
+  const onBoundsChange = useCallback(bounds => {
+    boundsRef.current = bounds;
+    ++markerRequest.current;
+    clearTimeout(panTimer.current);
+    panTimer.current = setTimeout(loadMarkers, 400);
+  }, [loadMarkers]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; clearTimeout(panTimer.current); };
+  }, []);
   const [advisories, setAdvisories] = useState([]);
   const [hazardZones, setHazardZones] = useState([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState(null);
@@ -549,53 +574,46 @@ export default function PublicMap() {
     }
   }, []);
 
-  const loadMap = async () => {
+  const loadMap = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const [publicIncidents, zones, activeAdvisories] = await Promise.all([
-        loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 1000, pcrLimit: 200 }),
+        loadPublicAccidentIncidents({ ttl: ANALYSIS_TTL }),
         listPublicHazardZones({ limit: 100 }),
         listPublishedAdvisories({ limit: 100 }),
       ]);
+      if (!mountedRef.current) return;
       setIncidents(publicIncidents.filter(hasValidLatLng));
+      await loadMarkers();
       setAdvisories(activeAdvisories.filter(item => item.coordinates));
       setHazardZones(zones);
     } catch (requestError) {
       setError(requestError.message || 'Unable to load live map data.');
     } finally {
-      setLoading(false);
+      if (mountedRef.current) setLoading(false);
     }
-  };
+  }, [loadMarkers]);
 
   useEffect(() => {
     loadMap();
-  }, []);
+  }, [loadMap]);
 
   useEffect(() => {
-    if (!supabase) return undefined;
-    let refreshTimer;
-    const refreshFromRealtime = () => {
-      window.clearTimeout(refreshTimer);
-      refreshTimer = window.setTimeout(async () => {
-        await loadMap();
-        toast.success('Map updated from live data.', { id: 'public-map-live-update' });
-      }, 250);
-    };
-    const channel = supabase
-      .channel('public-live-navigation-records')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, refreshFromRealtime)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, refreshFromRealtime)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, refreshFromRealtime)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refreshFromRealtime)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'hazard_zones' }, refreshFromRealtime)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'public_advisories' }, refreshFromRealtime)
-      .subscribe();
+    const refresh = createInformationalRefresh(loadMap, { invalidate: invalidatePublicData });
+    const unsubscribe = subscribeToPublicDataChanges(refresh.markStale);
+    const unsubscribeAdvisories = subscribeToPublicAdvisories(() => {
+      listPublishedAdvisories({ limit: 100 }).then(rows => {
+        if (mountedRef.current) setAdvisories(rows.filter(item => item.coordinates));
+      }).catch(() => {});
+    });
+    const onVisible = () => { if (document.visibilityState === 'visible') loadMarkers(); };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      window.clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
+      refresh.dispose(); unsubscribe(); unsubscribeAdvisories();
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, []);
+  }, [loadMap, loadMarkers]);
 
   useEffect(() => {
     navVoice.setMuted(muted);
@@ -1156,7 +1174,8 @@ export default function PublicMap() {
         <main className="relative h-[calc(100vh-4rem)] min-h-[620px] overflow-hidden">
           <LeafletIncidentMap
             height="100%"
-            incidents={incidents}
+            incidents={visibleIncidents}
+            onBoundsChange={onBoundsChange}
             advisoryMarkers={advisories}
             hazardZones={hazardZones}
             accidentProneAreas={publicRiskAreas}
@@ -1176,13 +1195,13 @@ export default function PublicMap() {
             showHeatmap={false}
             showDangerZones
             clusterMarkers={false}
-            autoFit={!route.length && !selectedIncidentId}
+            autoFit={false}
             compact
             scope="isabela"
           />
 
           <div className="absolute left-3 top-3 z-[500] md:left-4">
-            <button onClick={loadMap} className="grid h-10 w-10 place-items-center rounded-lg border border-border bg-card/95 text-muted-foreground shadow-lg backdrop-blur hover:bg-secondary" title="Refresh alerts">
+            <button onClick={() => { invalidatePublicData(); loadMap(); }} className="grid h-10 w-10 place-items-center rounded-lg border border-border bg-card/95 text-muted-foreground shadow-lg backdrop-blur hover:bg-secondary" title="Refresh alerts">
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>

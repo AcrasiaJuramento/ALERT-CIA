@@ -1,3 +1,4 @@
+import { queryPublicView, invalidatePublicData } from './publicDataService';
 import { runSupabaseRequest, runSupabaseRequestWithMeta } from "./errors";
 import { findBarangayByName } from "./referenceService";
 
@@ -322,6 +323,7 @@ async function verifiedPCRResponseIds(client) {
 }
 
 export async function listIncidents({ publicOnly = false, limit = 200, from = 0, status, type, severity, completedWorkflowOnly = false, verifiedMapOnly = false } = {}) {
+  if (publicOnly) return listPublicIncidentMapRecords({ limit, from, status, type, severity, verifiedMapOnly: verifiedMapOnly || completedWorkflowOnly });
   const classification = type === "vehicular" ? "mvc" : type;
   const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
   const { data, count } = await runSupabaseRequestWithMeta(async client => {
@@ -333,21 +335,6 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
     const verifiedResponseIds = asRows(verifiedResponseResult?.data).map(row => row.response_id).filter(Boolean);
     if (verifiedMapOnly && !verifiedResponseIds.length) return { data: [], count: 0, error: null };
 
-    if (publicOnly) {
-      let query = client
-        .from("incidents")
-        .select("id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at, barangay:barangays(id, name)", { count: "exact" })
-        .eq("public_visible", true)
-        .is("deleted_at", null)
-        .order("incident_date", { ascending: false })
-        .range(from, from + limit - 1);
-      if (status) query = query.eq("status", status);
-      if (classification) query = query.eq("classification", classification);
-      if (priority) query = query.eq("priority", priority);
-      if (completedWorkflowOnly) query = query.in("response_id", completedResponseResult.data);
-      if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
-      return query;
-    }
 
     let query = client
       .from("incidents")
@@ -387,42 +374,16 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
   return rows;
 }
 
-export async function listPublicIncidentMapRecords({ limit = 150, from = 0, status, type, severity, verifiedMapOnly = false } = {}) {
-  const classification = type === "vehicular" ? "mvc" : type;
-  const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
-  const rows = await runSupabaseRequest(async client => {
-    const verifiedResponseResult = verifiedMapOnly ? await verifiedPCRResponseIds(client) : null;
-    if (verifiedResponseResult?.error) return verifiedResponseResult;
-    const verifiedResponseIds = asRows(verifiedResponseResult?.data).map(row => row.response_id).filter(Boolean);
-    if (verifiedMapOnly && !verifiedResponseIds.length) return { data: [], error: null };
-
-    let query = client
-      .from("incidents")
-      .select("id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at, barangay:barangays(id, name)")
-      .eq("public_visible", true)
-      .is("deleted_at", null)
-      .not("latitude", "is", null)
-      .not("longitude", "is", null)
-      .order("incident_date", { ascending: false })
-      .range(from, from + limit - 1);
-    if (status) query = query.eq("status", status);
-    if (classification) query = query.eq("classification", classification);
-    if (priority) query = query.eq("priority", priority);
-    if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
-    return query;
-  }, "Unable to load public incident records.");
-
-  const baseRows = asRows(rows);
-  const pcrMetadataByResponseId = await pcrMetadataByResponse(baseRows.map(row => row.response_id));
-
-  return baseRows.map(row => {
-    const pcrMetadata = pcrMetadataByResponseId.get(row.response_id) || {};
-    return incidentToApp({
-      ...row,
-      casualties: 0,
-      pcrTriage: pcrMetadata.triage || "",
-    });
-  });
+export async function listPublicIncidentMapRecords(options = {}) {
+  const { status, type, severity, verifiedMapOnly = false } = options;
+  const rows = await queryPublicView('public_map_incidents_view',
+    'id, classification, priority, title, incident_date, incident_time, location_text, latitude, longitude, status, barangay_name, is_verified, map_severity', options,
+    { status, classification: type === 'vehicular' ? 'mvc' : type,
+      priority: severity === 'warning' ? 'high' : severity === 'moderate' ? 'medium' : severity,
+      is_verified: verifiedMapOnly ? true : undefined });
+  return rows.map(row => ({ ...incidentToApp({ ...row, public_visible: true,
+    barangay: { name: row.barangay_name }, pcrTriage: row.map_severity }),
+    is_verified: row.is_verified, description: 'Verified emergency response activity. Follow official guidance.' }));
 }
 
 export async function getIncident(incidentId) {
@@ -445,7 +406,7 @@ export async function createIncident(record) {
       .insert(incidentPayload(record, barangay?.id))
       .select("*, barangay:barangays(id, name)")
       .single(),
-  "Unable to create incident.").then(incidentToApp);
+  "Unable to create incident.").then(row => { invalidatePublicData(); return incidentToApp(row); });
 }
 
 export async function updateIncident(incidentId, record) {
@@ -457,7 +418,7 @@ export async function updateIncident(incidentId, record) {
       .eq("id", incidentId)
       .select("*, barangay:barangays(id, name)")
       .single(),
-  "Unable to update incident.").then(incidentToApp);
+  "Unable to update incident.").then(row => { invalidatePublicData(); return incidentToApp(row); });
 }
 
 export async function archiveIncident(incidentId) {
@@ -468,5 +429,12 @@ export async function archiveIncident(incidentId) {
       .eq("id", incidentId)
       .select("*")
       .single(),
-  "Unable to archive incident.");
+  "Unable to archive incident.").then(row => { invalidatePublicData(); return row; });
+}
+
+export async function getActiveIncidentCount() {
+  const result = await runSupabaseRequestWithMeta(client => client.from('incidents')
+    .select('id', { count: 'exact', head: true }).is('deleted_at', null)
+    .not('status', 'in', '(completed,pcr_completed)'), 'Unable to load active incident count.');
+  return result.count || 0;
 }

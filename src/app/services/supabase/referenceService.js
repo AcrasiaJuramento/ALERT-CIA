@@ -8,6 +8,7 @@ export function getAmbulanceStatus(unit) {
   return unit?.active ? "available" : "unavailable";
 }
 
+const BARANGAY_TTL_MS = 24 * 60 * 60 * 1000;
 const REFERENCE_TTL_MS = 10 * 60 * 1000;
 const LIVE_REFERENCE_TTL_MS = 30 * 1000;
 const BARANGAY_SELECT = "id, psgc_code, name, normalized_name, municipality, province, active, centroid";
@@ -25,7 +26,7 @@ export async function listBarangays({ activeOnly = true, municipality = "" } = {
     if (activeOnly) query = query.eq("active", true);
     if (municipalitySearch) query = query.ilike("municipality", `%${municipalitySearch}%`);
     return query;
-  }, "Unable to load barangays.", { ttlMs: REFERENCE_TTL_MS });
+  }, "Unable to load barangays.", { ttlMs: BARANGAY_TTL_MS });
 }
 
 export async function findBarangayByName(name) {

@@ -1,7 +1,9 @@
 import { getSupabaseClient } from "../../lib/supabaseClient";
+import { notifyDataInvalidated } from '../../utils/dataInvalidation.js';
 
 const inflightRequests = new Map();
 const responseCache = new Map();
+let cacheGeneration = 0;
 
 function cloneCachedData(value) {
   if (value === null || value === undefined) return value;
@@ -48,8 +50,17 @@ export function handleSupabaseError(error, fallback) {
 }
 
 export async function runSupabaseRequest(request, fallback) {
-  const { data, error } = await request(getSupabaseClient());
+  const query = request(getSupabaseClient());
+  const { data, error } = await query;
   handleSupabaseError(error, fallback);
+  // Supabase builders expose the HTTP method. RPC mutations often use async wrappers,
+  // so their service entry points also call notifyDataInvalidated after success.
+  const path = query?.url?.pathname || '';
+  if (['POST', 'PATCH', 'DELETE'].includes(query?.method)
+      && (!path.includes('/rpc/') || !/\/(get_|list_|public_|staff_)/.test(path))) {
+    clearSupabaseRequestCache('analytics:');
+    notifyDataInvalidated();
+  }
   return data;
 }
 
@@ -65,18 +76,26 @@ export async function runCachedSupabaseRequest(cacheKey, request, fallback, { tt
   if (!force && cached && cached.expiresAt > now) return cloneCachedData(cached.data);
   if (!force && inflightRequests.has(cacheKey)) return cloneCachedData(await inflightRequests.get(cacheKey));
 
+  const generation = cacheGeneration;
   const promise = runSupabaseRequest(request, fallback)
     .then(data => {
-      responseCache.set(cacheKey, { data: cloneCachedData(data), expiresAt: Date.now() + ttlMs });
+      if (generation === cacheGeneration) {
+        responseCache.set(cacheKey, { data: cloneCachedData(data), expiresAt: Date.now() + ttlMs });
+        while (responseCache.size > 150) responseCache.delete(responseCache.keys().next().value);
+      }
       return data;
     })
-    .finally(() => inflightRequests.delete(cacheKey));
+    .finally(() => { if (inflightRequests.get(cacheKey) === promise) inflightRequests.delete(cacheKey); });
 
   inflightRequests.set(cacheKey, promise);
   return cloneCachedData(await promise);
 }
 
 export function clearSupabaseRequestCache(prefix = "") {
+  cacheGeneration += 1;
+  for (const key of inflightRequests.keys()) {
+    if (!prefix || key.startsWith(prefix)) inflightRequests.delete(key);
+  }
   for (const key of responseCache.keys()) {
     if (!prefix || key.startsWith(prefix)) responseCache.delete(key);
   }

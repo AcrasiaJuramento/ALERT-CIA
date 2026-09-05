@@ -275,6 +275,14 @@ function isPcrDispatchRecord(record = {}) {
     );
 }
 
+function isOfficialIncidentProjection(record = {}) {
+  const sourceKind = normalizeValue(record.sourceKind || record.source_type);
+  return sourceKind === 'official'
+    || sourceKind === 'official_incident'
+    || sourceKind === 'incident'
+    || sourceKind === 'mdrrmo';
+}
+
 function readReviewStatus(record = {}) {
   return normalizeValue(record.scraperStatus || record.status);
 }
@@ -451,7 +459,7 @@ export function getAccidentProneFilterOptions(records = []) {
 
 function passSourceMode(record = {}, sourceMode = 'all') {
   const sourceType = readSourceType(record);
-  if (sourceMode === 'official') return sourceType === 'mdrrmo' && isPcrDispatchRecord(record);
+  if (sourceMode === 'official') return sourceType === 'mdrrmo' && (isPcrDispatchRecord(record) || isOfficialIncidentProjection(record));
   if (sourceMode === 'scraped') return sourceType === 'scraped';
   return true;
 }

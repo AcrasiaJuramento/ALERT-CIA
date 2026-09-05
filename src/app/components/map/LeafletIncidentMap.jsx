@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CircleMarker, GeoJSON, MapContainer, Marker, Popup, TileLayer, ZoomControl, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { ChevronDown, LocateFixed, Layers, RefreshCw } from 'lucide-react';
@@ -284,7 +284,19 @@ function IncidentBarangayBoundaries({ incidents = [], enabled = true }) {
   );
 }
 
+function ViewportObserver({ onBoundsChange }) {
+  const map = useMap();
+  const report = useCallback(() => {
+    const b = map.getBounds();
+    onBoundsChange({ south: b.getSouth(), north: b.getNorth(), west: b.getWest(), east: b.getEast() });
+  }, [map, onBoundsChange]);
+  useMapEvents({ moveend: report });
+  useEffect(report, [report]);
+  return null;
+}
+
 export function LeafletIncidentMap({
+  onBoundsChange,
   height = '100%',
   incidents = [],
   selectedIncidentId,
@@ -375,6 +387,7 @@ export function LeafletIncidentMap({
         />
         <LocalIsabelaBasemap enabled={basemapUnavailable} />
         <MapResizeHandler />
+        {onBoundsChange && <ViewportObserver onBoundsChange={onBoundsChange} />}
         <MapClickHandler onMapClick={onMapClick} />
         <FocusLocation location={focusedLocation} />
         <ZoomControl position="bottomright" />

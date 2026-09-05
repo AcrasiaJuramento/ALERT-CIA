@@ -1,38 +1,10 @@
 import {
   listPublicIncidentMapRecords,
-  listOfficerScrapedMapIncidents,
   listPublicScrapedMapIncidents,
-  listPCRMapIncidents,
   listPublicPCRMapIncidents,
 } from '../services/supabase';
 import { hasValidLatLng, isWithinIsabelaMapArea } from './mapData';
-import { isWithinAccidentProneWindow } from './accidentProneWindow';
-
-const EXCLUDED_SCRAPER_STATUSES = new Set(['duplicate', 'rejected', 'ignored', 'archived', 'failed']);
-
-function isAccidentRecord(record = {}) {
-  const values = [
-    record.type,
-    record.classification,
-    record.incidentType,
-    record.category,
-    record.title,
-    record.description,
-  ].map(value => String(value || '').toLowerCase());
-
-  return values.some(value => (
-    value.includes('accident')
-    || value.includes('vehicular')
-    || value.includes('vehicle')
-    || value.includes('collision')
-    || value.includes('crash')
-    || value.includes('bangga')
-    || value.includes('aksidente')
-    || value.includes('salpok')
-    || value.includes('nasagasaan')
-    || value === 'mvc'
-  ));
-}
+import { readPublicData, PUBLIC_TTL } from '../services/supabase/publicDataService';
 
 function mergeMapRecords(records = []) {
   const byKey = new Map();
@@ -60,57 +32,41 @@ function sanitizeForPublic(record = {}) {
   };
 }
 
-export async function loadPublicAccidentIncidents({ officialLimit = 500, scrapedLimit = 1000, pcrLimit = 200 } = {}) {
-  const [officialSets, pcrLinked, scrapedSets] = await Promise.all([
-    Promise.all([
-      listPublicIncidentMapRecords({ limit: officialLimit, verifiedMapOnly: true }).catch(() => []),
-    ]),
-    listPublicPCRMapIncidents({ limit: pcrLimit })
-      .catch(() => listPCRMapIncidents({ publicOnly: true, verifiedOnly: true, limit: pcrLimit }))
-      .catch(() => []),
-    Promise.all([
-      listPublicScrapedMapIncidents({ limit: scrapedLimit }).catch(() => []),
-      listOfficerScrapedMapIncidents({ limit: scrapedLimit, includeUnverified: true }).catch(() => []),
-    ]),
-  ]);
-
-  const official = mergeMapRecords((Array.isArray(officialSets) ? officialSets : []).flat());
-  const [publicScraped = [], reviewedScraped = []] = Array.isArray(scrapedSets) ? scrapedSets : [];
-  const publicOfficialReports = official;
-  const scrapedAccidents = mergeMapRecords([
-    ...(Array.isArray(publicScraped) ? publicScraped : []),
-    ...(Array.isArray(reviewedScraped) ? reviewedScraped : []),
-  ])
-    .filter(record => !EXCLUDED_SCRAPER_STATUSES.has(String(record.scraperStatus || record.status || '').toLowerCase()))
-    .filter(isAccidentRecord);
-  const officialIds = new Set(publicOfficialReports.map(item => item.id));
-  const pcrOnly = (Array.isArray(pcrLinked) ? pcrLinked : [])
-    .filter(item => !officialIds.has(item.relatedIncidentId));
-
-  return mergeMapRecords([...publicOfficialReports, ...pcrOnly, ...scrapedAccidents])
-    .filter(hasValidLatLng)
-    .filter(isWithinIsabelaMapArea)
-    .map(sanitizeForPublic);
+// History is intentionally paged completely for stable risk scores and route warnings.
+// Marker callers pass bounds and receive one bounded page instead.
+async function loadPages(loader, options, allPages) {
+  if (!allPages) return loader(options);
+  const rows = [];
+  for (let from = 0; ; from += 500) {
+    const page = await loader({ ...options, limit: 500, from });
+    rows.push(...page);
+    if (page.length < 500) return rows;
+  }
 }
 
-export async function loadPublicIncidentLogRecords({ officialLimit = 500, pcrLimit = 200 } = {}) {
-  const [officialRecords, pcrRecords] = await Promise.all([
-    listPublicIncidentMapRecords({ limit: officialLimit }).catch(() => []),
-    listPublicPCRMapIncidents({ limit: pcrLimit })
-      .catch(() => listPCRMapIncidents({ publicOnly: true, verifiedOnly: true, limit: pcrLimit }))
-      .catch(() => []),
-  ]);
+export function loadPublicAccidentIncidents(options = {}) {
+  const { bounds = null, since, until, allPages = !bounds, ttl = PUBLIC_TTL } = options;
+  const query = { bounds, ...(since !== undefined ? { since } : {}), until: until || new Date().toLocaleDateString('en-CA') };
+  return readPublicData(`accident-feed:${JSON.stringify([query, allPages, ttl])}`, async () => {
+    const [official, pcr, scraped] = await Promise.all([
+      loadPages(listPublicIncidentMapRecords, { ...query, verifiedMapOnly: true }, allPages),
+      loadPages(listPublicPCRMapIncidents, query, allPages),
+      loadPages(listPublicScrapedMapIncidents, query, allPages),
+    ]);
+    const officialIds = new Set(official.map(item => item.id));
+    return mergeMapRecords([...official, ...pcr.filter(item => !officialIds.has(item.relatedIncidentId)), ...scraped])
+      .filter(hasValidLatLng).filter(isWithinIsabelaMapArea).map(sanitizeForPublic);
+  }, ttl);
+}
 
-  const official = mergeMapRecords(officialRecords);
-  const officialIds = new Set(official.map(item => item.id));
-  const pcrOnly = (Array.isArray(pcrRecords) ? pcrRecords : [])
-    .filter(item => !officialIds.has(item.relatedIncidentId));
-
-  return mergeMapRecords([...official, ...pcrOnly])
-    .filter(hasValidLatLng)
-    .filter(isWithinIsabelaMapArea)
-    .filter(record => isWithinAccidentProneWindow(
-      record.date || record.incident_date || record.createdAt || record.created_at,
-    ))
-    .map(sanitizeForPublic);
+export function loadPublicIncidentLogRecords(options = {}) {
+  return readPublicData(`public-log:${JSON.stringify(options)}`, async () => {
+    const [official, pcr] = await Promise.all([
+      loadPages(listPublicIncidentMapRecords, options, true),
+      loadPages(listPublicPCRMapIncidents, options, true),
+    ]);
+    const ids = new Set(official.map(item => item.id));
+    return mergeMapRecords([...official, ...pcr.filter(item => !ids.has(item.relatedIncidentId))])
+      .filter(hasValidLatLng).filter(isWithinIsabelaMapArea).map(sanitizeForPublic);
+  });
 }

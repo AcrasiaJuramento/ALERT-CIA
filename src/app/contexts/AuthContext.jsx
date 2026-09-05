@@ -1,3 +1,5 @@
+import { clearSupabaseRequestCache } from '../services/supabase/errors';
+import { notifyDataInvalidated } from '../utils/dataInvalidation';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { ROLES, ROLE_LABELS, hasPermission } from '../access/rbac';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
@@ -132,6 +134,10 @@ export function AuthProvider({ children }) {
     restoreSession();
 
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (_event === 'SIGNED_OUT' || _event === 'SIGNED_IN' || _event === 'USER_UPDATED') {
+        clearSupabaseRequestCache();
+        notifyDataInvalidated();
+      }
       if (!session?.user) {
         localStorage.removeItem(AUTH_STORAGE_KEY);
         setUser(null);

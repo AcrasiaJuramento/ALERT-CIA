@@ -1,6 +1,8 @@
+import { useAuth } from '../contexts/AuthContext';
+import { createInformationalRefresh } from '../utils/informationalRefresh';
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Download, FileText, Printer, Search } from 'lucide-react';
-import { listDispatchRecords, listIncidents, listPCRReports, supabase } from '../services/supabase';
+import { getReportsSummary, clearSupabaseRequestCache, supabase } from '../services/supabase';
 
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const quarters = ['Q1', 'Q2', 'Q3', 'Q4'];
@@ -17,134 +19,10 @@ const reportCategories = [
   'Helmet',
   'Alcohol',
 ];
-const spreadsheetSections = [
-  { title: 'CONDUCTION', filter: 'Conduction', rows: ['Dialysis', 'Check-up', 'Travel (Within Region 2)', 'Travel (Outside Region 2)'] },
-  { title: 'MEDICAL', filter: 'Medical', rows: ['Pediatric', 'Psychiatric', 'Surgical', 'Obstetrical', 'Drowning', 'Medical'] },
-  { title: 'TRAUMA', filter: 'Trauma', rows: ['Fall', 'Electrocution', 'Domestic Violence', 'Fire Rescue Incident', 'Assault', 'Animal Bite', 'Trauma'] },
-  { title: 'MOTOR VEHICLE CRASH TYPE', filter: 'Motor Vehicle Crash', rows: ['Collision', 'Self-Accident'] },
-  { title: 'VEHICLE TYPE', filter: 'Vehicle Type', rows: ['Bicycle', 'Tricycle', 'Single Motor', 'Private Vehicle', 'Public Utility Vehicle', 'Truck', 'Other'] },
-  { title: 'PERSON INVOLVED', filter: 'Person Involved', rows: ['Driver', 'Passenger', 'Pedestrian'] },
-  { title: 'ENGINE SIZE', filter: 'Engine Size', rows: ['>4500', '<4500'] },
-  { title: 'LICENSE', filter: 'License', rows: ['License (+)', 'License (-)'] },
-  { title: 'HELMET', filter: 'Helmet', rows: ['Helmet (+)', 'Helmet (-)'] },
-  { title: 'ALCOHOL', filter: 'Alcohol', rows: ['Alcohol (+)', 'Alcohol (-)'] },
-];
-
-function normalizeCategory(value) {
-  const category = String(value || 'other').trim().toLowerCase();
-  if (category === 'mvc' || category === 'vehicular' || category === 'motor vehicle crash type') return 'Motor Vehicle Crash';
-  if (category === 'drivers license' || category === "driver's license") return 'License';
-  if (category === 'alcohol breath' || category === 'alcohol involvement') return 'Alcohol';
-  return category
-    .split(/[\s_-]+/)
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-}
-
-function normalizeToken(value) {
-  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ');
-}
-
-function textIncludesAny(value, terms) {
-  const token = normalizeToken(value);
-  return terms.some(term => token.includes(normalizeToken(term)));
-}
-
-function truthyCrashValue(value) {
-  const token = normalizeToken(value);
-  return ['yes', 'positive', 'worn', 'with', 'licensed', 'license positive', '+'].some(term => token === normalizeToken(term) || token.includes(normalizeToken(term)));
-}
-
-function falsyCrashValue(value) {
-  const token = normalizeToken(value);
-  return ['no', 'negative', 'none', 'not worn', 'without', 'unlicensed', 'not applicable', 'n a', '-'].some(term => token === normalizeToken(term) || token.includes(normalizeToken(term)));
-}
-
-function recordDate(record = {}) {
-  return record.dateOfIncident || record.date || record.incidentDate || record.submittedAt || record.completedAt || record.createdAt || record.updatedAt;
-}
-
-function recordTerms(record = {}) {
-  return [
-    ...(record.natureTypes || []),
-    ...(record.emergencyTypes || []),
-    ...(record.traumaTypes || []),
-    record.typeOfIncident,
-    record.incidentNature,
-    record.natureOfCall,
-    record.otherMedical,
-    record.otherTrauma,
-    record.otherNature,
-    record.emergencyOther,
-    record.chiefComplaint,
-  ].filter(Boolean);
-}
-
-function hasRecordTerm(record, terms) {
-  return recordTerms(record).some(value => textIncludesAny(value, terms));
-}
-
-function crashValue(record, keys = []) {
-  const crash = record.crash || {};
-  for (const key of keys) {
-    const value = crash[key] ?? record[key];
-    if (value !== null && value !== undefined && String(value).trim() !== '') return value;
-  }
-  return '';
-}
-
-function recordMatchesSection(record, section) {
-  if (section.filter === 'Conduction') return hasRecordTerm(record, ['Conduction', 'Transport', 'Transfer', 'Dialysis', 'Check-up', 'Travel']);
-  if (section.filter === 'Medical') return hasRecordTerm(record, ['Medical', 'Pediatric', 'Psychiatric', 'Surgical', 'Obstetrical', 'Drowning']);
-  if (section.filter === 'Trauma') return hasRecordTerm(record, ['Trauma', 'Fall', 'Electrocution', 'Domestic Violence', 'Fire Rescue Incident', 'Assault', 'Animal Bite']);
-  if (section.filter === 'Motor Vehicle Crash') return hasRecordTerm(record, ['Motor Vehicle Crash']) || Boolean(record.collision || record.selfAccident || record.vehicleInvolved || record.crash?.vehicle);
-  return recordMatchesSection(record, { filter: 'Motor Vehicle Crash' });
-}
-
-function recordMatchesRow(record, rowLabel, section) {
-  if (section.filter === 'Conduction') return hasRecordTerm(record, [rowLabel]);
-  if (section.filter === 'Medical') return hasRecordTerm(record, [rowLabel]);
-  if (section.filter === 'Trauma') return hasRecordTerm(record, [rowLabel]);
-  if (section.filter === 'Motor Vehicle Crash') {
-    if (rowLabel === 'Collision') return Boolean(record.collision) || truthyCrashValue(crashValue(record, ['collision']));
-    if (rowLabel === 'Self-Accident') return Boolean(record.selfAccident) || truthyCrashValue(crashValue(record, ['selfAccident', 'selfAccidentStatus']));
-  }
-  if (section.filter === 'Vehicle Type') return textIncludesAny(crashValue(record, ['vehicle', 'vehicleType', 'vehicleInvolved', 'vehicleInvolve']) || record.vehicleInvolved, [rowLabel]);
-  if (section.filter === 'Person Involved') return textIncludesAny(crashValue(record, ['personInvolved', 'person', 'role']), [rowLabel]);
-  if (section.filter === 'Engine Size') {
-    const engineSize = crashValue(record, ['engineSize', 'engine']);
-    const number = Number(String(engineSize).replace(/[^\d.]/g, ''));
-    if (rowLabel === '>4500') return Number.isFinite(number) && number > 4500;
-    if (rowLabel === '<4500') return Number.isFinite(number) && number > 0 && number < 4500;
-  }
-  if (section.filter === 'License') {
-    const license = crashValue(record, ['license', 'driversLicense', 'driverLicense']);
-    return rowLabel.includes('(+)') ? truthyCrashValue(license) : falsyCrashValue(license);
-  }
-  if (section.filter === 'Helmet') {
-    const helmet = crashValue(record, ['helmet']);
-    return rowLabel.includes('(+)') ? truthyCrashValue(helmet) : falsyCrashValue(helmet);
-  }
-  if (section.filter === 'Alcohol') {
-    const alcohol = crashValue(record, ['alcohol', 'alcoholBreath']);
-    return rowLabel.includes('(+)') ? truthyCrashValue(alcohol) : falsyCrashValue(alcohol);
-  }
-  return false;
-}
-
 function getPeriodLabels(summary) {
   if (summary === 'quarterly') return quarters;
   if (summary === 'annual') return annualPeriods;
   return months;
-}
-
-function getPeriodIndex(dateValue, summary) {
-  const date = dateValue ? new Date(dateValue) : null;
-  if (!date || Number.isNaN(date.getTime())) return null;
-  if (summary === 'annual') return 0;
-  const month = date.getMonth();
-  return summary === 'quarterly' ? Math.floor(month / 3) : month;
 }
 
 function downloadBlob(filename, blob) {
@@ -323,12 +201,11 @@ function StatCard({ label, value }) {
 }
 
 export default function ReportsAnalytics() {
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All Categories');
   const [summary, setSummary] = useState('monthly');
-  const [incidents, setIncidents] = useState([]);
-  const [dispatchRecords, setDispatchRecords] = useState([]);
-  const [pcrReports, setPcrReports] = useState([]);
+  const [reportData, setReportData] = useState({ reportRows: [], spreadsheetRows: [], barangayTotals: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const periodLabels = useMemo(() => getPeriodLabels(summary), [summary]);
@@ -339,25 +216,19 @@ export default function ReportsAnalytics() {
       setLoading(true);
       setError('');
       try {
-        const [incidentRows, dispatchRows, pcrRows] = await Promise.all([
-          listIncidents({ limit: 1000 }),
-          listDispatchRecords({ limit: 1000 }),
-          listPCRReports({ limit: 1000 }),
-        ]);
-        if (mounted) {
-          setIncidents(incidentRows);
-          setDispatchRecords(dispatchRows);
-          setPcrReports(pcrRows);
-        }
+        const data = await getReportsSummary(summary, `${user?.id}:${user?.role}`);
+        if (mounted) setReportData(data);
+
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load report data.');
       } finally {
         if (mounted) setLoading(false);
       }
     }
+    setReportData({ reportRows: [], spreadsheetRows: [], barangayTotals: [] });
     load();
-    const refresh = () => load();
-    const interval = window.setInterval(refresh, 30000);
+    const scheduler = createInformationalRefresh(load, { invalidate: () => clearSupabaseRequestCache('analytics:') });
+    const refresh = scheduler.markStale;
     const channel = supabase
       ?.channel?.('reports-analytics-live-counts')
       ?.on('postgres_changes', { event: '*', schema: 'public', table: 'dispatch_forms' }, refresh)
@@ -368,86 +239,17 @@ export default function ReportsAnalytics() {
       ?.subscribe?.();
     return () => {
       mounted = false;
-      window.clearInterval(interval);
+      scheduler.dispose();
       if (channel) supabase.removeChannel(channel);
     };
-  }, []);
+  }, [summary, user?.id, user?.role]);
 
-  const spreadsheetSourceRecords = useMemo(() => {
-    const byResponse = new Map();
-    dispatchRecords.forEach(record => {
-      const key = record.responseId || record.id || record.dispatchId;
-      if (key) byResponse.set(key, { ...record, sourceKinds: ['dispatch'] });
-    });
-    pcrReports.forEach(record => {
-      const key = record.responseId || record.dispatchId || record.id;
-      if (!key) return;
-      const existing = byResponse.get(key) || {};
-      byResponse.set(key, {
-        ...existing,
-        ...record,
-        crash: { ...(existing.crash || {}), ...(record.crash || {}) },
-        natureTypes: [...new Set([...(existing.natureTypes || []), ...(record.natureTypes || [])])],
-        emergencyTypes: [...new Set([...(existing.emergencyTypes || []), ...(record.emergencyTypes || [])])],
-        traumaTypes: [...new Set([...(existing.traumaTypes || []), ...(record.traumaTypes || [])])],
-        sourceKinds: [...new Set([...(existing.sourceKinds || []), 'pcr'])],
-      });
-    });
-    return [...byResponse.values()];
-  }, [dispatchRecords, pcrReports]);
-
-  const reportRows = useMemo(() => {
-    const byCategory = {};
-
-    incidents.forEach((incident) => {
-      const label = normalizeCategory(incident.classification || incident.type);
-      if (!byCategory[label]) byCategory[label] = Array(periodLabels.length).fill(0);
-      const index = getPeriodIndex(incident.date, summary);
-      if (index !== null && index >= 0 && index < periodLabels.length) byCategory[label][index] += 1;
-    });
-
-    return Object.entries(byCategory)
-      .map(([category, values]) => ({ category, values, total: values.reduce((sum, value) => sum + value, 0) }))
-      .sort((a, b) => {
-        const orderA = reportCategories.indexOf(a.category);
-        const orderB = reportCategories.indexOf(b.category);
-        if (orderA !== -1 || orderB !== -1) return (orderA === -1 ? 999 : orderA) - (orderB === -1 ? 999 : orderB);
-        return a.category.localeCompare(b.category);
-      });
-  }, [incidents, periodLabels.length, summary]);
-
-  const spreadsheetRows = useMemo(() => spreadsheetSections.map((section) => {
-    const rows = section.rows.map((rowLabel) => {
-      const values = Array(periodLabels.length).fill(0);
-      spreadsheetSourceRecords.forEach((record) => {
-        if (!recordMatchesSection(record, section)) return;
-        if (!recordMatchesRow(record, rowLabel, section)) return;
-        const index = getPeriodIndex(recordDate(record), summary);
-        if (index !== null && index >= 0 && index < periodLabels.length) values[index] += 1;
-      });
-      return {
-        category: rowLabel,
-        values,
-        total: values.reduce((sum, value) => sum + value, 0),
-      };
-    });
-    return {
-      ...section,
-      rows,
-      total: rows.reduce((sum, row) => sum + row.total, 0),
-    };
-  }), [periodLabels.length, spreadsheetSourceRecords, summary]);
-
+  const reportRows = useMemo(() => [...reportData.reportRows].sort((a, b) => {
+    const ai = reportCategories.indexOf(a.category), bi = reportCategories.indexOf(b.category);
+    return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi) || a.category.localeCompare(b.category);
+  }), [reportData]);
+  const spreadsheetRows = reportData.spreadsheetRows;
   const totalReportRows = rows => rows.reduce((sum, row) => sum + row.total, 0);
-
-  const filteredRows = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return reportRows.filter((row) => {
-      const matchesCategory = categoryFilter === 'All Categories' || row.category === categoryFilter;
-      const matchesSearch = !term || row.category.toLowerCase().includes(term);
-      return matchesCategory && matchesSearch;
-    });
-  }, [categoryFilter, reportRows, search]);
 
   const filteredSpreadsheetSections = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -466,20 +268,13 @@ export default function ReportsAnalytics() {
   const traumaTotal = reportRows.find((row) => row.category === 'Trauma')?.total || 0;
   const mvcTotal = reportRows.find((row) => row.category === 'Motor Vehicle Crash')?.total || 0;
   const grandTotal = totalReportRows(reportRows);
-  const getIncidentBarangay = (incident) => incident.barangay || incident.location_barangay || incident.address_barangay;
-  const barangaysAffected = new Set(incidents.map(getIncidentBarangay).filter(Boolean)).size;
+  const barangayTotals = reportData.barangayTotals;
+  const barangaysAffected = barangayTotals.length;
   const categoryTotals = reportRows
     .map((row) => ({ name: row.category, count: row.total }))
     .filter((row) => row.count > 0)
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   const commonType = categoryTotals[0]?.name || 'No records';
-  const barangayTotals = Object.entries(incidents.reduce((acc, incident) => {
-    const barangay = getIncidentBarangay(incident);
-    if (barangay) acc[barangay] = (acc[barangay] || 0) + 1;
-    return acc;
-  }, {}))
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
   const topBarangay = barangayTotals[0]?.name || 'No records';
   const periodTotals = periodLabels.map((label, index) => ({
     label,
@@ -511,13 +306,13 @@ export default function ReportsAnalytics() {
               </button>
             ))}
           </div>
-          <button onClick={() => exportExcel(flattenSectionsForExport(filteredSpreadsheetSections), periodLabels, summary)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
+          <button disabled={loading || Boolean(error)} onClick={() => exportExcel(flattenSectionsForExport(filteredSpreadsheetSections), periodLabels, summary)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
             <Download className="h-3.5 w-3.5" /> Excel
           </button>
-          <button onClick={() => exportPdf(flattenSectionsForExport(filteredSpreadsheetSections), periodLabels, summary)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
+          <button disabled={loading || Boolean(error)} onClick={() => exportPdf(flattenSectionsForExport(filteredSpreadsheetSections), periodLabels, summary)} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
             <FileText className="h-3.5 w-3.5" /> PDF
           </button>
-          <button onClick={() => window.print()} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
+          <button disabled={loading || Boolean(error)} onClick={() => window.print()} className="flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-2 text-xs text-foreground hover:bg-secondary">
             <Printer className="h-3.5 w-3.5" /> Print
           </button>
         </div>

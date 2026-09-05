@@ -101,6 +101,27 @@ test("allows verified news caution areas to be public before they become high ri
   assert.equal(areas[0].risk_level, "Caution");
 });
 
+test("optimized public scraper projections remain eligible without incident_type_key", () => {
+  const areas = calculateNewsCautionAreas([
+    record("public-scraper-projection", {
+      sourceKind: "reviewed_scraped",
+      publicVisible: true,
+      scraperStatus: "approved",
+      classification: undefined,
+      category: "vehicular",
+      incident_type: "vehicular",
+      incident_type_key: undefined,
+      severity: "yellow",
+      title: "Vehicular accident in San Fabian",
+    }),
+  ], { publicOnly: true });
+
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0].zone_type, "news_caution_area");
+  assert.equal(areas[0].most_common_incident_type, "Vehicular");
+  assert.equal(areas[0].severity_counts.moderate, 1);
+});
+
 test("lets the public map opt in to moderate official accident-prone areas", () => {
   const records = [
     record("pcr-a", { pcrId: "PCR-A", sourceKind: "pcr_report", severity: "critical" }),
@@ -118,6 +139,26 @@ test("lets the public map opt in to moderate official accident-prone areas", () 
   assert.equal(moderatePublicAreas[0].risk_level, "Moderate");
   assert.equal(moderatePublicAreas[0].is_public_visible, true);
   assert.deepEqual(moderatePublicAreas[0].records, []);
+});
+
+test("public official incident projections count toward accident-prone areas without response ids", () => {
+  const records = [
+    record("official-public-a", { sourceKind: "official", responseId: undefined, pcrId: undefined, severity: "high" }),
+    record("official-public-b", { sourceKind: "official", responseId: undefined, pcrId: undefined, severity: "high" }),
+    record("official-public-c", { sourceKind: "official", responseId: undefined, pcrId: undefined, severity: "high" }),
+  ];
+
+  const areas = calculateOfficialAccidentProneAreas(records, {
+    publicOnly: true,
+    referenceDate: REFERENCE_DATE,
+  });
+
+  assert.equal(areas.length, 1);
+  assert.equal(areas[0].zone_type, "official_accident_prone");
+  assert.equal(areas[0].risk_level, "High");
+  assert.equal(areas[0].unique_incident_count, 3);
+  assert.equal(areas[0].mdrrmo_incident_count, 3);
+  assert.deepEqual(areas[0].records, []);
 });
 
 test("clusters unnamed official coordinate pins into public accident-prone areas", () => {

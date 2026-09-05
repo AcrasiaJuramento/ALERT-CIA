@@ -8,8 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cancelScraperJob, getScraperJobState, subscribeScraperJob } from '../services/scraperJobService';
-import { listIncidents, supabase } from '../services/supabase';
-import { isIncidentCompleted } from '../utils/incidentStatus';
+import { getActiveIncidentCount, supabase } from '../services/supabase';
 import { formatLongDate } from '../utils/dateFormat';
 import ConnectionIndicator from './ConnectionIndicator';
 import HazardWarningMonitor from './HazardWarningMonitor';
@@ -40,8 +39,8 @@ function ActiveIncidentBadge() {
 
     const refresh = async () => {
       try {
-        const rows = await listIncidents({ limit: 500 });
-        if (mounted) setActiveCount(rows.filter(incident => !isIncidentCompleted(incident.status)).length);
+        const count = await getActiveIncidentCount();
+        if (mounted) setActiveCount(count);
       } catch {
         if (mounted) setActiveCount(null);
       }

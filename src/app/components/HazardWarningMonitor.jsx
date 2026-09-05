@@ -1,3 +1,4 @@
+import { ANALYSIS_TTL } from '../services/supabase/publicDataService';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, LocateFixed, Volume2, VolumeX, X } from 'lucide-react';
 import { listPublicHazardZones } from '../services/supabase';
@@ -119,7 +120,7 @@ export default function HazardWarningMonitor({ position, locationStatus = 'start
     let active = true;
     Promise.all([
       listPublicHazardZones({ limit: 500 }).catch(() => []),
-      loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 1000, pcrLimit: 200 })
+      loadPublicAccidentIncidents({ ttl: ANALYSIS_TTL })
         .then(records => calculateAccidentProneAreas(records, { publicOnly: true }))
         .catch(() => []),
     ]).then(([registeredZones, calculatedAreas]) => {

@@ -1,5 +1,5 @@
+import { subscribeToPublicAdvisoryChanges } from './publicRealtime';
 import { runSupabaseRequest } from "./errors";
-import { supabase } from "../../lib/supabaseClient";
 import {
   loadAdvisories,
   loadPublishedAdvisories,
@@ -91,7 +91,7 @@ export async function listAdvisories({ activeOnly = false, publishedOnly = false
     const rows = await runSupabaseRequest(client => {
       let query = client
         .from("public_advisories")
-        .select("*")
+        .select(publishedOnly ? "id, title, message, severity, category, area, latitude, longitude, status, priority, advisory_type, starts_at, expires_at, created_at, updated_at" : "*")
         .is("deleted_at", null)
         .order("priority", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: false })
@@ -120,7 +120,7 @@ async function listLegacyAdvisories({ publishedOnly = false, limit = 100 } = {})
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("public_advisories")
-      .select("*")
+      .select(publishedOnly ? "id, title, message, severity, category, area, latitude, longitude, status, created_at, updated_at" : "*")
       .is("deleted_at", null)
       .order("updated_at", { ascending: false })
       .limit(limit);
@@ -207,18 +207,7 @@ export async function saveAdvisoryRecord(advisory) {
   }
 }
 
-export function subscribeToPublicAdvisories(onChange) {
-  if (!supabase) return () => {};
-
-  const channel = supabase
-    .channel("public-advisories-feed")
-    .on("postgres_changes", { event: "*", schema: "public", table: "public_advisories" }, onChange)
-    .subscribe();
-
-  return () => {
-    supabase.removeChannel(channel);
-  };
-}
+export const subscribeToPublicAdvisories = subscribeToPublicAdvisoryChanges;
 
 export async function archiveAdvisoryRecord(advisoryId) {
   try {

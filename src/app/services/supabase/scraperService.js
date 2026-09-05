@@ -1,3 +1,4 @@
+import { queryPublicView, invalidatePublicData } from './publicDataService';
 import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
 import { resolveIsabelaBarangayGeometry } from "../../data/isabelaBarangayGeometry";
@@ -32,40 +33,17 @@ const ECHAGUE_BOUNDS = {
 
 const ACTIVE_SCRAPER_SOURCE_SITE = "bombo";
 const ACTIVE_SCRAPER_SOURCE_URL_PATTERN = "%cauayan.bomboradyo.com%";
-const SCRAPER_MAP_CACHE_TTL_MS = 30 * 60 * 1000;
 const FULL_SCRAPE_PAGE_CHUNK_SIZE = 5;
-const PUBLIC_MAP_EXCLUDED_SCRAPER_STATUSES = new Set(["duplicate", "rejected", "ignored", "archived", "failed"]);
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function readBrowserCache(key) {
-  if (typeof window === "undefined" || !window.localStorage) return null;
-  try {
-    const cached = JSON.parse(window.localStorage.getItem(key) || "null");
-    if (!cached?.savedAt || Date.now() - cached.savedAt > SCRAPER_MAP_CACHE_TTL_MS) return null;
-    return Array.isArray(cached.value) ? cached.value : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeBrowserCache(key, value) {
-  if (typeof window === "undefined" || !window.localStorage) return value;
-  try {
-    window.localStorage.setItem(key, JSON.stringify({ savedAt: Date.now(), value }));
-  } catch {
-    // Storage can be unavailable in private mode; the live response is still usable.
-  }
-  return value;
 }
 
 function isAccidentMapRow(row = {}) {
   const values = [
     row.category,
     row.incident_type,
-    row.incident_type_key,
+    // row.incident_type_key,
     row.title,
     row.snippet,
     row.location_text,
@@ -185,7 +163,7 @@ function scraperRecordToApp(row = {}) {
     originalLocationSnapshot: row.original_location_snapshot || null,
     locationCorrectedBy: row.location_corrected_by || null,
     locationCorrectedAt: row.location_corrected_at || null,
-    incidentAt: row.raw_payload?.incident_at || null,
+    incidentAt: row.incident_at || row.raw_payload?.incident_at || null,
     incidentTimeSource: row.raw_payload?.incident_time_source || "",
     incidentTimeEvidence: row.raw_payload?.incident_time_evidence || "",
   };
@@ -251,7 +229,7 @@ function validTimestamp(value) {
 
 function scraperEventDate(row = {}) {
   return validTimestamp(
-    row.raw_payload?.incident_at ||
+    row.incident_at || row.raw_payload?.incident_at ||
     row.raw_payload?.incident_time?.incident_at ||
     row.raw_payload?.published_at ||
     row.raw_payload?.article?.published_at ||
@@ -442,6 +420,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
   return {
     id: `SCR-${String(row.id).slice(0, 8)}`,
     recordId: row.id,
+    relatedIncidentId: row.related_incident_id || null,
     sourceKind: row.related_incident_id || row.status === "promoted" || row.status === "imported"
       ? "promoted_scraped"
       : row.public_visible || row.status === "verified" || row.status === "approved" || row.status === "matched"
@@ -450,7 +429,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     sourceLabel: row.source?.name || row.source_site || "External source",
     externalSourceUrl: row.source_url,
     type,
-    severity: severityToMapSeverity(row.severity || row.raw_payload?.severity, type, row),
+    severity: row.publicMapProjection ? (row.severity || 'yellow') : severityToMapSeverity(row.severity || row.raw_payload?.severity, type, row),
     barangay: mappedBarangay,
     municipality: mappedMunicipality,
     location: verifiedLocationText || row.location_text || row.display_name || row.barangay?.name || "Location from external source",
@@ -736,30 +715,11 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
   return asRows(rows).filter(isAccidentMapRow).map(scraperRecordToAnalyticsIncident);
 }
 
-export async function listPublicScrapedMapIncidents({ limit = 100 } = {}) {
+export async function listPublicScrapedMapIncidents(options = {}) {
   if (!isSupabaseConfigured) return [];
-  const queryLimit = Math.max(Number(limit) || 100, 1000);
-  const cacheKey = `alert-cia:public-scraped-map:isabela-news-v2:${queryLimit}`;
-  const publicMapSelect = "id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, incident_type_key, severity, title, snippet, location_text, display_name, latitude, longitude, scraped_at, extracted_barangay, extracted_municipality, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, match_confidence, raw_payload, barangay:barangays(id, name, municipality, province, centroid), source:scraper_sources(id, name, source_key)";
-
-  try {
-    const rows = await runSupabaseRequest(client =>
-      client
-        .from("scraper_records")
-        .select(publicMapSelect)
-        .is("deleted_at", null)
-        .order("scraped_at", { ascending: false })
-        .limit(queryLimit),
-    "Unable to load public scraper map incidents.");
-    const mapped = await scraperRowsToMapIncidents(asRows(rows)
-      .filter(row => !PUBLIC_MAP_EXCLUDED_SCRAPER_STATUSES.has(String(row.status || "").toLowerCase()))
-      .filter(isAccidentMapRow));
-    return writeBrowserCache(cacheKey, mapped);
-  } catch (error) {
-    const cached = readBrowserCache(cacheKey);
-    if (cached) return cached.filter(row => !PUBLIC_MAP_EXCLUDED_SCRAPER_STATUSES.has(String(row.scraperStatus || row.status || "").toLowerCase()));
-    throw error;
-  }
+  const rows = await queryPublicView('public_scraped_map_incidents_view',
+    'id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, severity, title, location_text, display_name, latitude, longitude, scraped_at, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, incident_at, incident_date', options);
+  return scraperRowsToMapIncidents(rows.map(row => ({ ...row, publicMapProjection: true })));
 }
 
 export async function listOfficerScrapedMapIncidents({ limit = 500 } = {}) {
@@ -796,7 +756,7 @@ export async function updateScraperRecordStatus(recordId, status, errorMessage =
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name)")
       .single(),
-  "Unable to update scraper record.").then(scraperRecordToApp);
+  "Unable to update scraper record.").then(row => { invalidatePublicData(); return scraperRecordToApp(row); });
 }
 
 export async function approveScraperRecordForPublicMap(recordId) {
@@ -816,7 +776,7 @@ export async function approveScraperRecordForPublicMap(recordId) {
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name)")
       .single(),
-  "Unable to approve scraper record for public map.").then(scraperRecordToApp);
+  "Unable to approve scraper record for public map.").then(row => { invalidatePublicData(); return scraperRecordToApp(row); });
 }
 
 export async function rejectScraperRecord(recordId, reason = "Rejected during review.") {
@@ -833,7 +793,7 @@ export async function rejectScraperRecord(recordId, reason = "Rejected during re
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name, municipality, province)")
       .single(),
-  "Unable to reject scraper record.").then(scraperRecordToApp);
+  "Unable to reject scraper record.").then(row => { invalidatePublicData(); return scraperRecordToApp(row); });
 }
 
 export async function correctScraperRecordLocation(recordId, location = {}) {
@@ -911,7 +871,7 @@ export async function correctScraperRecordLocation(recordId, location = {}) {
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name, municipality, province)")
       .single();
-  }, "Unable to correct scraper record location.").then(scraperRecordToApp);
+  }, "Unable to correct scraper record location.").then(row => { invalidatePublicData(); return scraperRecordToApp(row); });
 }
 
 export async function addOfficerVerifiedLandmarkFromCorrection(record = {}, location = {}) {
@@ -1139,7 +1099,7 @@ export async function hideScraperRecordFromPublicMap(recordId) {
       .eq("id", recordId)
       .select("*, barangay:barangays(id, name)")
       .single(),
-  "Unable to hide scraper record from public map.").then(scraperRecordToApp);
+  "Unable to hide scraper record from public map.").then(row => { invalidatePublicData(); return scraperRecordToApp(row); });
 }
 
 export async function promoteScraperRecordToIncident(recordId) {

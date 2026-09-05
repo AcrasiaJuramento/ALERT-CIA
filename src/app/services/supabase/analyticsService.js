@@ -1,4 +1,4 @@
-import { runSupabaseRequest } from "./errors";
+import { runCachedSupabaseRequest } from './errors';
 
 const DISPATCH_STATUS_FROM_DB = {
   draft: "Draft",
@@ -138,9 +138,9 @@ function mapPcrReport(row = {}) {
 }
 
 export async function getStaffAllRecordsAnalytics() {
-  const payload = await runSupabaseRequest(
-    client => client.rpc("staff_all_records_analytics"),
-    "Unable to load all-record analytics.",
+  const payload = await runCachedSupabaseRequest(
+    "analytics:spatial-details", client => client.rpc("staff_all_records_analytics"),
+    "Unable to load all-record analytics.", { ttlMs: 30 * 60_000 },
   );
 
   return {
@@ -148,4 +148,16 @@ export async function getStaffAllRecordsAnalytics() {
     dispatches: (payload?.dispatches || []).map(mapDispatch),
     pcrReports: (payload?.pcrReports || []).map(mapPcrReport),
   };
+}
+
+export function getAnalyticsSummary({ start = null, end = null, location = 'all', scopeKey = '' } = {}) {
+  return runCachedSupabaseRequest(`analytics:summary:${scopeKey}:${start}:${end}:${location}`,
+    client => client.rpc('get_analytics_summary', { start_date: start || null, end_date: end || null, location_scope: location }),
+    'Unable to load analytics. Apply migration 95_aggregated_analytics.sql.', { ttlMs: 10 * 60_000 });
+}
+
+export function getReportsSummary(summary = 'monthly', scopeKey = '') {
+  return runCachedSupabaseRequest(`analytics:reports:${scopeKey}:${summary}`,
+    client => client.rpc('get_reports_summary', { period: summary }),
+    'Unable to load reports. Apply migration 96_reports_aggregation.sql.', { ttlMs: 10 * 60_000 });
 }

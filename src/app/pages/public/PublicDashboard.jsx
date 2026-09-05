@@ -1,3 +1,6 @@
+import { subscribeToPublicDataChanges } from '../../services/supabase/publicRealtime';
+import { createInformationalRefresh } from '../../utils/informationalRefresh';
+import { invalidatePublicData } from '../../services/supabase/publicDataService';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -7,7 +10,7 @@ import {
 import { formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
-import { listPublishedAdvisories, subscribeToPublicAdvisories, supabase } from '../../services/supabase';
+import { listPublishedAdvisories, subscribeToPublicAdvisories } from '../../services/supabase';
 import { formatDateAndTime } from '../../utils/dateFormat';
 
 const typeIcons = {
@@ -69,7 +72,7 @@ export default function PublicDashboard() {
   useEffect(() => {
     let mounted = true;
     let incidentRequestInFlight = false;
-    let incidentRefreshTimer;
+
     async function loadAdvisoriesFromDatabase() {
       try {
         const advisories = await listPublishedAdvisories({ limit: 50 });
@@ -85,7 +88,7 @@ export default function PublicDashboard() {
       if (!silent) setLoading(true);
       if (!silent) setError('');
       try {
-        const publicIncidents = await loadPublicAccidentIncidents({ officialLimit: 500, scrapedLimit: 1000, pcrLimit: 200 });
+        const publicIncidents = await loadPublicAccidentIncidents();
         if (mounted) {
           setIncidents(publicIncidents);
           setError('');
@@ -97,31 +100,19 @@ export default function PublicDashboard() {
         if (mounted && !silent) setLoading(false);
       }
     }
-    const queueIncidentRefresh = () => {
-      window.clearTimeout(incidentRefreshTimer);
-      incidentRefreshTimer = window.setTimeout(() => loadIncidents({ silent: true }), 5000);
-    };
+    const refresh = createInformationalRefresh(() => loadIncidents({ silent: true }), { invalidate: invalidatePublicData });
+    const queueIncidentRefresh = refresh.markStale;
     loadIncidents();
     loadAdvisoriesFromDatabase();
     const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
-    const refreshTimer = window.setInterval(loadAdvisoriesFromDatabase, 60000);
-    const incidentChannel = supabase
-      ? supabase.channel('public-dashboard-records')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'incidents' }, queueIncidentRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'scraper_records' }, queueIncidentRefresh)
-          .subscribe()
-      : null;
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') loadIncidents({ silent: true });
-    };
-    document.addEventListener('visibilitychange', refreshWhenVisible);
+    const refreshTimer = window.setInterval(() => { if (document.visibilityState === 'visible') loadAdvisoriesFromDatabase(); }, 60000);
+    const unsubscribeIncidents = subscribeToPublicDataChanges(queueIncidentRefresh);
     return () => {
       mounted = false;
       unsubscribe();
       window.clearInterval(refreshTimer);
-      window.clearTimeout(incidentRefreshTimer);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-      if (incidentChannel) supabase.removeChannel(incidentChannel);
+      refresh.dispose();
+      unsubscribeIncidents();
     };
   }, []);
 

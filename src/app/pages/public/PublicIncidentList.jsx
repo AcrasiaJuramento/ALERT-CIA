@@ -1,3 +1,6 @@
+import { createInformationalRefresh } from '../../utils/informationalRefresh';
+import { subscribeToPublicDataChanges } from '../../services/supabase/publicRealtime';
+import { invalidatePublicData } from '../../services/supabase/publicDataService';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { Search, MapPin, Clock, Filter, Car, Heart, AlertTriangle } from 'lucide-react';
 import { loadPublicIncidentLogRecords } from '../../utils/publicIncidentFeed';
@@ -92,6 +95,7 @@ function triageCategoryForIncident(incident = {}) {
 
 export default function PublicIncidentList() {
   const [search, setSearch] = useState('');
+  const [includeHistory, setIncludeHistory] = useState(false);
   const [filterType, setFilterType] = useState('all');
   const [filterSeverity, setFilterSeverity] = useState('all');
   const [page, setPage] = useState(1);
@@ -105,7 +109,7 @@ export default function PublicIncidentList() {
       setLoading(true);
       setError('');
       try {
-        const publicIncidents = await loadPublicIncidentLogRecords({ officialLimit: 500, pcrLimit: 200 });
+        const publicIncidents = await loadPublicIncidentLogRecords(includeHistory ? { since: null } : {});
         if (mounted) setIncidents(Array.isArray(publicIncidents) ? publicIncidents : []);
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load public incidents.');
@@ -114,10 +118,10 @@ export default function PublicIncidentList() {
       }
     }
     load();
-    return () => {
-      mounted = false;
-    };
-  }, []);
+    const refresh = createInformationalRefresh(load, { invalidate: invalidatePublicData });
+    const unsubscribe = subscribeToPublicDataChanges(refresh.markStale);
+    return () => { mounted = false; refresh.dispose(); unsubscribe(); };
+  }, [includeHistory]);
 
   const filtered = useMemo(() => incidents.filter(inc => {
     const searchableText = [
@@ -165,6 +169,10 @@ export default function PublicIncidentList() {
           <p className="text-muted-foreground text-sm">Viewable incident records for public awareness</p>
         </div>
 
+        <label className="flex items-center gap-2 text-sm text-muted-foreground">
+          <input type="checkbox" checked={includeHistory} onChange={event => setIncludeHistory(event.target.checked)} />
+          Include incidents older than 36 months
+        </label>
         {/* Type Filter Pills */}
         <div className="flex flex-wrap gap-2">
           {pcrFilterTypes.map(({ key, label, icon }) => (

@@ -1,3 +1,4 @@
+import { createInformationalRefresh } from '../utils/informationalRefresh';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,7 +13,7 @@ import {
   filterIncidentsByRange, filterOptions, formatBarangayAnalyticsLabel, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
 import { ECHAGUE_BARANGAYS, matchBarangayName } from '../data/gisConfig';
-import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRAnalyticsReports, listPCRReports, listReceivedDispatchRecords } from '../services/supabase';
+import { getAnalyticsSummary, clearSupabaseRequestCache, supabase, getStaffAllRecordsAnalytics, listDispatchRecords, listPCRAnalyticsReports, listReceivedDispatchRecords } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
@@ -28,10 +29,7 @@ const priorityColors = {
 
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
-const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 const submittedStatuses = new Set(['Submitted', 'Verified', 'Completed']);
-const analyticsPageSize = 1000;
-const analyticsRpcMissingCodes = new Set(['PGRST202', '42883']);
 const verifiedRecordStatuses = new Set(['verified', 'completed', 'admin_verified', 'approved']);
 const verifiedDisplayStatuses = new Set(['Verified', 'Completed', 'Admin Verified', 'Approved']);
 
@@ -229,10 +227,6 @@ function isMvcIncident(record = {}) {
   return classification === 'MVC' || type === 'vehicular';
 }
 
-function isAnalyticsRpcMissing(error) {
-  return analyticsRpcMissingCodes.has(error?.code) || String(error?.message || '').includes('staff_all_records_analytics');
-}
-
 function analyticsTabsForRole(role) {
   if (role === ROLES.DISPATCHER) {
     return [
@@ -359,18 +353,6 @@ function pcrReportToAnalyticsIncident(report = {}) {
     pcrStatus: report.status,
     title: report.responseNumber || report.chiefComplaint || `${classification} verified PCR`,
   };
-}
-
-async function loadAllRows(loader, params = {}) {
-  const allRows = [];
-  let from = 0;
-  while (true) {
-    const rows = await loader({ ...params, limit: analyticsPageSize, from });
-    allRows.push(...rows);
-    if (rows.length < analyticsPageSize || (rows.totalCount && allRows.length >= rows.totalCount)) break;
-    from += analyticsPageSize;
-  }
-  return allRows;
 }
 
 async function loadRoleScopedAnalytics(role, user) {
@@ -1302,7 +1284,7 @@ function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
   );
 }
 
-export default function Analytics() {
+function AnalyticsDetail() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [range, setRange] = useState('all');
@@ -1322,7 +1304,7 @@ export default function Analytics() {
     heatmap: true,
     criticalZones: true,
   });
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('spatial');
   const [locationScope, setLocationScope] = useState('all');
   const [selectedBarangayName, setSelectedBarangayName] = useState('');
   const [drilldown, setDrilldown] = useState(null);
@@ -1351,36 +1333,13 @@ export default function Analytics() {
           }
           return;
         }
-        let sourceError = null;
-        const allRecords = await getStaffAllRecordsAnalytics().catch(error => {
-          sourceError = error;
-          return null;
-        });
+        const allRecords = await getStaffAllRecordsAnalytics();
         if (mounted) {
-          if (allRecords) {
-            setIncidents(allRecords.incidents);
-            setDispatches(allRecords.dispatches);
-            setPcrReports(allRecords.pcrReports);
-          } else {
-            const [incidentResult, dispatchResult, pcrResult] = await Promise.allSettled([
-              loadAllRows(listIncidents),
-              loadAllRows(listDispatchRecords),
-              loadAllRows(listPCRReports),
-            ]);
-            const incidentRows = settledValue(incidentResult, []);
-            const dispatchRows = settledValue(dispatchResult, []);
-            const pcrRows = settledValue(pcrResult, []);
-            setIncidents(incidentRows);
-            setDispatches(dispatchRows);
-            setPcrReports(pcrRows);
-            const failed = [incidentResult, dispatchResult, pcrResult].find(result => result.status === 'rejected');
-            if (isAnalyticsRpcMissing(sourceError)) {
-              setError('All-record analytics is not deployed in Supabase yet. Run migration 63_staff_all_records_analytics_rpc.sql, then refresh this page.');
-            } else {
-              setError(failed?.reason?.message || sourceError?.message || 'Analytics is using role-limited fallback data. Deploy the latest Supabase migration to enable all-record analytics.');
-            }
-          }
+          setIncidents(allRecords.incidents);
+          setDispatches(allRecords.dispatches);
+          setPcrReports(allRecords.pcrReports);
         }
+
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load analytics data.');
       } finally {
@@ -1861,4 +1820,84 @@ export default function Analytics() {
       <DrilldownDrawer drilldown={drilldown} onClose={() => setDrilldown(null)} />
     </div>
   );
+}
+
+
+export default function Analytics() {
+  const { user } = useAuth();
+  const [tab, setTab] = useState('overview');
+  const [range, setRange] = useState('all');
+  const [custom, setCustom] = useState({ start: '', end: '' });
+  const [location, setLocation] = useState('all');
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const tabs = analyticsTabsForRole(user?.role);
+  const header = analyticsHeaderForRole(user?.role);
+  const dates = useMemo(() => {
+    const today = new Date();
+    const start = new Date(today);
+    const day = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+    if (range === 'all') return {};
+    if (range === 'custom') return { start: custom.start || day(today), end: custom.end || day(today) };
+    if (range === 'week') start.setDate(start.getDate() - 6);
+    if (range === 'month') start.setDate(1);
+    if (range === 'year') start.setMonth(0, 1);
+    return { start: day(start), end: day(today) };
+  }, [range, custom]);
+  const spatial = tab === 'spatial';
+  useEffect(() => {
+    if (spatial) return undefined;
+    let mounted = true;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const summary = await getAnalyticsSummary({ ...dates, location, scopeKey: `${user?.id}:${user?.role}` });
+        if (mounted) { setData(summary); setError(''); }
+      } catch (error) { if (mounted) setError(error.message); }
+      finally { if (mounted) setLoading(false); }
+    };
+    setData(null);
+    load();
+    const refresh = createInformationalRefresh(load, { invalidate: () => clearSupabaseRequestCache('analytics:') });
+    let channel = supabase?.channel('aggregated-analytics');
+    for (const table of ['incidents','dispatch_forms','responses','pcr_reports']) {
+      channel = channel?.on('postgres_changes', { event: '*', schema: 'public', table }, refresh.markStale);
+    }
+    channel?.subscribe();
+    return () => { mounted = false; refresh.dispose(); if (channel) supabase.removeChannel(channel); };
+  }, [dates, location, user?.id, user?.role, spatial]);
+  const group = name => data?.[name] || [];
+  const totals = data?.totals || {};
+  const timing = data?.responseTimes || {};
+  const teamRows = group('teamPerformance').map(row => ({ ...row, ...parseTeamRun(row.name) }));
+  const familyRows = teamFamilies.map(family => ({ family, dispatches: teamRows.filter(row => row.family === family).reduce((n,row) => n+row.dispatches,0) }));
+  return <div className="space-y-5 p-5">
+    <div><h1 className="text-xl font-bold">{header.title}</h1><p className="text-sm text-muted-foreground">{header.description}</p></div>
+    <div className="flex flex-wrap gap-2">
+      {tabs.map(([id,label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-lg border px-4 py-2 text-sm ${tab===id ? 'bg-blue-600 text-white' : 'border-border'}`}>{label}</button>)}
+    </div>
+    {tab === 'spatial' ? <AnalyticsDetail /> : <>
+      <div className="flex flex-wrap gap-3">
+        <select aria-label="Date range" value={range} onChange={e=>setRange(e.target.value)} className="rounded border border-border bg-card p-2">{filterOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select>
+        {range==='custom' && <><input aria-label="Start date" type="date" value={custom.start} onChange={e=>setCustom({...custom,start:e.target.value})}/><input aria-label="End date" type="date" value={custom.end} onChange={e=>setCustom({...custom,end:e.target.value})}/></>}
+        <select aria-label="Location scope" value={location} onChange={e=>setLocation(e.target.value)} className="rounded border border-border bg-card p-2">{locationScopeOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select>
+      </div>
+      {loading && <p role="status">Loading analytics...</p>}
+      {error && <p role="alert" className="text-red-500">{error}</p>}
+      {data && <>
+        {tab==='overview' && <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Incidents',totals.incidents],['Dispatches',totals.dispatches],['PCR Reports',totals.pcr],['MVC Incidents',totals.mvc]].map(([label,value])=><MetricCard key={label} label={label} value={value} icon={Activity} helper="Selected period" />)}</div>
+          <div className="grid gap-5 lg:grid-cols-2"><ReportChartCard title="Incident Trends" subtitle="Selected date range" data={group('monthly')} kind="line"/><DistributionCard title="Incident Types" data={group('byType')}/><DistributionCard title="Barangays" data={group('byBarangay')}/><DistributionCard title="Severity" data={group('severity')} type="pie"/></div>
+        </>}
+        {tab==='operations' && <>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[['Caller to Dispatcher','callerDispatcher'],['Dispatcher to Field Officer','dispatcherOfficer'],['Acceptance to Scene','acceptanceScene'],['Scene to Hospital','sceneHospital'],['Whole Response','total']].map(([label,key])=><MetricCard key={key} label={label} value={formatMinutes(timing[key])} helper={`${timing.samples?.[key] || 0} measured responses`} icon={Clock}/>)}</div>
+          <div className="grid gap-5 lg:grid-cols-2"><ReportChartCard title="Monthly Workload Trend" data={group('monthly')} kind="line"/><DistributionCard title="Dispatch Status Mix" data={group('dispatchStatus')} type="pie"/></div>
+          <PerformanceTable rows={group('performance')}/><TeamRunAnalyticsCard rows={teamRows} familyRows={familyRows}/>
+        </>}
+        {tab==='mvc' && <><MvcCompletionCard rows={group('mvcCompletion')}/><div className="grid gap-5 lg:grid-cols-2">{[['Role','role'],['Alcohol Breath','alcohol'],['Helmet','helmet'],["Driver's License",'license']].map(([title,key])=><DistributionCard key={key} title={title} data={data.mvc?.[key] || []} type="pie"/>)}</div></>}
+        {tab==='pcr' && <div className="grid gap-5 lg:grid-cols-2">{[['PCR Status','pcrStatus'],['Incident Category','byType'],['Triage','triage'],['Receiving Facility','hospitals'],['Emergency Types','emergencyTypes'],['Trauma Types','traumaTypes'],['Responding Teams','teams'],['Treatment / Transport Refusal','hospitalRefusal']].map(([title,key])=><DistributionCard key={key} title={title} data={group(key)}/>)}</div>}
+      </>}
+    </>}
+  </div>;
 }

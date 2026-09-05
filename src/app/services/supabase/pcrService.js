@@ -1,3 +1,6 @@
+import { notifyDataInvalidated } from '../../utils/dataInvalidation';
+import { clearSupabaseRequestCache } from './errors';
+import { queryPublicView } from './publicDataService';
 import { runSupabaseRequest, runSupabaseRequestWithMeta } from "./errors";
 import { isValidIncidentCoordinate, patientBirthdayFromRecord, pcrPayloadFromRecord, pcrToApp, responseLocationPayloadFromRecord, toDbPCRStatus } from "./mappers";
 import { locationAssessment } from "../../utils/locationAccuracy";
@@ -393,6 +396,7 @@ function pcrMapRowToIncident(row = {}, incident = {}, { publicSafe = false } = {
 }
 
 export async function listPCRMapIncidents({ publicOnly = false, verifiedOnly = false, limit = 100 } = {}) {
+  if (publicOnly) return listPublicPCRMapIncidents({ limit });
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("pcr_reports")
@@ -427,46 +431,43 @@ export async function listPCRMapIncidents({ publicOnly = false, verifiedOnly = f
     .filter(item => Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lng)));
 }
 
-export async function listPublicPCRMapIncidents({ limit = 100 } = {}) {
-  const rows = await runSupabaseRequest(client =>
-    client.rpc("public_pcr_map_incidents", { max_rows: limit }),
-  "Unable to load public PCR map records.");
-
+export async function listPublicPCRMapIncidents(options = {}) {
+  const rows = await queryPublicView('public_pcr_map_incidents_view',
+    'id, incident_id, classification, priority, map_severity, barangay_name, location_text, latitude, longitude, incident_date, incident_time, status, location_precision', options);
   return asRows(rows).map(row => {
     const dateValue = row.incident_date ? new Date(row.incident_date) : new Date();
     const assessment = locationAssessment({
       sourceKind: "pcr_report",
-      locationPrecision: "official_incident_pin",
+      locationPrecision: row.location_precision,
       mappingStatus: "exact_geocode",
-      coordinateSource: "official_incident_pin",
-      locationConfidence: { level: "high", accuracy: "near_exact", source: "official_incident_pin" },
+      coordinateSource: row.location_precision,
+      locationConfidence: { level: row.location_precision === "barangay_centroid" ? "low" : "high", accuracy: row.location_precision === "barangay_centroid" ? "barangay_only" : "near_exact", source: row.location_precision },
     });
     return {
-      id: `INC-${String(row.incident_id).slice(0, 8)}`,
-      recordId: row.pcr_id,
+      id: row.incident_id || `PCR-${row.id}`,
+      recordId: row.id,
       relatedIncidentId: row.incident_id,
-      responseId: row.response_id,
       sourceKind: "pcr_report",
       sourceLabel: "Verified emergency response",
       type: classificationToType(row.classification),
-      severity: priorityToSeverity(row.triage || row.priority),
-      location: displayLocationText(row.barangay, row.location_text, "Verified response area"),
-      barangay: row.barangay || "",
+      severity: priorityToSeverity(row.map_severity || row.priority),
+      location: displayLocationText(row.barangay_name, row.location_text, "Verified response area"),
+      barangay: row.barangay_name || "",
       lat: Number(row.latitude),
       lng: Number(row.longitude),
       latitude: Number(row.latitude),
       longitude: Number(row.longitude),
       date: dateValue.toISOString().slice(0, 10),
       time: String(row.incident_time || "").slice(0, 5),
-      status: row.incident_status === "pcr_completed" ? "completed" : "on_scene",
+      status: row.status === "pcr_completed" ? "completed" : "on_scene",
       assignedTeam: "Emergency responders",
       title: `${classificationToType(row.classification)} safety alert`,
       description: "Emergency response activity has been verified in this area. Keep distance and follow official guidance.",
       publicVisible: true,
       is_verified: true,
       is_public_visible: true,
-      locationPrecision: "official_incident_pin",
-      coordinateSource: "official_incident_pin",
+      locationPrecision: row.location_precision,
+      coordinateSource: row.location_precision,
       mappingStatus: "exact_geocode",
       locationConfidence: assessment,
       locationAccuracy: assessment.accuracy,
@@ -549,7 +550,7 @@ export async function savePCRReport(pcrId, record) {
       .select(PCR_SELECT)
       .single();
   },
-  "Unable to save PCR report.").then(pcrToApp);
+  "Unable to save PCR report.").then(row => { clearSupabaseRequestCache("analytics:"); notifyDataInvalidated(); return pcrToApp(row); });
 }
 
 async function selectCanonicalPcr(client, { responseId, pcrId }) {
@@ -809,7 +810,7 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
 
     return selectCanonicalPcr(client, { pcrId: upsertResult.data.id, responseId: syncRecord.responseId });
   },
-  "Unable to synchronize PCR report.").then(pcrToApp);
+  "Unable to synchronize PCR report.").then(row => { clearSupabaseRequestCache("analytics:"); notifyDataInvalidated(); return pcrToApp(row); });
 }
 
 export async function submitPCRReport(pcrId) {
@@ -820,7 +821,7 @@ export async function submitPCRReport(pcrId) {
       .eq("id", pcrId)
       .select(PCR_SELECT)
       .single(),
-  "Unable to submit PCR report.").then(pcrToApp);
+  "Unable to submit PCR report.").then(row => { clearSupabaseRequestCache("analytics:"); notifyDataInvalidated(); return pcrToApp(row); });
 }
 
 export async function replacePCRVitals(pcrReportId, vitals = []) {
