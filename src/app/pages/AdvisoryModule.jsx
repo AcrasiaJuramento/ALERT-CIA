@@ -55,6 +55,7 @@ const severityOptions = [
 ];
 
 const categoryOptions = [
+  { value: 'accident_prone_area', label: 'Accident Prone Area', icon: AlertTriangle },
   { value: 'flood', label: 'Flood', icon: Droplets },
   { value: 'road_closure', label: 'Road Closure', icon: TrafficCone },
   { value: 'weather', label: 'Weather', icon: BellRing },
@@ -65,6 +66,9 @@ const riskOptions = [
   { value: 'high', label: 'High' },
   { value: 'critical', label: 'Critical' },
 ];
+
+const ACCIDENT_PRONE_ADVISORY_TITLE = 'Advisory Accident Prone Area';
+const ACCIDENT_PRONE_ADVISORY_TYPE = 'accident_prone_area';
 
 const severityStyles = {
   critical: 'border-red-500/30 bg-red-500/10 text-red-400',
@@ -106,15 +110,18 @@ function hydrateManualHotspots(advisories = [], hotspots = []) {
 }
 
 function formFromAdvisory(advisory) {
+  const isAccidentProne = Boolean(advisory.manualAccidentHotspot);
   return {
     ...createEmptyForm(),
     ...advisory,
+    title: isAccidentProne ? ACCIDENT_PRONE_ADVISORY_TITLE : advisory.title,
+    category: isAccidentProne ? ACCIDENT_PRONE_ADVISORY_TYPE : advisory.category,
     startsAt: toDateTimeLocalValue(advisory.startsAt),
     expiresAt: toDateTimeLocalValue(advisory.expiresAt),
     media: advisory.media || [],
     imageUpload: null,
     removeImage: false,
-    tagAccidentProne: Boolean(advisory.manualAccidentHotspot),
+    tagAccidentProne: isAccidentProne,
     hazardZoneId: advisory.manualAccidentHotspot?.id || advisory.hazardZoneId || '',
     accidentRiskLevel: advisory.manualAccidentHotspot?.severity === 'critical' ? 'critical' : advisory.accidentRiskLevel || 'high',
     accidentRadiusMeters: advisory.manualAccidentHotspot?.radiusMeters || advisory.accidentRadiusMeters || 420,
@@ -178,6 +185,13 @@ export default function AdvisoryModule() {
   const previewImage = imagePreviewFor(form);
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
+  const updateAccidentProneTag = (checked) => setForm((current) => ({
+    ...current,
+    tagAccidentProne: checked,
+    ...(checked
+      ? { title: ACCIDENT_PRONE_ADVISORY_TITLE, category: ACCIDENT_PRONE_ADVISORY_TYPE }
+      : { category: current.category === ACCIDENT_PRONE_ADVISORY_TYPE ? 'general' : current.category }),
+  }));
   const resetForm = () => setForm(createEmptyForm());
   const previewMarker = form.coordinates ? [{
     ...form,
@@ -242,7 +256,10 @@ export default function AdvisoryModule() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (!form.title.trim() || !form.message.trim() || !form.category || !form.severity || !form.status || !form.startsAt) {
+    const advisoryTitle = form.tagAccidentProne ? ACCIDENT_PRONE_ADVISORY_TITLE : form.title.trim();
+    const advisoryCategory = form.tagAccidentProne ? ACCIDENT_PRONE_ADVISORY_TYPE : form.category;
+
+    if (!advisoryTitle || !form.message.trim() || !advisoryCategory || !form.severity || !form.status || !form.startsAt) {
       toast.error('Please complete the title, message, type, priority, start date, and status.');
       return;
     }
@@ -260,8 +277,10 @@ export default function AdvisoryModule() {
     try {
       let saved = await saveAdvisoryRecord({
         ...form,
-        title: form.title.trim(),
+        title: advisoryTitle,
         message: form.message.trim(),
+        category: advisoryCategory,
+        advisoryType: advisoryCategory,
         area: form.area.trim() || 'Echague, Isabela',
       });
 
@@ -279,7 +298,7 @@ export default function AdvisoryModule() {
           advisoryId: saved.id,
           source: 'manual_admin',
           zoneType: 'accident_hotspot',
-          name: form.title.trim(),
+          name: advisoryTitle,
           description: form.message.trim(),
           severity: form.accidentRiskLevel,
           latitude: form.coordinates.lat,
@@ -373,16 +392,19 @@ export default function AdvisoryModule() {
               <input
                 value={form.title}
                 onChange={(event) => updateForm('title', event.target.value)}
+                disabled={form.tagAccidentProne}
                 placeholder="Flash Flood Advisory"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70"
               />
             </label>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <label className="block">
                 <span className="mb-1 block text-xs font-medium text-muted-foreground">Type</span>
-                <select value={form.category} onChange={(event) => updateForm('category', event.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500">
-                  {categoryOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                <select value={form.category} onChange={(event) => updateForm('category', event.target.value)} disabled={form.tagAccidentProne} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-70">
+                  {categoryOptions
+                    .filter((option) => form.tagAccidentProne || option.value !== ACCIDENT_PRONE_ADVISORY_TYPE)
+                    .map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
               <label className="block">
@@ -491,7 +513,7 @@ export default function AdvisoryModule() {
                 <input
                   type="checkbox"
                   checked={form.tagAccidentProne}
-                  onChange={(event) => updateForm('tagAccidentProne', event.target.checked)}
+                  onChange={(event) => updateAccidentProneTag(event.target.checked)}
                   className="mt-1 accent-red-600"
                 />
                 <span className="min-w-0">

@@ -17,7 +17,11 @@ const priorityRank = {
 };
 
 function isMissingAdvisoryTable(error) {
-  return error?.code === "42P01" || error?.code === "PGRST205" || String(error?.message || "").includes("public_advisories");
+  const message = String(error?.message || "");
+  return error?.code === "42P01"
+    || error?.code === "PGRST205"
+    || /relation ["']?public(?:\.)?public_advisories["']? does not exist/i.test(message)
+    || /could not find the table ["']?public_advisories["']?/i.test(message);
 }
 
 function isMissingAdvisoryRpc(error) {

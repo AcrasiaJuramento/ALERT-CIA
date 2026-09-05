@@ -54,9 +54,13 @@ const mdrrmoContacts = [
   { label: 'Echague Rescue', value: 'Facebook', href: 'https://www.facebook.com/mdrrmoechague', color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10' },
 ];
 
+function isPublicAnnouncementAdvisory(advisory = {}) {
+  return !['accident_prone_area', 'accident_hotspot'].includes(String(advisory.advisoryType || advisory.category || '').toLowerCase());
+}
+
 export default function PublicDashboard() {
   const navigate = useNavigate();
-  const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
+  const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories().filter(isPublicAnnouncementAdvisory));
   const [dismissedAdvisoryId, setDismissedAdvisoryId] = useState('');
   const [incidents, setIncidents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,9 +80,9 @@ export default function PublicDashboard() {
     async function loadAdvisoriesFromDatabase() {
       try {
         const advisories = await listPublishedAdvisories({ limit: 50 });
-        if (mounted) setPublicAdvisories(advisories);
+        if (mounted) setPublicAdvisories(advisories.filter(isPublicAnnouncementAdvisory));
       } catch {
-        if (mounted) setPublicAdvisories(loadPublishedAdvisories());
+        if (mounted) setPublicAdvisories(loadPublishedAdvisories().filter(isPublicAnnouncementAdvisory));
       }
     }
 

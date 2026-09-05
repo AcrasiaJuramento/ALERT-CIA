@@ -14,6 +14,7 @@ const severityColors = {
 };
 
 const categoryIcons = {
+  accident_prone_area: AlertTriangle,
   flood: Droplets,
   road_closure: TrafficCone,
   weather: BellRing,
@@ -21,6 +22,7 @@ const categoryIcons = {
 };
 
 const categoryLabels = {
+  accident_prone_area: 'Accident Prone Area',
   flood: 'Flood',
   road_closure: 'Road Closure',
   weather: 'Weather',

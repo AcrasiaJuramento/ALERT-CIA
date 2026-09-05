@@ -65,6 +65,10 @@ function severityGroup(value = '') {
   return 'yellow';
 }
 
+function isAccidentProneAdvisory(advisory = {}) {
+  return ['accident_prone_area', 'accident_hotspot'].includes(String(advisory.advisoryType || advisory.category || '').toLowerCase());
+}
+
 function distanceKm(from, to) {
   if (!from || !to) return 0;
   const [lat1, lon1] = from.map(Number);
@@ -693,6 +697,7 @@ export default function PublicMap() {
     const areas = calculateNewsCautionAreas(incidents, { publicOnly: true });
     return showModerateRisk ? areas : areas.filter(area => area.unique_incident_count > 0);
   }, [incidents, showModerateRisk]);
+  const listedAdvisories = useMemo(() => advisories.filter(item => !isAccidentProneAdvisory(item)), [advisories]);
   const selectedIncident = incidents.find(item => item.id === selectedIncidentId);
   const routePoints = useMemo(() => routePlan?.positions || [], [routePlan]);
   const routeAlerts = useMemo(
@@ -1301,7 +1306,7 @@ export default function PublicMap() {
           </div>
 
           <Panel title="Active Route Alerts">
-            {advisories.map(advisory => (
+            {listedAdvisories.map(advisory => (
               <div key={`advisory-${advisory.id}`} className={`rounded-lg border p-3 ${severityTone[severityGroup(advisory.severity)] || severityTone.yellow}`}>
                 <div className="flex items-center gap-2">
                   <Megaphone className="h-3.5 w-3.5" />
@@ -1319,7 +1324,7 @@ export default function PublicMap() {
                 <p className="mt-1 text-[11px] opacity-80">{alert.description}</p>
               </div>
             ))}
-            {!routeAlerts.length && !advisories.length && <p className="text-xs text-muted-foreground">No active alerts within the route corridor.</p>}
+            {!routeAlerts.length && !listedAdvisories.length && <p className="text-xs text-muted-foreground">No active alerts within the route corridor.</p>}
           </Panel>
 
           <Panel title="Directions">
