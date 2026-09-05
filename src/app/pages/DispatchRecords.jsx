@@ -215,41 +215,154 @@ function pcrPatientKey(record = {}) {
   ].filter(Boolean).join("|");
 }
 
-function dispatchPreviewRecord(record = {}, pcr = null) {
-  if (!pcr) return { ...record, linkedPcr: null, pcr: null };
-  const pcrPatient = {
+function firstPreviewValue(...values) {
+  return values.find(value => value !== null && value !== undefined && String(value).trim() !== "") || "";
+}
+
+function latestPcrVital(pcr = {}) {
+  return [...(pcr.vitals || [])].reverse().find(row =>
+    [row?.bp, row?.pulse, row?.respiratory, row?.temperature, row?.oxygen].some(Boolean)
+  ) || {};
+}
+
+function latestPcrGcsTotal(pcr = {}) {
+  const row = [...(pcr.gcsRows || (pcr.gcs ? [pcr.gcs] : []))].reverse().find(item =>
+    [item?.eye, item?.verbal, item?.motor].some(Boolean)
+  ) || {};
+  const total = [row.eye, row.verbal, row.motor].reduce((sum, score) => sum + Number(score || 0), 0);
+  return total || "";
+}
+
+function pcrCrashRoleFlags(crash = {}) {
+  const role = String(crash.role || "").toLowerCase();
+  return {
+    driver: role.includes("driver"),
+    passenger: role.includes("passenger"),
+    pedestrian: role.includes("pedestrian"),
+  };
+}
+
+function plusMinusPreview(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["positive", "+", "yes"].includes(normalized)) return "+";
+  if (["negative", "-", "no"].includes(normalized)) return "-";
+  if (["n/a", "n-a", "na", "unknown", "not applicable"].includes(normalized)) return "N-A";
+  return value || "";
+}
+
+function mergePreferPcr(base = {}, pcrPatch = {}) {
+  const merged = { ...base };
+  Object.entries(pcrPatch).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === "") return;
+    if (Array.isArray(value) && !value.length) return;
+    merged[key] = value;
+  });
+  return merged;
+}
+
+function pcrPatientForDispatchPreview(pcr = {}) {
+  const vital = latestPcrVital(pcr);
+  const obstetric = pcr.obstetric || {};
+  const crash = pcr.crash || {};
+  return {
     name: pcr.patientName || "",
     age: pcr.age || "",
     birthdate: pcr.birthday || pcr.birthdate || "",
     gender: pcr.gender || "",
     address: pcr.address || "",
     assessmentFindings: pcr.chiefComplaint || "",
+    bp: vital.bp || "",
+    pr: vital.pulse || "",
+    rr: vital.respiratory || "",
+    temp: vital.temperature || "",
+    o2Sat: vital.oxygen || "",
+    gcs: latestPcrGcsTotal(pcr),
+    ...pcrCrashRoleFlags(crash),
+    helmet: plusMinusPreview(crash.helmet),
+    alcoholBreath: plusMinusPreview(crash.alcohol),
+    driversLicense: plusMinusPreview(crash.license),
+    g: obstetric.g || "",
+    p: obstetric.p || "",
+    t: obstetric.t || "",
+    pa: obstetric.pa || "",
+    l: obstetric.l || obstetric.baby || "",
+    lmp: obstetric.lmp || "",
+    aog: obstetric.aog || "",
+    edc: obstetric.edc || "",
+    fht: obstetric.fht || "",
+    ie: obstetric.ie || "",
+    bow: plusMinusPreview(obstetric.bow),
   };
+}
+
+function pcrIncidentTypesForDispatchPreview(record = {}, pcr = {}) {
+  const pcrTypes = [
+    ...(pcr.emergencyTypes || []),
+    ...(pcr.traumaTypes || []),
+  ].filter(Boolean);
+  return pcrTypes.length ? pcrTypes : record.natureTypes || [];
+}
+
+function dispatchPreviewRecord(record = {}, pcr = null) {
+  if (!pcr) return { ...record, linkedPcr: null, pcr: null };
+  const pcrPatient = pcrPatientForDispatchPreview(pcr);
   const patients = record.patients?.length
-    ? record.patients.map((patient, index) => index ? patient : Object.fromEntries(
-      [...new Set([...Object.keys(pcrPatient), ...Object.keys(patient)])]
-        .map(key => [key, patient[key] || pcrPatient[key] || ""]),
-    ))
+    ? record.patients.map((patient, index) => index ? patient : mergePreferPcr(patient, pcrPatient))
     : [pcrPatient];
+  const pcrTimeline = pcr.timeline || {};
+  const arrivalOffice = firstPreviewValue(pcr.backToBase, pcrTimeline.backToBase, record.arrivalAtOffice, record.arrivalOffice, record.backToBase);
+  const pcrHospital = firstPreviewValue(pcr.hospitalName, pcr.endorsementHospital, pcr.hospitalization?.where);
   return {
     ...pcr,
     ...record,
-    team: record.team || pcr.team || pcr.respondingTeam || "",
-    vehicle: record.vehicle || pcr.vehicle || "",
-    driver: record.driver || pcr.driver || "",
-    mainAider: record.mainAider || pcr.mainAider || "",
-    groupLeader: record.groupLeader || pcr.groupLeader || "",
-    assistantAider: record.assistantAider || pcr.assistantAider || "",
-    callerName: record.callerName || pcr.callerName || pcr.contactPerson || "",
-    callerAddress: record.callerAddress || pcr.callerAddress || pcr.contactAddress || "",
-    callerContact: record.callerContact || pcr.callerContact || pcr.contactNumber || "",
-    placeOfIncident: record.placeOfIncident || pcr.placeOfIncident || pcr.locationText || "",
-    locationText: record.locationText || pcr.locationText || pcr.placeOfIncident || "",
-    barangay: record.barangay || pcr.barangay || "",
+    responseNumber: record.responseNumber || pcr.responseNumber || "",
+    team: firstPreviewValue(record.team, pcr.team, pcr.respondingTeam),
+    vehicle: firstPreviewValue(record.vehicle, pcr.vehicle),
+    driver: firstPreviewValue(record.driver, pcr.driver),
+    mainAider: firstPreviewValue(record.mainAider, pcr.mainAider),
+    groupLeader: firstPreviewValue(record.groupLeader, pcr.groupLeader),
+    assistantAider: firstPreviewValue(record.assistantAider, pcr.assistantAider),
+    callerName: firstPreviewValue(record.callerName, pcr.callerName, pcr.contactPerson),
+    callerAddress: firstPreviewValue(record.callerAddress, pcr.callerAddress, pcr.contactAddress, pcr.address),
+    callerContact: firstPreviewValue(record.callerContact, pcr.callerContact, pcr.contactNumber),
+    natureTypes: pcrIncidentTypesForDispatchPreview(record, pcr),
+    otherMedical: firstPreviewValue(pcr.emergencyOther, record.otherMedical),
+    otherTrauma: firstPreviewValue(record.otherTrauma, pcr.traumaOther),
+    incidentNature: firstPreviewValue(pcr.incidentNature, record.incidentNature),
+    ingestionDetails: firstPreviewValue(pcr.ingestionItem, record.ingestionDetails),
+    ifIngestion: firstPreviewValue(pcr.ingestionItem, record.ifIngestion),
+    ingestionQuantity: firstPreviewValue(pcr.ingestionQuantity, record.ingestionQuantity),
+    quantity: firstPreviewValue(pcr.ingestionQuantity, record.quantity),
+    fallDetails: firstPreviewValue(pcr.fallDetails, record.fallDetails),
+    ifFall: firstPreviewValue(pcr.fallDetails, record.ifFall),
+    selfAccident: Boolean(pcr.crash?.selfAccident || record.selfAccident),
+    collision: Boolean(pcr.crash?.collision || record.collision),
+    vehicleInvolved: firstPreviewValue(pcr.crash?.vehicle, record.vehicleInvolved, record.vehicleInvolve),
+    vehicleInvolve: firstPreviewValue(pcr.crash?.vehicle, record.vehicleInvolve, record.vehicleInvolved),
+    placeOfIncident: firstPreviewValue(record.placeOfIncident, pcr.placeOfIncident, pcr.locationText),
+    locationText: firstPreviewValue(record.locationText, pcr.locationText, pcr.placeOfIncident),
+    barangay: firstPreviewValue(record.barangay, pcr.barangay),
     barangayId: record.barangayId || pcr.barangayId || null,
-    latitude: record.latitude || pcr.latitude || "",
-    longitude: record.longitude || pcr.longitude || "",
-    locationGeography: record.locationGeography || pcr.locationGeography || "",
+    latitude: firstPreviewValue(record.latitude, pcr.latitude),
+    longitude: firstPreviewValue(record.longitude, pcr.longitude),
+    locationGeography: firstPreviewValue(record.locationGeography, pcr.locationGeography),
+    dispatchedTime: firstPreviewValue(pcr.dispatchTime, pcr.dispatchedTime, pcrTimeline.dispatchTime, record.dispatchedTime, record.dispatchTime),
+    dispatchTime: firstPreviewValue(pcr.dispatchTime, pcr.dispatchedTime, pcrTimeline.dispatchTime, record.dispatchTime, record.dispatchedTime),
+    arrivalAtScene: firstPreviewValue(pcr.arrivalScene, pcrTimeline.arrivalScene, record.arrivalAtScene, record.arrivalScene),
+    arrivalScene: firstPreviewValue(pcr.arrivalScene, pcrTimeline.arrivalScene, record.arrivalScene, record.arrivalAtScene),
+    departureAtScene: firstPreviewValue(pcr.departureScene, pcrTimeline.departureScene, record.departureAtScene, record.departureScene),
+    departureScene: firstPreviewValue(pcr.departureScene, pcrTimeline.departureScene, record.departureScene, record.departureAtScene),
+    arrivalAtHospital: firstPreviewValue(pcr.arrivalHospital, pcrTimeline.arrivalHospital, record.arrivalAtHospital, record.arrivalHospital),
+    arrivalHospital: firstPreviewValue(pcr.arrivalHospital, pcrTimeline.arrivalHospital, record.arrivalHospital, record.arrivalAtHospital),
+    departureAtHospital: firstPreviewValue(pcr.departureHospital, pcrTimeline.departureHospital, record.departureAtHospital, record.departureHospital),
+    departureHospital: firstPreviewValue(pcr.departureHospital, pcrTimeline.departureHospital, record.departureHospital, record.departureAtHospital),
+    arrivalAtOffice: arrivalOffice,
+    arrivalOffice,
+    backToBase: arrivalOffice,
+    hospitalName: firstPreviewValue(pcrHospital, record.hospitalName, record.nameOfHospital),
+    nameOfHospital: firstPreviewValue(pcrHospital, record.nameOfHospital, record.hospitalName),
+    dateOfIncident: firstPreviewValue(record.dateOfIncident, pcr.dateOfIncident, pcrTimeline.dateOfIncident),
+    timeOfIncident: firstPreviewValue(record.timeOfIncident, pcr.timeOfIncident, pcrTimeline.timeOfIncident),
     patients,
     linkedPcr: pcr,
     pcr,
@@ -531,6 +644,18 @@ export default function DispatchRecords() {
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const visibleRecords = filtered.slice((page - 1) * pageSize, page * pageSize);
 
+  const selectedPreview = useMemo(() => {
+    if (!selected) return null;
+    const selectedKey = logicalDispatchKey(selected);
+    const latestRecord = records.find(record => logicalDispatchKey(record) === selectedKey);
+    if (!latestRecord) return selected;
+    const latestPcr = linkedPcrFromMap(linkedPCRs, latestRecord);
+    return {
+      ...dispatchPreviewRecord(latestRecord, latestPcr),
+      __autoDownload: selected.__autoDownload,
+    };
+  }, [selected, records, linkedPCRs]);
+
   useEffect(() => setPage(1), [query, status, archiveView]);
 
   const edit = record => {
@@ -786,7 +911,7 @@ export default function DispatchRecords() {
       </div>
 
       <DispatchPreviewModal
-      selected={selected}
+      selected={selectedPreview}
       setSelected={setSelected}
       canCreate={canCreate}
       edit={edit}

@@ -349,6 +349,12 @@ function ageFromBirthdate(value) {
   return age >= 0 && age <= 120 ? String(age) : "";
 }
 
+function patientCountFromValue(value, fallback = 1) {
+  const count = Number(value || fallback);
+  if (!Number.isFinite(count)) return fallback;
+  return Math.max(1, Math.min(3, count));
+}
+
 function PatientBirthdayField({ patient, onChange }) {
   const birthdateParts = splitBirthdate(patient.birthdate);
   const parts = {
@@ -388,6 +394,43 @@ function PatientBirthdayField({ patient, onChange }) {
           {BIRTH_DAYS.map(day => <option key={day} value={day}>{day}</option>)}
         </select>
       </Field>
+    </div>
+  );
+}
+
+function PatientGeneralStatusQuickPanel({ patients, onToggle }) {
+  return (
+    <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Patient General Status
+        </span>
+        <span className="text-[11px] text-muted-foreground">
+          Optional during dispatch
+        </span>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {patients.map((patient, index) => (
+          <div key={patient.id} className="rounded-lg border border-border bg-card/60 p-3">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-foreground">
+                Patient / Victim #{index + 1}
+              </span>
+              {patient.name && (
+                <span className="max-w-36 truncate text-[11px] text-muted-foreground">
+                  {patient.name}
+                </span>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <CB label="Conscious" checked={patient.conscious} onChange={() => onToggle(patient.id, "conscious")} />
+              <CB label="Unconscious" checked={patient.unconscious} onChange={() => onToggle(patient.id, "unconscious")} />
+              <CB label="Ambulatory" checked={patient.ambulatory} onChange={() => onToggle(patient.id, "ambulatory")} />
+              <CB label="Non-Ambulatory" checked={patient.nonAmbulatory} onChange={() => onToggle(patient.id, "nonAmbulatory")} />
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -508,18 +551,9 @@ function PatientCard({ patient, index, onChange, onRemove, canRemove, pcrStatus 
           </div>
         </div>
 
-        {/* General status */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <div>
-            <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">General Status</span>
-            <div className="grid grid-cols-2 gap-2">
-              <CB label="Conscious" checked={patient.conscious} onChange={() => toggle("conscious")} />
-              <CB label="Unconscious" checked={patient.unconscious} onChange={() => toggle("unconscious")} />
-              <CB label="Ambulatory" checked={patient.ambulatory} onChange={() => toggle("ambulatory")} />
-              <CB label="Non-Ambulatory" checked={patient.nonAmbulatory} onChange={() => toggle("nonAmbulatory")} />
-            </div>
-          </div>
-          <div>
+        {/* Vehicular status */}
+        <div>
+          <div className="rounded-lg border border-border bg-secondary/20 p-3">
             <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">If Vehicular Accident</span>
             <div className="grid grid-cols-3 gap-2 mb-2">
               <CB label="Driver" checked={patient.driver} onChange={() => toggle("driver")} />
@@ -795,6 +829,33 @@ export default function DispatchModule({ onBack }) {
   const updatePatient = (id, updated) => {
     update("patients", form.patients.map(p => p.id === id ? updated : p));
   };
+  const updatePatientCount = value => {
+    const count = patientCountFromValue(value);
+    setForm(current => {
+      const patients = [...(current.patients?.length ? current.patients : [newPatient()])];
+      while (patients.length < count) patients.push(newPatient());
+      return {
+        ...current,
+        numberOfPatients: String(count),
+        patients: patients.slice(0, count),
+      };
+    });
+  };
+  const togglePatientGeneralStatus = (id, key) => {
+    setForm(current => ({
+      ...current,
+      patients: current.patients.map(patient => {
+        if (patient.id !== id) return patient;
+        const nextValue = !patient[key];
+        const next = { ...patient, [key]: nextValue };
+        if (key === "conscious" && nextValue) next.unconscious = false;
+        if (key === "unconscious" && nextValue) next.conscious = false;
+        if (key === "ambulatory" && nextValue) next.nonAmbulatory = false;
+        if (key === "nonAmbulatory" && nextValue) next.ambulatory = false;
+        return next;
+      }),
+    }));
+  };
   const withAutoGeneratedFields = (source, { includeDispatchTime = false } = {}) => ({
     ...source,
     dispatcher: source.dispatcher || userDisplayName(user),
@@ -856,6 +917,7 @@ export default function DispatchModule({ onBack }) {
   };
 
   const handlePrimarySend = () => isReverseWorkflow ? handleSave() : handleSendToFieldOfficer();
+  const visiblePatientStatusRows = form.patients.slice(0, patientCountFromValue(form.numberOfPatients, form.patients.length || 1));
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
@@ -913,7 +975,7 @@ export default function DispatchModule({ onBack }) {
                 </select>
               </Field>
               <Field label="Number of Patients / Victims">
-                <select className={input} value={form.numberOfPatients} onChange={e => update("numberOfPatients", e.target.value)}>
+                <select className={input} value={form.numberOfPatients} onChange={e => updatePatientCount(e.target.value)}>
                   <option value="1">1</option>
                   <option value="2">2</option>
                   <option value="3">3</option>
@@ -926,6 +988,11 @@ export default function DispatchModule({ onBack }) {
                 <input className={input} value={form.barangay || ""} onChange={e => update("barangay", e.target.value)} />
               </Field>
             </div>
+
+            <PatientGeneralStatusQuickPanel
+              patients={visiblePatientStatusRows}
+              onToggle={togglePatientGeneralStatus}
+            />
 
             {selectedNature === "Motor Vehicle Crash" && (
               <div className="mt-4 grid gap-3 rounded-lg border border-border bg-secondary/20 p-3 md:grid-cols-3">
