@@ -326,23 +326,29 @@ function buildRouteAlerts({ incidents, hazardZones, accidentProneAreas, cautionA
 
   const zoneAlerts = hazardZones
     .map(zone => {
+      const isAccidentHotspot = zone.type === 'accident_hotspot';
       const zonePoint = getZoneLatLng(zone);
-      const distance = nearestPointDistanceKm(zonePoint, routePoints);
+      const centerDistance = nearestPointDistanceKm(zonePoint, routePoints);
+      const radiusKm = Number(zone.radiusMeters || 250) / 1000;
+      const distance = isAccidentHotspot ? Math.max(0, centerDistance - radiusKm) : centerDistance;
       const approach = currentLocation ? distanceKm(currentLocation, zonePoint) : distance;
+      const riskLevel = zone.severity === 'critical' ? 'Critical' : 'High';
       return {
         id: zone.id,
-        label: zone.label,
-        type: zone.type,
+        label: isAccidentHotspot ? `${riskLevel} manual accident-prone area: ${zone.label}` : zone.label,
+        type: isAccidentHotspot ? 'accident-prone-area' : zone.type,
         severity: zone.severity === 'critical' ? 'critical' : zone.severity === 'high' ? 'warning' : 'moderate',
+        riskLevel,
+        riskRadiusKm: isAccidentHotspot ? radiusKm : undefined,
         latLng: zonePoint,
         distance,
         approach,
-        affectsReroute: false,
-        allowSaferRoute: false,
-        description: zone.description || 'Hazard zone near this route.',
+        affectsReroute: isAccidentHotspot,
+        allowSaferRoute: isAccidentHotspot,
+        description: zone.description || (isAccidentHotspot ? 'Manual accident-prone area near this route. Slow down and stay alert.' : 'Hazard zone near this route.'),
       };
     })
-    .filter(item => item.distance <= 0.8);
+    .filter(item => item.distance <= (item.type === 'accident-prone-area' ? 0.12 : 0.8));
 
   const accidentProneAlerts = accidentProneAreas
     .map(area => {

@@ -1,9 +1,13 @@
 import { subscribeToPublicAdvisoryChanges } from './publicRealtime';
+import { getSupabaseClient } from "../../lib/supabaseClient";
+import { randomUuid } from "../../utils/uuid";
 import { runSupabaseRequest } from "./errors";
 import {
   loadAdvisories,
   loadPublishedAdvisories,
 } from "../../utils/advisoryStorage";
+
+export const ADVISORY_MEDIA_BUCKET = "public-advisory-media";
 
 const priorityRank = {
   critical: 4,
@@ -23,6 +27,37 @@ function isMissingAdvisoryRpc(error) {
 
 function isMissingAdvisoryActiveFields(error) {
   return error?.code === "42703";
+}
+
+function isMissingAdvisoryMediaTable(error) {
+  const message = String(error?.message || "");
+  return error?.code === "42P01" || error?.code === "PGRST205" || message.includes("public_advisory_media");
+}
+
+function getPublicAdvisoryMediaUrl(storagePath = "") {
+  if (!storagePath) return "";
+  try {
+    return getSupabaseClient().storage.from(ADVISORY_MEDIA_BUCKET).getPublicUrl(storagePath).data?.publicUrl || "";
+  } catch {
+    return "";
+  }
+}
+
+function mediaToApp(row = {}) {
+  return {
+    id: row.id,
+    advisoryId: row.advisory_id,
+    storagePath: row.storage_path || "",
+    fileName: row.file_name || "Advisory image",
+    name: row.file_name || "Advisory image",
+    mimeType: row.mime_type || "image/jpeg",
+    type: row.mime_type || "image/jpeg",
+    sizeBytes: Number(row.size_bytes || 0),
+    width: row.width || null,
+    height: row.height || null,
+    createdAt: row.created_at,
+    publicUrl: getPublicAdvisoryMediaUrl(row.storage_path),
+  };
 }
 
 function advisoryToApp(row = {}) {
@@ -48,6 +83,7 @@ function advisoryToApp(row = {}) {
     expiresAt: row.expires_at || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    media: Array.isArray(row.media) ? row.media.map(mediaToApp) : [],
   };
 }
 
@@ -85,6 +121,32 @@ function sortAdvisories(advisories = []) {
   });
 }
 
+async function attachAdvisoryMedia(advisories = []) {
+  const ids = advisories.map(item => item.id).filter(Boolean);
+  if (!ids.length) return advisories;
+
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("public_advisory_media")
+        .select("id, advisory_id, storage_path, file_name, mime_type, size_bytes, width, height, created_at")
+        .in("advisory_id", ids)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true }),
+    "Unable to load advisory media.");
+    const mediaByAdvisory = new Map();
+    rows.map(mediaToApp).forEach((media) => {
+      const list = mediaByAdvisory.get(media.advisoryId) || [];
+      list.push(media);
+      mediaByAdvisory.set(media.advisoryId, list);
+    });
+    return advisories.map(advisory => ({ ...advisory, media: mediaByAdvisory.get(advisory.id) || [] }));
+  } catch (error) {
+    if (isMissingAdvisoryMediaTable(error)) return advisories;
+    throw error;
+  }
+}
+
 export async function listAdvisories({ activeOnly = false, publishedOnly = false, limit = 100 } = {}) {
   try {
     const now = new Date().toISOString();
@@ -106,7 +168,7 @@ export async function listAdvisories({ activeOnly = false, publishedOnly = false
       return query;
     }, "Unable to load public advisories.");
 
-    return sortAdvisories(rows.map(advisoryToApp));
+    return attachAdvisoryMedia(sortAdvisories(rows.map(advisoryToApp)));
   } catch (error) {
     if (isMissingAdvisoryActiveFields(error)) {
       return listLegacyAdvisories({ publishedOnly, limit });
@@ -129,7 +191,7 @@ async function listLegacyAdvisories({ publishedOnly = false, limit = 100 } = {})
     return query;
   }, "Unable to load public advisories.");
 
-  return sortAdvisories(rows.map(advisoryToApp));
+  return attachAdvisoryMedia(sortAdvisories(rows.map(advisoryToApp)));
 }
 
 export async function listPublishedAdvisories(options = {}) {
@@ -208,6 +270,92 @@ export async function saveAdvisoryRecord(advisory) {
 }
 
 export const subscribeToPublicAdvisories = subscribeToPublicAdvisoryChanges;
+
+export async function uploadAdvisoryImage(advisoryId, image) {
+  if (!advisoryId || !image?.blob) throw new Error("Save the advisory before uploading an image.");
+  const fileExtension = image.mimeType === "image/png" ? "png" : "jpg";
+  const storagePath = `${advisoryId}/${randomUuid()}.${fileExtension}`;
+  const { error } = await getSupabaseClient()
+    .storage
+    .from(ADVISORY_MEDIA_BUCKET)
+    .upload(storagePath, image.blob, {
+      cacheControl: "604800",
+      contentType: image.mimeType,
+      upsert: false,
+    });
+  if (error) throw new Error(error.message || "Unable to upload advisory image.");
+
+  return {
+    storagePath,
+    fileName: image.fileName || `advisory.${fileExtension}`,
+    mimeType: image.mimeType,
+    sizeBytes: image.sizeBytes || image.blob.size || 0,
+    width: image.width || null,
+    height: image.height || null,
+  };
+}
+
+export async function listAdvisoryMedia(advisoryId) {
+  if (!advisoryId) return [];
+  try {
+    const rows = await runSupabaseRequest(client =>
+      client
+        .from("public_advisory_media")
+        .select("id, advisory_id, storage_path, file_name, mime_type, size_bytes, width, height, created_at")
+        .eq("advisory_id", advisoryId)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: true }),
+    "Unable to load advisory media.");
+    return rows.map(mediaToApp);
+  } catch (error) {
+    if (isMissingAdvisoryMediaTable(error)) return [];
+    throw error;
+  }
+}
+
+export async function replaceAdvisoryMedia(advisoryId, image = null) {
+  if (!advisoryId) return [];
+  const existing = await listAdvisoryMedia(advisoryId);
+  let uploaded = null;
+  if (image?.blob) uploaded = await uploadAdvisoryImage(advisoryId, image);
+
+  let replacement = [];
+  if (uploaded) {
+    const row = await runSupabaseRequest(client =>
+      client
+        .from("public_advisory_media")
+        .insert({
+          advisory_id: advisoryId,
+          storage_path: uploaded.storagePath,
+          file_name: uploaded.fileName,
+          mime_type: uploaded.mimeType,
+          size_bytes: uploaded.sizeBytes,
+          width: uploaded.width,
+          height: uploaded.height,
+        })
+        .select("*")
+        .single(),
+    "Unable to save advisory media.");
+    replacement = [mediaToApp(row)];
+  }
+
+  const existingIds = existing.map(item => item.id).filter(Boolean);
+  if (existingIds.length) {
+    await runSupabaseRequest(client =>
+      client
+        .from("public_advisory_media")
+        .update({ deleted_at: new Date().toISOString() })
+        .in("id", existingIds),
+    "Unable to replace advisory media.");
+  }
+
+  const removablePaths = existing.map(item => item.storagePath).filter(Boolean);
+  if (removablePaths.length) {
+    await getSupabaseClient().storage.from(ADVISORY_MEDIA_BUCKET).remove(removablePaths);
+  }
+
+  return replacement;
+}
 
 export async function archiveAdvisoryRecord(advisoryId) {
   try {

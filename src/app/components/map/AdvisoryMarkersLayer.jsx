@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { AlertTriangle, BellRing, Droplets, Megaphone, TrafficCone } from 'lucide-react';
+import { AlertTriangle, BellRing, Droplets, Image as ImageIcon, Megaphone, TrafficCone, X } from 'lucide-react';
 import { getAdvisoryLatLng } from '../../utils/mapData';
 
 const severityColors = {
@@ -38,6 +39,9 @@ function AdvisoryGlyph({ advisory }) {
 }
 
 function PopupContent({ advisory }) {
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const image = advisory.media?.find(item => item.publicUrl);
+
   return (
     <div className="min-w-52 text-slate-900">
       <div className="mb-1 flex items-center gap-1.5 text-xs font-bold text-orange-700">
@@ -52,6 +56,48 @@ function PopupContent({ advisory }) {
       </div>
       {advisory.message && (
         <p className="mt-2 text-xs leading-relaxed text-slate-600">{advisory.message}</p>
+      )}
+      {image && (
+        <button
+          type="button"
+          onClick={() => setPreviewOpen(true)}
+          className="mt-3 block w-full overflow-hidden rounded-lg border border-slate-200 bg-slate-50 text-left"
+        >
+          <img src={image.publicUrl} alt={image.fileName || advisory.title} loading="lazy" className="h-28 w-full object-cover" />
+          <span className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] font-semibold text-slate-700">
+            <ImageIcon size={12} />
+            Preview image
+          </span>
+        </button>
+      )}
+      {previewOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[5100] flex items-center justify-center bg-black/80 p-4"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={() => setPreviewOpen(false)}
+        >
+          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-slate-700 bg-slate-950 shadow-2xl" onMouseDown={event => event.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-slate-800 p-3">
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-semibold text-white">{image.fileName || advisory.title}</h2>
+                <p className="text-xs text-slate-500">{advisory.area}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(false)}
+                aria-label="Close advisory image preview"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-slate-800 text-slate-300 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto bg-slate-900 p-3">
+              <img src={image.publicUrl} alt={image.fileName || advisory.title} className="max-h-[calc(100vh-8rem)] max-w-full object-contain" />
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -79,6 +125,7 @@ export function AdvisoryMarkersLayer({
 
   useEffect(() => {
     const layer = L.layerGroup();
+    const roots = [];
 
     advisories.forEach((advisory) => {
       const position = getAdvisoryLatLng(advisory);
@@ -90,15 +137,20 @@ export function AdvisoryMarkersLayer({
       });
 
       const popup = document.createElement('div');
-      createRoot(popup).render(<PopupContent advisory={advisory} />);
+      const root = createRoot(popup);
+      roots.push(root);
+      root.render(<PopupContent advisory={{ ...advisory, media: [] }} />);
       marker.bindPopup(popup, { closeButton: true, maxWidth: 300 });
       marker.on('click', () => onAdvisoryClick?.(advisory.id));
+      marker.on('popupopen', () => root.render(<PopupContent advisory={advisory} />));
+      marker.on('popupclose', () => root.render(<PopupContent advisory={{ ...advisory, media: [] }} />));
       layer.addLayer(marker);
     });
 
     map.addLayer(layer);
     return () => {
       map.removeLayer(layer);
+      roots.forEach(root => root.unmount());
     };
   }, [advisories, map, onAdvisoryClick]);
 
