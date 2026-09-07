@@ -7,8 +7,7 @@ function asRows(value) {
 }
 
 const NOTES_EXTENDED_KEY = "__alertCiaExtended";
-const COMPLETED_DISPATCH_STATUSES = ["pcr_completed", "verified"];
-const COMPLETED_PCR_STATUSES = ["completed", "verified"];
+const INCIDENT_SELECT = "id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at, barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))";
 
 function parseDescription(value) {
   if (!value || typeof value !== "string") return { text: "", extended: {} };
@@ -183,8 +182,7 @@ async function pcrMetadataByResponse(responseIds = []) {
         .from("pcr_reports")
         .select("response_id, status, triage, emergency_types, trauma_types, incident_nature, notes, updated_at, created_at")
         .in("response_id", ids)
-        .is("deleted_at", null)
-        .limit(5000),
+        .is("deleted_at", null),
     "Unable to load PCR incident metadata.");
 
     const byResponse = new Map();
@@ -237,8 +235,7 @@ async function dispatchStatusesByResponse(responseIds = []) {
         .from("dispatch_forms")
         .select("response_id, status")
         .in("response_id", ids)
-        .is("deleted_at", null)
-        .limit(5000),
+        .is("deleted_at", null),
     "Unable to load dispatch workflow statuses.");
 
     const byResponse = new Map();
@@ -286,40 +283,12 @@ function incidentPayload(record = {}, barangayId) {
   return payload;
 }
 
-async function completedWorkflowResponseIds(client) {
-  const [dispatchResult, pcrResult] = await Promise.all([
-    client
-      .from("dispatch_forms")
-      .select("response_id")
-      .in("status", COMPLETED_DISPATCH_STATUSES)
-      .is("deleted_at", null)
-      .limit(5000),
-    client
-      .from("pcr_reports")
-      .select("response_id")
-      .in("status", COMPLETED_PCR_STATUSES)
-      .is("deleted_at", null)
-      .limit(5000),
-  ]);
-  if (dispatchResult.error) return dispatchResult;
-  if (pcrResult.error) return pcrResult;
-
-  const dispatchResponseIds = new Set(asRows(dispatchResult.data).map(row => row.response_id).filter(Boolean));
-  const responseIds = asRows(pcrResult.data)
-    .map(row => row.response_id)
-    .filter(responseId => responseId && dispatchResponseIds.has(responseId));
-
-  return { data: [...new Set(responseIds)], error: null };
-}
-
-async function verifiedPCRResponseIds(client) {
-  return client
-    .from("pcr_reports")
-    .select("response_id")
-    .eq("status", "verified")
-    .not("response_id", "is", null)
-    .is("deleted_at", null)
-    .limit(5000);
+function normalizeRpcIncidentRow(row = {}) {
+  return {
+    ...row,
+    barangay: row.barangay_name ? { name: row.barangay_name } : null,
+    response: row.responding_team_name ? { responding_team: { name: row.responding_team_name } } : null,
+  };
 }
 
 export async function listIncidents({ publicOnly = false, limit = 200, from = 0, status, type, severity, completedWorkflowOnly = false, verifiedMapOnly = false } = {}) {
@@ -327,26 +296,33 @@ export async function listIncidents({ publicOnly = false, limit = 200, from = 0,
   const classification = type === "vehicular" ? "mvc" : type;
   const priority = severity === "critical" ? "critical" : severity === "warning" ? "high" : severity === "moderate" ? "medium" : severity;
   const { data, count } = await runSupabaseRequestWithMeta(async client => {
-    const completedResponseResult = completedWorkflowOnly ? await completedWorkflowResponseIds(client) : null;
-    if (completedResponseResult?.error) return completedResponseResult;
-    if (completedWorkflowOnly && !completedResponseResult.data.length) return { data: [], count: 0, error: null };
-    const verifiedResponseResult = verifiedMapOnly ? await verifiedPCRResponseIds(client) : null;
-    if (verifiedResponseResult?.error) return verifiedResponseResult;
-    const verifiedResponseIds = asRows(verifiedResponseResult?.data).map(row => row.response_id).filter(Boolean);
-    if (verifiedMapOnly && !verifiedResponseIds.length) return { data: [], count: 0, error: null };
-
+    if (completedWorkflowOnly || verifiedMapOnly) {
+      const result = await client.rpc("list_incidents_paginated", {
+        page_limit: limit,
+        page_offset: from,
+        filter_status: status || null,
+        filter_classification: classification || null,
+        filter_priority: priority || null,
+        filter_completed_workflow: completedWorkflowOnly,
+        filter_verified_map: verifiedMapOnly,
+      });
+      const payload = result.data || {};
+      return {
+        ...result,
+        data: asRows(payload.data).map(normalizeRpcIncidentRow),
+        count: Number(payload.count || 0),
+      };
+    }
 
     let query = client
       .from("incidents")
-      .select("id, response_id, barangay_id, classification, subtype, priority, title, description, incident_date, incident_time, location_text, latitude, longitude, public_visible, record_origin, external_source_url, scraper_record_id, status, created_at, updated_at, barangay:barangays(id, name), response:responses(id, responding_team:responding_teams!responses_responding_team_id_fkey(id, name))", { count: "exact" })
+      .select(INCIDENT_SELECT, { count: "exact" })
       .is("deleted_at", null)
       .order("incident_date", { ascending: false })
       .range(from, from + limit - 1);
     if (status) query = query.eq("status", status);
     if (classification) query = query.eq("classification", classification);
     if (priority) query = query.eq("priority", priority);
-    if (completedWorkflowOnly) query = query.in("response_id", completedResponseResult.data);
-    if (verifiedMapOnly) query = query.in("response_id", verifiedResponseIds);
     return query;
   }, "Unable to load incidents.");
 
