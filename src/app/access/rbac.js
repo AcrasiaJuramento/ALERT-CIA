@@ -54,7 +54,6 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_PCR_RECORDS,
     PERMISSIONS.CREATE_PCR,
     PERMISSIONS.VIEW_RECEIVED_DISPATCHES,
-    PERMISSIONS.VIEW_ANALYTICS,
     PERMISSIONS.VIEW_SETTINGS,
   ],
   [ROLES.DISPATCHER]: [
@@ -62,7 +61,6 @@ export const ROLE_PERMISSIONS = {
     PERMISSIONS.VIEW_INCIDENTS,
     PERMISSIONS.VIEW_MAP,
     PERMISSIONS.VIEW_PCR_RECORDS,
-    PERMISSIONS.VIEW_ANALYTICS,
     PERMISSIONS.VIEW_SETTINGS,
     PERMISSIONS.VIEW_DISPATCH,
     PERMISSIONS.CREATE_DISPATCH,
@@ -117,8 +115,6 @@ export function getAuthorizedNavigation(role) {
     '/admin/dispatch/new',
     '/admin/dispatch',
     '/admin/pcr',
-    '/admin/analytics',
-    '/admin/reports-analytics',
     '/admin/settings',
   ];
   return items
