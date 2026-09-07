@@ -17,7 +17,7 @@ export function toAccidentProneWarningZone(area = {}) {
     id: `calculated-${area.area_id || `${area.latitude}-${area.longitude}`}`,
     label: `${riskLabel}: ${areaName}`,
     type: 'accident_hotspot',
-    severity: area.zone_type === 'news_caution_area' ? 'moderate' : area.risk_level === 'Critical' ? 'critical' : 'high',
+    severity: area.zone_type === 'news_caution_area' || area.risk_level === 'Caution' ? 'moderate' : area.risk_level === 'Critical' ? 'critical' : 'high',
     latitude: Number(area.latitude),
     longitude: Number(area.longitude),
     radiusMeters: getAccidentProneAreaRadiusMeters(area),

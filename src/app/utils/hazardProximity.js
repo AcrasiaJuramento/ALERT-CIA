@@ -31,6 +31,12 @@ export function distanceMeters(first, second) {
 
 export function warningForDistance(zone, centerDistanceMeters) {
   const boundaryDistance = Math.round(centerDistanceMeters - getZoneRadiusMeters(zone));
+  if (zone.riskLevel === 'Caution') {
+    if (boundaryDistance > APPROACH_WARNING_METERS) return null;
+    return { level: 'caution', priority: 2, distance: Math.max(0, boundaryDistance), message: boundaryDistance <= 0
+      ? 'Caution: You are inside a former accident-prone area. Stay alert and drive carefully.'
+      : `Caution area ahead in ${boundaryDistance} meters. Stay alert.` };
+  }
   if (boundaryDistance <= 0) {
     return { level: 'danger', priority: 3, distance: 0, message: 'Danger: You are currently inside an accident-prone area. Please slow down and drive carefully.' };
   }

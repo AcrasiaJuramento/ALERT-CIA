@@ -778,7 +778,7 @@ export default function MapMonitoring() {
     [riskFilters, riskSourceRecords]
   );
   const accidentProneAreas = useMemo(
-    () => officialComputedAreas.filter(area => ['High', 'Critical'].includes(area.risk_level)),
+    () => officialComputedAreas.filter(area => area.retained_caution || ['High', 'Critical'].includes(area.risk_level)),
     [officialComputedAreas]
   );
   const cautionAreas = useMemo(

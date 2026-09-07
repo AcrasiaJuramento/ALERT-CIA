@@ -1,6 +1,5 @@
 import { runSupabaseRequest } from './errors';
 import { createReadThroughCache } from '../../utils/readThroughCache.js';
-import { accidentProneWindowStart } from '../../utils/accidentProneWindow.js';
 import { onDataInvalidated } from '../../utils/dataInvalidation.js';
 
 const cache = createReadThroughCache();
@@ -38,7 +37,7 @@ export const readPublicData = (key, loader, ttl = PUBLIC_TTL) => cache.read(key,
   return value;
 }, ttl);
 
-export function publicMapOptions({ limit = 200, from = 0, bounds = null, since = accidentProneWindowStart().toISOString().slice(0, 10), until = null } = {}) {
+export function publicMapOptions({ limit = 200, from = 0, bounds = null, since = null, until = null } = {}) {
   return { limit: Math.min(500, Math.max(1, Math.floor(Number(limit) || 200))), from: Math.max(0, Math.floor(Number(from) || 0)), bounds, since, until };
 }
 

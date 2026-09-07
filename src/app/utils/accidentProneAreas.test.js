@@ -344,3 +344,30 @@ test("implements the recommended risk thresholds", () => {
   assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 3, severityBurden: 6 }), "High");
   assert.equal(classifyRecommendedRisk({ uniqueIncidentCount: 5, severityBurden: 12 }), "Critical");
 });
+
+test('former hotspot remains public Caution after its incidents expire and can qualify again', () => {
+  const old = Array.from({ length: 5 }, (_, i) => record(`old-${i}`, { sourceKind: 'official', incidentDate: '2022-01-01', severity: 'low' }));
+  const [area] = calculateOfficialAccidentProneAreas(old, { publicOnly: true, referenceDate: REFERENCE_DATE });
+  assert.equal(area.risk_level, 'Caution');
+  assert.equal(area.zone_label, 'Caution Area');
+  assert.equal(area.retained_caution, true);
+  assert.equal(area.unique_incident_count, 0);
+  assert.equal(area.severity_burden, 0);
+  const fresh = Array.from({ length: 5 }, (_, i) => record(`fresh-${i}`, { sourceKind: 'official', severity: 'low' }));
+  const [renewed] = calculateOfficialAccidentProneAreas([...old, ...fresh], { publicOnly: true, referenceDate: REFERENCE_DATE });
+  assert.equal(renewed.risk_level, 'High');
+  assert.equal(renewed.retained_caution, false);
+});
+
+test('expired incidents that never formed a hotspot do not create a public retained area', () => {
+  const old = [record('old-single', { sourceKind: 'official', incidentDate: '2022-01-01' })];
+  assert.deepEqual(calculateOfficialAccidentProneAreas(old, { publicOnly: true, referenceDate: REFERENCE_DATE }), []);
+});
+
+test('a former hotspot becomes Caution when partial expiry leaves two current incidents', () => {
+  const old = Array.from({ length: 3 }, (_, i) => record(`expired-${i}`, { sourceKind: 'official', incidentDate: '2022-12-01', severity: 'low' }));
+  const recent = Array.from({ length: 2 }, (_, i) => record(`remaining-${i}`, { sourceKind: 'official', incidentDate: '2024-01-01', severity: 'low' }));
+  const [area] = calculateOfficialAccidentProneAreas([...old, ...recent], { publicOnly: true, referenceDate: REFERENCE_DATE });
+  assert.equal(area.risk_level, 'Caution');
+  assert.equal(area.unique_incident_count, 2);
+});

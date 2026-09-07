@@ -73,7 +73,7 @@ const COORDINATE_TEXT_PATTERN = /^\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$/;
 
 export const riskStyles = {
   Low: { color: '#16a34a', label: 'Low Risk', publicLabel: 'Road Safety Monitoring Area' },
-  Caution: { color: '#84cc16', label: 'Caution', publicLabel: 'Road Safety Monitoring Area' },
+  Caution: { color: '#eab308', label: 'Caution', publicLabel: 'Caution Area' },
   Moderate: { color: '#eab308', label: 'Moderate Risk', publicLabel: 'Road Safety Monitoring Area' },
   High: { color: '#dc2626', label: 'High Risk', publicLabel: 'Accident-Prone Area' },
   Critical: { color: '#991b1b', label: 'Critical Risk', publicLabel: 'Critical Road Safety Zone' },
@@ -620,10 +620,30 @@ export function calculateAccidentProneAreas(records = [], {
     }, { low: 0, moderate: 0, high: 0, critical: 0, unknown: 0 });
     const severityBurdenScores = severityBurdenForRecords(group.eligibleRecords, analysisWindowEnd);
     const severityBurden = severityBurdenScores.weighted;
-    const recommendedRiskLevel = classifyRecommendedRisk({
+    const currentRiskLevel = classifyRecommendedRisk({
       uniqueIncidentCount,
       severityBurden,
     });
+    // Retain a former hotspot without counting expired incidents in today's score.
+    const historicalRecords = group.records.filter(record => {
+      const date = readIncidentDate(record);
+      return date && date <= analysisWindowEnd;
+    });
+    const wasAccidentProne = sourceMode !== 'scraped' && historicalRecords.some(record => {
+      const end = readIncidentDate(record);
+      const start = new Date(end);
+      start.setMonth(start.getMonth() - 36);
+      const windowRecords = historicalRecords.filter(item => {
+        const date = readIncidentDate(item);
+        return date >= start && date <= end;
+      });
+      return ['High', 'Critical'].includes(classifyRecommendedRisk({
+        uniqueIncidentCount: windowRecords.length,
+        severityBurden: severityBurdenForRecords(windowRecords, end).weighted,
+      }));
+    });
+    const retainedCaution = wasAccidentProne && !['High', 'Critical'].includes(currentRiskLevel);
+    const recommendedRiskLevel = retainedCaution ? 'Caution' : currentRiskLevel;
     const confidence = evidenceConfidence(group.eligibleRecords, group.diagnostics);
     const mostCommonIncidentType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Unspecified';
     const peakTimeKey = Object.entries(timeCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'unspecified';
@@ -637,13 +657,15 @@ export function calculateAccidentProneAreas(records = [], {
       && allPublicVerified
       && (zoneType === ACCIDENT_ZONE_NEWS_CAUTION
         ? uniqueIncidentCount > 0
-        : (riskOrder[recommendedRiskLevel] || 0) >= publicOfficialRiskFloor);
+        : retainedCaution || (riskOrder[recommendedRiskLevel] || 0) >= publicOfficialRiskFloor);
     const areaPrefix = sourceMode === 'official' ? 'APA' : sourceMode === 'scraped' ? 'NCA' : 'APA';
 
     return {
       area_id: `${areaPrefix}-${index + 1}-${group.barangay.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       zone_type: zoneType,
-      zone_label: zoneType === ACCIDENT_ZONE_NEWS_CAUTION ? 'News-Based Caution Area' : 'Accident-Prone Area',
+      zone_label: zoneType === ACCIDENT_ZONE_NEWS_CAUTION ? 'News-Based Caution Area' : retainedCaution ? 'Caution Area' : 'Accident-Prone Area',
+      retained_caution: retainedCaution,
+      was_accident_prone: wasAccidentProne,
       barangay: group.barangay,
       municipality: group.municipality,
       latitude: representativePoint ? representativePoint[0] : count ? group.latSum / count : ECHAGUE_CENTER[0],
