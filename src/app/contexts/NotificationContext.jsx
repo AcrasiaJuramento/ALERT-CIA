@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { NotificationContext } from './notificationContextState';
 import { useAuth } from './AuthContext';
 import { isSupabaseConfigured, markNotificationAsRead, markNotificationsAsRead, listNotifications, supabase } from '../services/supabase';
 import { getDispatchRecord, getDispatchRecordByResponse } from '../services/supabase/dispatchService';
@@ -18,8 +19,6 @@ const DEFAULT_PREFERENCES = {
   dispatchEnabled: true,
   incidentEnabled: true,
 };
-
-const NotificationContext = createContext();
 
 function readJson(key, fallback) {
   try {
