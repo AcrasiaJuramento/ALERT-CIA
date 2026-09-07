@@ -101,12 +101,15 @@ export default function PCRReports() {
   const [totalCount, setTotalCount] = useState(0);
   const [statusCounts, setStatusCounts] = useState({ pendingAdminReview: 0, verified: 0, returnedRejected: 0 });
   const refreshTimer = useRef(null);
+  const loadInFlightRef = useRef(false);
+  const loadQueuedRef = useRef(false);
+  const loadRequestVersionRef = useRef(0);
+  const fetchReportsRef = useRef(null);
   const pageSize = 20;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
   const canReview = user?.role === 'administrator' && can(PERMISSIONS.REVIEW_PCR);
 
-  const loadReports = useCallback(async () => {
-    setLoading(true);
+  const fetchReports = useCallback(async requestVersion => {
     try {
       const connection = getConnectionState();
       let cloudError = null;
@@ -131,42 +134,74 @@ export default function PCRReports() {
         ? await hybridRepository.getLocalPcrReports().catch(() => localDeviceRecords)
         : localDeviceRecords;
       const mergedRecords = mergePCRRecords(reconciledDeviceRecords, cloudRecords);
+      if (requestVersion !== loadRequestVersionRef.current) return;
       setRecords(mergedRecords);
       const cloudKeys = new Set(cloudRecords.map(logicalRecordKey).filter(Boolean));
       const unsyncedLocalCount = mergedRecords.filter(record => record.recordSource !== 'cloud' && !cloudKeys.has(logicalRecordKey(record))).length;
       setTotalCount((cloudRecords.totalCount ?? cloudRecords.length) + unsyncedLocalCount);
       if (connection.cloudOnline) {
         const counts = await getPCRDashboardCounts().catch(() => null);
+        if (requestVersion !== loadRequestVersionRef.current) return;
         if (counts) setStatusCounts(counts);
       }
       if (cloudError && !mergedRecords.length) throw cloudError;
       if (cloudError) toast.error('Cloud PCR records are temporarily unavailable. Showing locally saved records.');
     } catch (error) {
+      if (requestVersion !== loadRequestVersionRef.current) return;
       toast.error(error.message || 'Unable to load Patient Care Records.');
-    } finally {
-      setLoading(false);
     }
   }, [archiveView, page, status]);
 
   useEffect(() => {
+    fetchReportsRef.current = fetchReports;
+  }, [fetchReports]);
+
+  const loadReports = useCallback(async ({ queueIfBusy = true } = {}) => {
+    if (loadInFlightRef.current && !queueIfBusy) return;
+    loadRequestVersionRef.current += 1;
+    if (loadInFlightRef.current) {
+      loadQueuedRef.current = true;
+      return;
+    }
+
+    loadInFlightRef.current = true;
+    setLoading(true);
+    try {
+      do {
+        loadQueuedRef.current = false;
+        const requestVersion = loadRequestVersionRef.current;
+        await fetchReportsRef.current?.(requestVersion);
+      } while (loadQueuedRef.current);
+    } finally {
+      loadInFlightRef.current = false;
+      loadQueuedRef.current = false;
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
     loadReports();
+  }, [archiveView, loadReports, page, status]);
+
+  useEffect(() => {
     let connectionKey = `${getConnectionState().mode}:${getConnectionState().cloudOnline}:${getConnectionState().localOnline}`;
-    const refresh = () => {
+    const refresh = (options = {}) => {
       clearTimeout(refreshTimer.current);
-      refreshTimer.current = window.setTimeout(() => loadReports(), 300);
+      refreshTimer.current = window.setTimeout(() => loadReports(options), 300);
     };
-    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh(); };
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') refresh({ queueIfBusy: false }); };
     const unsubscribeConnection = subscribeConnection(next => {
       const nextKey = `${next.mode}:${next.cloudOnline}:${next.localOnline}`;
       if (nextKey === connectionKey) return;
       connectionKey = nextKey;
       refresh();
     });
-    window.addEventListener('focus', refresh);
+    const refreshOnFocus = () => refresh({ queueIfBusy: false });
+    window.addEventListener('focus', refreshOnFocus);
     document.addEventListener('visibilitychange', refreshWhenVisible);
     const channel = supabase?.channel('web-pcr-records-live').on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refresh).subscribe();
     return () => {
-      window.removeEventListener('focus', refresh);
+      window.removeEventListener('focus', refreshOnFocus);
       document.removeEventListener('visibilitychange', refreshWhenVisible);
       clearTimeout(refreshTimer.current);
       unsubscribeConnection();
