@@ -12,6 +12,7 @@ import { getActiveIncidentCount, supabase } from '../services/supabase';
 import { formatLongDate } from '../utils/dateFormat';
 import ConnectionIndicator from './ConnectionIndicator';
 import HazardWarningMonitor from './HazardWarningMonitor';
+import DispatchAlarm from './DispatchAlarm';
 import { useGeolocation } from '../contexts/GeolocationContext';
 
 function HeaderClock() {
@@ -109,6 +110,7 @@ export default function Layout() {
   return (
     <div className="flex h-screen bg-background overflow-hidden transition-colors duration-300" style={{ fontFamily: 'Inter, sans-serif' }}>
       <HazardWarningMonitor position={geolocation.position} locationStatus={geolocation.status} />
+      {user?.role === 'field_responder' && <DispatchAlarm key={user.id} />}
       {mobileSidebarOpen && <button aria-label="Close sidebar" className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setMobileSidebarOpen(false)} />}
 
       <aside className={`fixed md:relative z-50 h-full shrink-0 bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-300 ${mobileSidebarOpen ? 'translate-x-0 w-64' : '-translate-x-full md:translate-x-0'} ${sidebarOpen ? 'md:w-64' : 'md:w-16'}`}>

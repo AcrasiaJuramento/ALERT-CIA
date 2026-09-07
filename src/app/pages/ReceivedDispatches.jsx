@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { CheckCircle2, FileText, Filter, MapPin, Navigation, Radio, Search } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -140,6 +140,7 @@ function dispatchCoordinates(record = {}) {
 
 export default function ReceivedDispatches() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [records, setRecords] = useState([]);
   const [linkedPCRs, setLinkedPCRs] = useState({});
   const [loading, setLoading] = useState(true);
@@ -240,6 +241,10 @@ export default function ReceivedDispatches() {
   }, [loadRecords]);
 
   useEffect(() => subscribeConnection(setConnection), []);
+
+  useEffect(() => {
+    if (location.state?.acceptedDispatch) loadRecords({ silent: true });
+  }, [location.state, loadRecords]);
 
   useEffect(() => {
     let timer;
