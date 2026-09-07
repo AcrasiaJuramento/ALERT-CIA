@@ -105,6 +105,8 @@ export default function PCRReports() {
   const loadQueuedRef = useRef(false);
   const loadRequestVersionRef = useRef(0);
   const fetchReportsRef = useRef(null);
+  const fullRecordCacheRef = useRef(new Map());
+  const selectedHydrationVersionRef = useRef(0);
   const pageSize = 20;
   const canCreate = can(PERMISSIONS.CREATE_PCR);
   const canReview = user?.role === 'administrator' && can(PERMISSIONS.REVIEW_PCR);
@@ -182,6 +184,38 @@ export default function PCRReports() {
   useEffect(() => {
     loadReports();
   }, [archiveView, loadReports, page, status]);
+
+  const hydrateFullRecord = useCallback(async record => {
+    if (!isCloudBacked(record) || !record?.id) return record;
+    const cached = fullRecordCacheRef.current.get(record.id);
+    if (cached) return mergePreservingExisting(record, cached);
+
+    const fullRecord = await getPCRReport(record.id);
+    const hydrated = mergePreservingExisting(record, fullRecord || {});
+    fullRecordCacheRef.current.set(record.id, hydrated);
+    setRecords(current => current.map(item =>
+      logicalRecordKey(item) === logicalRecordKey(hydrated)
+        ? mergePreservingExisting(item, hydrated)
+        : item
+    ));
+    return hydrated;
+  }, []);
+
+  const openRecord = useCallback(record => {
+    setSelected(record);
+    const hydrationVersion = selectedHydrationVersionRef.current + 1;
+    selectedHydrationVersionRef.current = hydrationVersion;
+    hydrateFullRecord(record)
+      .then(hydrated => {
+        if (selectedHydrationVersionRef.current !== hydrationVersion) return;
+        setSelected(current =>
+          current && logicalRecordKey(current) === logicalRecordKey(record)
+            ? mergePreservingExisting(current, hydrated)
+            : current
+        );
+      })
+      .catch(error => toast.error(error.message || 'Unable to load the full Patient Care Record.'));
+  }, [hydrateFullRecord]);
 
   useEffect(() => {
     let connectionKey = `${getConnectionState().mode}:${getConnectionState().cloudOnline}:${getConnectionState().localOnline}`;
@@ -268,7 +302,9 @@ export default function PCRReports() {
   const doPdf = async record => {
     setExportingRecord(record);
     try {
-      await exportPCRToPdf(record);
+      const hydrated = await hydrateFullRecord(record);
+      setExportingRecord(hydrated);
+      await exportPCRToPdf(hydrated);
       toast.success('Patient Care Report PDF downloaded.');
     } catch {
       toast.error('Unable to generate the PDF. Please try again.');
@@ -361,7 +397,7 @@ export default function PCRReports() {
         {loading ? <div className="text-center py-16 text-sm text-muted-foreground">Loading Patient Care Records...</div> : <>
           <div className="overflow-x-auto"><table className="w-full text-sm">
             <thead className="bg-secondary text-muted-foreground text-xs uppercase"><tr>{['Response No.', 'Patient', 'Incident', 'Location', 'Dispatch', 'Status', 'Updated', 'Actions'].map(item => <th key={item} className="text-left px-4 py-3">{item}</th>)}</tr></thead>
-            <tbody>{visibleRecords.map(record => <tr key={logicalRecordKey(record)} onClick={() => setSelected(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
+            <tbody>{visibleRecords.map(record => <tr key={logicalRecordKey(record)} onClick={() => openRecord(record)} className="cursor-pointer border-t border-border hover:bg-secondary/40">
               <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber}</td>
               <td className="px-4 py-3"><div className="font-semibold">{record.patientName || 'Unnamed patient'}</div><div className="text-xs text-muted-foreground">{record.age && `${record.age} yrs`} {record.gender}</div></td>
               <td className="px-4 py-3">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</td>
@@ -373,7 +409,7 @@ export default function PCRReports() {
               </td>
               <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
               <td className="px-4 py-3"><div className="flex min-w-max items-center gap-2" onClick={event => event.stopPropagation()}>
-                <button onClick={() => setSelected(record)} title="View PCR" aria-label="View PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><Eye size={15} /><span className="hidden xl:inline">View</span></button>
+                <button onClick={() => openRecord(record)} title="View PCR" aria-label="View PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><Eye size={15} /><span className="hidden xl:inline">View</span></button>
                 {canCreate && isEditable(record) && <button onClick={() => edit(record)} title="Edit PCR" aria-label="Edit PCR" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"><Edit3 size={15} /><span className="hidden xl:inline">Edit</span></button>}
                 <button onClick={() => doPdf(record)} title="Download PCR PDF" aria-label="Download PCR PDF" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"><Download size={15} /><span className="hidden xl:inline">PDF</span></button>
                 {isCloudBacked(record) && user?.role === 'dispatcher' && isReverseWorkflowRecord(record) && record.status === 'Pending Dispatcher Review' && <button onClick={() => dispatcherDecision(record, 'accept')} title="Accept PCR" className="p-2 hover:bg-green-500/10 text-green-400 rounded"><CheckCircle2 size={15} /></button>}
