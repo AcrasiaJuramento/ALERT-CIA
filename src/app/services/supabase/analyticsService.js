@@ -125,6 +125,7 @@ function mapPcrReport(row = {}) {
     triage: row.triage || "",
     incidentNature: row.incident_nature || "",
     hospitalName: row.hospital_name || "",
+    transferReason: row.transfer_reason || "",
     endorsedTo: row.endorsed_to || "",
     receivedBy: row.received_by || "",
     emergencyTypes: row.emergency_types || [],

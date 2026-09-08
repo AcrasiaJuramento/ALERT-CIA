@@ -64,7 +64,7 @@ export const createPCR = () => ({
   hospitalDate: "", hospitalTime: "", consentForCare: "", endorsedTo: "", receivedBy: "", endorsementHospital: "",
   endorsementDate: "", endorsementTime: "", transferArrivalTime: "", receiverName: "", receiverPosition: "", receiverContact: "",
   receiverConfirmed: false, departureHospitalGeneratedAt: "", valuables: "", valuablesReceivedBy: "", valuablesContact: "",
-  waiverAccepted: false, waiverReason: "", signatures: { consent: "", patient: "", witness1: "", witness2: "", resident: "", receiver: "" },
+  waiverAccepted: false, waiverReason: "", refusalFacility: "", signatures: { consent: "", patient: "", witness1: "", witness2: "", resident: "", receiver: "" },
   signatureNames: { consent: "", patient: "", witness1: "", witness2: "", resident: "", receiver: "" },
   signatureDates: { patient: "", witness1: "", witness2: "" }, annotation: "", attachments: [], notes: ""
 });

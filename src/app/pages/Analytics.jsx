@@ -2,7 +2,7 @@ import { createInformationalRefresh } from '../utils/informationalRefresh';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, CheckCircle2, Clock, FilePlus2, FileText, HeartPulse, Layers3, MapPinned, ShieldCheck, TrendingDown, TrendingUp,
+  Activity, AlertTriangle, Building2, CheckCircle2, Clock, FilePlus2, FileText, HeartPulse, Layers3, MapPinned, ShieldCheck, TrendingDown, TrendingUp,
   Radio, X,
 } from 'lucide-react';
 import {
@@ -19,6 +19,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
 
 const colors = ['#2563eb', '#dc2626', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#64748b'];
+
+const triageColors = {
+  black: '#111111',
+  red: '#dc2626',
+  yellow: '#eab308',
+  green: '#16a34a',
+  'no triage recorded': '#94a3b8',
+};
 
 const priorityColors = {
   Critical: '#dc2626',
@@ -1015,10 +1023,11 @@ function DispatcherWorkflowCard({ dispatches, onRecords, onCreate }) {
   );
 }
 
-function DistributionCard({ title, subtitle, data, type = 'bar' }) {
+function DistributionCard({ title, subtitle, data, type = 'bar', colorByName }) {
   const hasData = data.some(item => item.count > 0);
   const total = data.reduce((sum, item) => sum + item.count, 0);
   const visibleData = data.slice(0, 8);
+  const colorFor = (item, index) => colorByName?.[String(item.name || '').trim().toLowerCase()] || colors[index % colors.length];
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -1042,7 +1051,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar' }) {
           {type === 'pie' ? (
             <PieChart>
               <Pie data={visibleData} dataKey="count" nameKey="name" innerRadius={55} outerRadius={86} paddingAngle={2}>
-                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colorFor(entry, index)} />)}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
             </PieChart>
@@ -1053,7 +1062,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar' }) {
               <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
               <Bar dataKey="count" name="Count" radius={[4, 4, 0, 0]}>
-                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colorFor(entry, index)} />)}
               </Bar>
             </BarChart>
           )}
@@ -1066,7 +1075,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar' }) {
                 <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colors[index % colors.length] }} />
+                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colorFor(item, index) }} />
               </div>
             </div>
           ))}
@@ -1133,6 +1142,65 @@ function OperationalBreakdownCard({ title, subtitle, groups }) {
           <HorizontalMiniBars key={group.title} title={group.title} data={group.data} accent={group.accent} emptyText={group.emptyText} />
         ))}
       </div>
+    </div>
+  );
+}
+
+function HospitalRefusalCard({ records, stats, onSelectHospital }) {
+  const pageSize = 8;
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(records.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  const pageStart = (safePage - 1) * pageSize;
+  const visibleRecords = records.slice(pageStart, pageStart + pageSize);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm xl:col-span-2">
+      <div className="flex flex-col gap-4 border-b border-border bg-secondary/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-blue-500/20 bg-blue-500/10 text-blue-500"><Building2 className="h-5 w-5" /></div>
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">Treatment / Transport Refusal by Facility</h3>
+            <p className="mt-1 text-xs text-muted-foreground">The same PCR waiver records counted as “Refusal documented” in Clinical Analytics.</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-2.5">
+          <div className="text-2xl font-bold tabular-nums text-foreground">{records.length}</div>
+          <div className="border-l border-border pl-3 text-[10px] font-semibold uppercase leading-4 tracking-wide text-muted-foreground">Recorded<br/>cases</div>
+        </div>
+      </div>
+      {stats.length ? (
+        <>
+          <div className="flex flex-wrap gap-2 border-b border-border px-5 py-4">
+            {stats.map(item => (
+              <button key={item.name} type="button" onClick={() => onSelectHospital?.(item.name)} className="inline-flex items-center gap-2 rounded-md border border-border bg-secondary/40 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:border-blue-500/30 hover:bg-blue-500/10">
+                <span className="max-w-56 truncate">{item.name}</span><span className="grid min-w-5 place-items-center rounded bg-blue-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{item.count}</span>
+              </button>
+            ))}
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[700px] text-xs">
+              <thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><th className="px-5 py-3">Hospital / Facility</th><th className="px-4 py-3">Reason</th><th className="px-4 py-3">Reference</th><th className="px-5 py-3 text-right">Incident date</th></tr></thead>
+              <tbody>{visibleRecords.map(record => (
+                <tr key={record.id || `${record.responseNumber}-${record.transferReason}`} className="border-b border-border/60 last:border-0 hover:bg-secondary/20">
+                  <td className="px-5 py-3 font-semibold text-foreground">{record.hospitalName}</td>
+                  <td className="max-w-md px-4 py-3 text-muted-foreground">{record.transferReason}</td>
+                  <td className="px-4 py-3 font-mono text-[11px] text-muted-foreground">{record.responseNumber || '—'}</td>
+                  <td className="whitespace-nowrap px-5 py-3 text-right text-muted-foreground">{record.date ? new Date(`${record.date}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          <div className="flex flex-col gap-3 border-t border-border bg-secondary/10 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-[11px] text-muted-foreground">Showing <span className="font-semibold text-foreground">{pageStart + 1}–{Math.min(pageStart + pageSize, records.length)}</span> of <span className="font-semibold text-foreground">{records.length}</span> records</div>
+            {pageCount > 1 && <div className="flex items-center gap-1.5">
+              <button type="button" disabled={safePage === 1} onClick={() => setPage(current => Math.max(1, current - 1))} className="rounded-md border border-border bg-card px-3 py-1.5 text-[11px] font-medium text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40">Previous</button>
+              {Array.from({ length: pageCount }, (_, index) => index + 1).map(pageNumber => <button key={pageNumber} type="button" aria-label={`Page ${pageNumber}`} aria-current={pageNumber === safePage ? 'page' : undefined} onClick={() => setPage(pageNumber)} className={`grid h-7 min-w-7 place-items-center rounded-md border px-2 text-[11px] font-semibold ${pageNumber === safePage ? 'border-blue-600 bg-blue-600 text-white' : 'border-border bg-card text-muted-foreground hover:bg-secondary hover:text-foreground'}`}>{pageNumber}</button>)}
+              <button type="button" disabled={safePage === pageCount} onClick={() => setPage(current => Math.min(pageCount, current + 1))} className="rounded-md border border-border bg-card px-3 py-1.5 text-[11px] font-medium text-foreground hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-40">Next</button>
+            </div>}
+          </div>
+        </>
+      ) : <div className="flex flex-col items-center px-5 py-12 text-center"><Building2 className="mb-3 h-8 w-8 text-muted-foreground/50"/><div className="text-sm font-medium text-foreground">No refusal records for this period</div><div className="mt-1 text-xs text-muted-foreground">No treatment or transport refusal waiver was documented.</div></div>}
     </div>
   );
 }
@@ -1516,6 +1584,10 @@ function AnalyticsDetail() {
     'type',
   ), [filteredPcrReports]);
   const hospitalStats = useMemo(() => summarizeBy(filteredPcrReports, 'receivingFacility'), [filteredPcrReports]);
+  const hospitalRefusalRecords = useMemo(() => filteredPcrReports
+    .filter(report => String(report.hospitalName || '').trim() && String(report.transferReason || '').trim())
+    .sort((first, second) => String(second.date || second.updatedAt || '').localeCompare(String(first.date || first.updatedAt || ''))), [filteredPcrReports]);
+  const hospitalRefusalStats = useMemo(() => summarizeBy(hospitalRefusalRecords, report => report.hospitalName.trim()), [hospitalRefusalRecords]);
   const teamStats = useMemo(() => summarizeBy(filteredDispatches, dispatch => dispatch.team || dispatch.respondingTeam || 'Unassigned'), [filteredDispatches]);
   const pcrByResponse = useMemo(() => new Map(
     filteredPcrReports
@@ -1779,6 +1851,17 @@ function AnalyticsDetail() {
           <PerformanceTable rows={performanceRows} />
         </div>
         <TeamRunAnalyticsCard rows={teamPerformanceRows} familyRows={teamFamilyRows} />
+        {isFullAnalytics && <div className="mt-5 grid gap-5 xl:grid-cols-2">
+          <HospitalRefusalCard
+            records={hospitalRefusalRecords}
+            stats={hospitalRefusalStats}
+            onSelectHospital={hospitalName => setDrilldown({
+              title: `${hospitalName} Refusal / Not-Admitting Records`,
+              subtitle: 'Verified PCR records containing a reason for transfer or not admitting.',
+              records: hospitalRefusalRecords.filter(report => report.hospitalName.trim() === hospitalName),
+            })}
+          />
+        </div>}
       </section>
       )}
 
@@ -1801,7 +1884,7 @@ function AnalyticsDetail() {
         <div className="grid gap-5 xl:grid-cols-2">
           <DistributionCard title="PCR Status Mix" subtitle="Submitted, verified, completed, and in-progress reports" data={pcrStatusStats} type="pie" />
           <DistributionCard title="Incident Category Comparison" subtitle="Classification of filtered official incident records" data={categoryComparison} />
-          <DistributionCard title="PCR Triage Distribution" subtitle="Clinical triage levels recorded in patient care reports" data={pcrTriageStats} />
+          <DistributionCard title="PCR Triage Distribution" subtitle="Clinical triage levels recorded in patient care reports" data={pcrTriageStats} colorByName={triageColors} />
           <DistributionCard title="Receiving Facility Load" subtitle="Hospital or receiving facility recorded in PCR reports" data={hospitalStats} />
           <div className="xl:col-span-2">
             <OperationalBreakdownCard
@@ -1872,6 +1955,8 @@ export default function Analytics() {
   const timing = data?.responseTimes || {};
   const teamRows = group('teamPerformance').map(row => ({ ...row, ...parseTeamRun(row.name) }));
   const familyRows = teamFamilies.map(family => ({ family, dispatches: teamRows.filter(row => row.family === family).reduce((n,row) => n+row.dispatches,0) }));
+  const aggregatedHospitalRefusalRecords = group('hospitalRefusalRecords');
+  const aggregatedHospitalRefusalStats = summarizeBy(aggregatedHospitalRefusalRecords, record => record.hospitalName);
   return <div className="space-y-5 p-5">
     <div><h1 className="text-xl font-bold">{header.title}</h1><p className="text-sm text-muted-foreground">{header.description}</p></div>
     <div className="flex flex-wrap gap-2">
@@ -1894,9 +1979,10 @@ export default function Analytics() {
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[['Caller to Dispatcher','callerDispatcher'],['Dispatcher to Field Officer','dispatcherOfficer'],['Acceptance to Scene','acceptanceScene'],['Scene to Hospital','sceneHospital'],['Whole Response','total']].map(([label,key])=><MetricCard key={key} label={label} value={formatMinutes(timing[key])} helper={`${timing.samples?.[key] || 0} measured responses`} icon={Clock}/>)}</div>
           <div className="grid gap-5 lg:grid-cols-2"><ReportChartCard title="Monthly Workload Trend" data={group('monthly')} kind="line"/><DistributionCard title="Dispatch Status Mix" data={group('dispatchStatus')} type="pie"/></div>
           <PerformanceTable rows={group('performance')}/><TeamRunAnalyticsCard rows={teamRows} familyRows={familyRows}/>
+          {user?.role === ROLES.ADMINISTRATOR && <HospitalRefusalCard records={aggregatedHospitalRefusalRecords} stats={aggregatedHospitalRefusalStats}/>}
         </>}
         {tab==='mvc' && <><MvcCompletionCard rows={group('mvcCompletion')}/><div className="grid gap-5 lg:grid-cols-2">{[['Role','role'],['Alcohol Breath','alcohol'],['Helmet','helmet'],["Driver's License",'license']].map(([title,key])=><DistributionCard key={key} title={title} data={data.mvc?.[key] || []} type="pie"/>)}</div></>}
-        {tab==='pcr' && <div className="grid gap-5 lg:grid-cols-2">{[['PCR Status','pcrStatus'],['Incident Category','byType'],['Triage','triage'],['Receiving Facility','hospitals'],['Emergency Types','emergencyTypes'],['Trauma Types','traumaTypes'],['Responding Teams','teams'],['Treatment / Transport Refusal','hospitalRefusal']].map(([title,key])=><DistributionCard key={key} title={title} data={group(key)}/>)}</div>}
+        {tab==='pcr' && <div className="grid gap-5 lg:grid-cols-2">{[['PCR Status','pcrStatus'],['Incident Category','byType'],['Triage','triage'],['Receiving Facility','hospitals'],['Emergency Types','emergencyTypes'],['Trauma Types','traumaTypes'],['Responding Teams','teams'],['Treatment / Transport Refusal','hospitalRefusal']].map(([title,key])=><DistributionCard key={key} title={title} data={group(key)} colorByName={key === 'triage' ? triageColors : undefined}/>)}</div>}
       </>}
     </>}
   </div>;

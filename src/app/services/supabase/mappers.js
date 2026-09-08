@@ -180,7 +180,7 @@ const PCR_EXTENDED_FIELDS = [
   "endorsementHospital", "endorsementDate", "endorsementTime", "transferArrivalTime",
   "receiverName", "receiverPosition", "receiverContact", "receiverConfirmed",
   "departureHospitalGeneratedAt", "valuables", "valuablesReceivedBy", "valuablesContact",
-  "waiverAccepted", "waiverReason", "signatures", "signatureNames", "signatureDates",
+  "waiverAccepted", "waiverReason", "refusalFacility", "signatures", "signatureNames", "signatureDates",
   "annotation", "attachments",
 ];
 
