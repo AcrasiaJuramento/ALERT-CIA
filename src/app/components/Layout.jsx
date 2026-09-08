@@ -81,6 +81,7 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const location = useLocation();
@@ -103,8 +104,21 @@ export default function Layout() {
 
   const openPCRNotification = notification => {
     markAsRead(notification.id);
-    navigate(can(PERMISSIONS.REVIEW_PCR) ? '/admin/pcr-verification' : '/admin/pcr');
     setNotifOpen(false);
+    setSelectedNotification({ ...notification, read: true });
+  };
+
+  const viewNotification = notification => {
+    setSelectedNotification(null);
+    if (notification.pcrId) {
+      navigate(`/admin/pcr/new?edit=${notification.pcrId}`);
+    } else if (notification.dispatchId) {
+      navigate(user.role === 'field_responder' ? '/admin/dispatch/received' : `/admin/dispatch/new?edit=${notification.dispatchId}`);
+    } else if (notification.responseId) {
+      navigate(user.role === 'field_responder' ? '/admin/dispatch/received' : '/admin/dispatch');
+    } else {
+      navigate(can(PERMISSIONS.REVIEW_PCR) ? '/admin/pcr-verification' : '/admin/pcr');
+    }
   };
 
   return (
@@ -207,6 +221,23 @@ export default function Layout() {
               </div>
             )}
           </div>
+
+          {selectedNotification && (
+            <div className="fixed inset-0 z-[2300] grid place-items-center bg-black/60 p-4" onMouseDown={event => event.target === event.currentTarget && setSelectedNotification(null)}>
+              <div role="dialog" aria-modal="true" aria-labelledby="notification-details-title" className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-blue-400">Notification details</div>
+                  <button onClick={() => setSelectedNotification(null)} className="grid h-8 w-8 place-items-center rounded-md text-muted-foreground hover:bg-secondary" aria-label="Close notification details"><X className="h-4 w-4" /></button>
+                </div>
+                <h2 id="notification-details-title" className="mt-4 text-base font-bold text-foreground">{selectedNotification.title}</h2>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{selectedNotification.message}</p>
+                {selectedNotification.timestamp && <div className="mt-3 text-[11px] text-muted-foreground">{new Date(selectedNotification.timestamp).toLocaleString('en-PH')}</div>}
+                {(selectedNotification.pcrId || selectedNotification.dispatchId || selectedNotification.responseId) && (
+                  <button onClick={() => viewNotification(selectedNotification)} className="mt-5 w-full rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500">View notification</button>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="relative">
             <button onClick={() => { setUserMenuOpen(!userMenuOpen); setNotifOpen(false); }} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-secondary"><div className="w-8 h-8 bg-blue-600 rounded-full grid place-items-center text-xs font-bold text-white">{user.name.split(' ').map(part => part[0]).slice(0, 2).join('')}</div><div className="hidden md:block text-left"><div className="text-xs font-semibold text-foreground">{user.name}</div><div className="text-[10px] text-muted-foreground">{roleLabel}</div></div><ChevronDown className="w-3 h-3 text-muted-foreground" /></button>
