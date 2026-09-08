@@ -133,6 +133,11 @@ export async function listProfiles() {
   "Unable to load users.");
 }
 
+export async function listFieldOfficerContacts() {
+  return runSupabaseRequest(client => client.rpc('dispatcher_field_officer_contacts'),
+    'Unable to load Field Officer contacts.');
+}
+
 export async function getProfile(profileId) {
   return runSupabaseRequest(client =>
     client

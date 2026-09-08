@@ -11,7 +11,7 @@ import {
   DISPATCH_STATUSES,
   generateResponseNumber,
 } from "../utils/dispatchWorkflow";
-import { createDispatchFromPCR, getDispatchRecord, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listRespondingTeams } from "../services/supabase";
+import { createDispatchFromPCR, getDispatchRecord, getPCRReport, getPCRReportByResponse, listAmbulanceUnits, listCrewMembers, listFieldOfficerContacts, listRespondingTeams } from "../services/supabase";
 import { isValidIncidentCoordinate } from "../services/supabase/mappers";
 import IncidentLocationPicker from "../components/IncidentLocationPicker";
 import SyncStatusPanel from "../components/SyncStatusPanel";
@@ -620,6 +620,7 @@ export default function DispatchModule({ onBack }) {
   const [teamOptions, setTeamOptions] = useState([]);
   const [vehicleOptions, setVehicleOptions] = useState([]);
   const [crewOptions, setCrewOptions] = useState([]);
+  const [fieldOfficerContacts, setFieldOfficerContacts] = useState([]);
 
   useEffect(() => {
     const dispatcher = userDisplayName(user);
@@ -638,13 +639,15 @@ export default function DispatchModule({ onBack }) {
       listRespondingTeams(),
       listAmbulanceUnits(),
       listCrewMembers(),
+      listFieldOfficerContacts(),
     ])
-      .then(([teamsResult, vehiclesResult, crewResult]) => {
+      .then(([teamsResult, vehiclesResult, crewResult, contactsResult]) => {
         if (!mounted) return;
         setTeamOptions(teamsResult.status === "fulfilled" ? teamsResult.value : []);
         setVehicleOptions(vehiclesResult.status === "fulfilled" ? vehiclesResult.value : []);
         setCrewOptions(crewResult.status === "fulfilled" ? crewResult.value : []);
-        const failed = [teamsResult, vehiclesResult, crewResult].find(result => result.status === "rejected");
+        setFieldOfficerContacts(contactsResult.status === "fulfilled" ? contactsResult.value : []);
+        const failed = [teamsResult, vehiclesResult, crewResult, contactsResult].find(result => result.status === "rejected");
         if (failed) {
           toast.error(failed.reason?.message || "Unable to load some form reference data.");
         }
@@ -737,6 +740,12 @@ export default function DispatchModule({ onBack }) {
     return options;
   }, [form.vehicle, form.vehicleId, vehicleOptions]);
   const selectedTeamId = form.respondingTeamId || effectiveTeamOptions.find(team => team.name === form.team)?.id || "";
+  const selectedTeamName = effectiveTeamOptions.find(team => team.id === selectedTeamId)?.name || form.team || "";
+  const selectedFieldOfficer = fieldOfficerContacts.find(contact => contact.team_name === selectedTeamName);
+  const selectedOfficerPhone = String(selectedFieldOfficer?.contact_number || "").trim();
+  const callableOfficerPhone = selectedOfficerPhone
+    ? `${selectedOfficerPhone.startsWith('+') ? '+' : ''}${selectedOfficerPhone.replace(/\D/g, '')}`
+    : "";
   const selectedVehicleId = form.vehicleId || effectiveVehicleOptions.find(unit => unit.call_sign === form.vehicle)?.id || "";
   useEffect(() => {
     if (!selectedTeamId || !crewOptions.length) return;
@@ -1204,6 +1213,11 @@ export default function DispatchModule({ onBack }) {
 
       <div className="sticky bottom-0 z-30 -mx-4 mt-5 border-t border-border bg-background/95 px-4 py-3 backdrop-blur md:-mx-6 md:px-6">
         <div className="mx-auto flex max-w-7xl flex-wrap justify-end gap-2">
+          {callableOfficerPhone ? <a href={`tel:${callableOfficerPhone}`} title={`Call ${selectedFieldOfficer.display_name}`} className="flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm font-semibold text-emerald-500 hover:bg-emerald-500/20">
+            <Phone size={15} /> Call {selectedFieldOfficer.display_name || 'Field Officer'}
+          </a> : <button type="button" disabled title={selectedTeamName ? 'No saved Field Officer contact number for this team' : 'Select a responding team first'} className="flex cursor-not-allowed items-center gap-2 rounded-lg border border-border bg-secondary/50 px-4 py-2 text-sm text-muted-foreground opacity-60">
+            <Phone size={15} /> Call Field Officer
+          </button>}
           <button onClick={handleSave} className="flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm hover:bg-secondary/80">
             <Save size={15} /> Save Draft
           </button>

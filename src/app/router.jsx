@@ -24,6 +24,7 @@ import UserManagement from './pages/UserManagement'
 import AuditLogs from './pages/AuditLogs'
 import ProfileManagement from './pages/ProfileManagement'
 import SystemSettings from './pages/SystemSettings'
+import FieldOfficerContacts from './pages/FieldOfficerContacts'
 import PublicDashboard from './pages/public/PublicDashboard'
 import PublicIncidentList from './pages/public/PublicIncidentList'
 import PublicMap from './pages/public/PublicMap'
@@ -63,6 +64,7 @@ export const router = createBrowserRouter([
       { path: 'settings', element: protect(PERMISSIONS.VIEW_SETTINGS, <SystemSettings />) },
       { path: 'access-denied', element: <AccessDenied /> },
       { path: 'dispatch', element: protect(PERMISSIONS.VIEW_DISPATCH, <DispatchRecords />) },
+      { path: 'contacts', element: protect(PERMISSIONS.VIEW_FIELD_OFFICER_CONTACTS, <FieldOfficerContacts />) },
       { path: 'dispatch/new', element: protect(PERMISSIONS.CREATE_DISPATCH, <DispatchModule />) },
       { path: 'dispatch/received', element: protect(PERMISSIONS.VIEW_RECEIVED_DISPATCHES, <ReceivedDispatches />) },
       { path: 'dispatch/navigation', element: protect(PERMISSIONS.VIEW_RECEIVED_DISPATCHES, <DispatchNavigation />) },
