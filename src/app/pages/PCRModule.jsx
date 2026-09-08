@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Activity, ArrowLeft, ArrowRight, Camera, CheckCircle2, ClipboardList, Download, FileText, Maximize2, MapPin, Minus, Plus, RotateCcw, Save, Shield, Trash2, User, X } from "lucide-react";
@@ -43,7 +43,7 @@ const timelineLabels = [
 ];
 
 function Field({ label, children, wide = false }) { return <label className={wide ? "md:col-span-2" : ""}><span className="block text-xs font-medium text-muted-foreground mb-1">{label}</span>{children}</label>; }
-function Section({ title, children }) { return <section className="border border-border rounded-xl overflow-hidden"><h3 className="px-4 py-2.5 bg-secondary text-sm font-bold text-foreground uppercase tracking-wide">{title}</h3><div className="p-4">{children}</div></section>; }
+function Section({ title, children }) { return <section className="relative overflow-visible rounded-xl border border-border"><h3 className="rounded-t-[inherit] px-4 py-2.5 bg-secondary text-sm font-bold text-foreground uppercase tracking-wide">{title}</h3><div className="p-4">{children}</div></section>; }
 function TimelineSummary({ timeline }) {
   return <div className="grid md:grid-cols-5 gap-2">{timelineLabels.map(([label, key]) => <div className="rounded-lg border border-border bg-secondary/40 p-3" key={key}><div className="text-[10px] uppercase text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold text-foreground">{key === "dateOfIncident" ? formatLongDate(timeline[key], "Pending") : timeline[key] || "Pending"}</div></div>)}</div>;
 }
@@ -53,8 +53,33 @@ function CheckGroup({ options, value = [], onChange, columns = 3 }) {
   return <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${minWidth}, 1fr))` }}>{options.map(option => <label key={option} className="flex gap-2 items-start min-w-0 text-xs leading-snug text-foreground p-2 rounded-lg border border-border bg-secondary/30"><input type="checkbox" checked={value.includes(option)} onChange={() => toggle(option)} className="accent-blue-600 shrink-0 mt-0.5" /><span className="min-w-0 whitespace-normal break-words">{option}</span></label>)}</div>;
 }
 function RadioButtons({ options, value, onChange }) { return <div className="flex flex-wrap gap-2">{options.map(option => <button type="button" key={option} onClick={() => onChange(option)} className={`px-3 py-2 rounded-lg border text-xs font-semibold ${value === option ? "bg-blue-600 border-blue-600 text-white" : "border-border text-muted-foreground"}`}>{option}</button>)}</div>; }
+function SearchableSelect({ value, options = [], onChange, placeholder = "Select" }) {
+  const [query, setQuery] = useState("");
+  const detailsRef = useRef(null);
+  const selected = options.find(option => option.value === value);
+  const filtered = options.filter(option => `${option.label} ${option.value}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const choose = nextValue => {
+    onChange(nextValue);
+    setQuery("");
+    detailsRef.current?.removeAttribute("open");
+  };
+  return <details ref={detailsRef} className="group relative">
+    <summary className={`${input} flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden`}>
+      <span className={`truncate ${selected || value ? "" : "text-muted-foreground"}`}>{selected?.label || value || placeholder}</span>
+      <span aria-hidden className="text-muted-foreground transition-transform group-open:rotate-180">⌄</span>
+    </summary>
+    <div className="absolute z-[80] mt-1 w-full min-w-56 overflow-hidden rounded-lg border border-blue-500 bg-card shadow-2xl">
+      <div className="border-b border-border p-2"><input autoFocus className={input} type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder={`Search ${placeholder.toLowerCase()}…`} aria-label={`Search ${placeholder}`} /></div>
+      <div className="max-h-60 overflow-y-auto p-1">
+        <button type="button" onClick={() => choose("")} className={`block w-full rounded-md px-3 py-2 text-left text-sm ${!value ? "bg-blue-600 text-white" : "hover:bg-secondary"}`}>{placeholder}</button>
+        {filtered.map(option => <button type="button" key={option.value} onClick={() => choose(option.value)} className={`block w-full rounded-md px-3 py-2 text-left text-sm ${value === option.value ? "bg-blue-600 text-white" : "hover:bg-secondary"}`}>{option.label}</button>)}
+        {!filtered.length && <p className="px-3 py-4 text-center text-xs text-muted-foreground">No matching options</p>}
+      </div>
+    </div>
+  </details>;
+}
 function SelectField({ label, value, options, onChange, placeholder = "Select" }) {
-  return <Field label={label}><select className={input} value={value || ""} onChange={event => onChange(event.target.value)}><option value="">{placeholder}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></Field>;
+  return <Field label={label}><SearchableSelect value={value || ""} options={options} onChange={onChange} placeholder={placeholder}/></Field>;
 }
 function OfflineSelectField({ label, value, options, onChange, placeholder, manualValue, onManualChange, manualPlaceholder, manualExample, allowManual = true }) {
   const [manualSelected, setManualSelected] = useState(false);
@@ -70,7 +95,7 @@ function OfflineSelectField({ label, value, options, onChange, placeholder, manu
     onManualChange("");
     onChange(nextValue);
   };
-  return <Field label={label}><div className="space-y-1.5"><select className={input} value={showManual ? OTHERS_OPTION_VALUE : value || ""} onChange={event => handleChange(event.target.value)}><option value="">{placeholder || "Select"}</option>{options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}<option value={OTHERS_OPTION_VALUE}>Others</option></select>{showManual && <input className={`${input} text-xs`} value={manualValue || ""} onChange={event => onManualChange(event.target.value)} placeholder={manualPlaceholder || `Enter ${label.toLowerCase()}`} required />}{showManual && manualExample ? <p className="px-1 text-[10px] text-muted-foreground">Example format: {manualExample}</p> : null}</div></Field>;
+  return <Field label={label}><div className="space-y-1.5"><SearchableSelect value={showManual ? OTHERS_OPTION_VALUE : value || ""} options={[...options, { value: OTHERS_OPTION_VALUE, label: "Others" }]} onChange={handleChange} placeholder={placeholder || "Select"}/>{showManual && <input className={`${input} text-xs`} value={manualValue || ""} onChange={event => onManualChange(event.target.value)} placeholder={manualPlaceholder || `Enter ${label.toLowerCase()}`} required />}{showManual && manualExample ? <p className="px-1 text-[10px] text-muted-foreground">Example format: {manualExample}</p> : null}</div></Field>;
 }
 function readPcrReferenceCache() {
   try {
