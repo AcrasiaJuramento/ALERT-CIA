@@ -1205,6 +1205,142 @@ function HospitalRefusalCard({ records, stats, onSelectHospital }) {
   );
 }
 
+function ComparativeAnalysis({ data }) {
+  const monthOptions = (data?.monthly || []).flatMap(row => [
+    {
+      value: `${row.month} ${data?.currentYear?.label}`,
+      label: `${row.month} ${data?.currentYear?.label}`,
+      period: { label: `${row.month} ${data?.currentYear?.label}`, total: row.currentTotal, incidents: row.currentIncidents, dispatches: row.currentDispatches, pcr: row.currentPcr },
+    },
+    {
+      value: `${row.month} ${data?.previousYear?.label}`,
+      label: `${row.month} ${data?.previousYear?.label}`,
+      period: { label: `${row.month} ${data?.previousYear?.label}`, total: row.previousTotal, incidents: row.previousIncidents, dispatches: row.previousDispatches, pcr: row.previousPcr },
+    },
+  ]);
+  const [firstMonth, setFirstMonth] = useState(data?.currentMonth?.label || monthOptions[0]?.value || '');
+  const [secondMonth, setSecondMonth] = useState(data?.previousMonth?.label || monthOptions[1]?.value || '');
+  const [firstYear, setFirstYear] = useState(data?.currentYear?.label || '');
+  const [secondYear, setSecondYear] = useState(data?.previousYear?.label || '');
+  const firstMonthValue = firstMonth || data?.currentMonth?.label || monthOptions[0]?.value || '';
+  const secondMonthValue = secondMonth || data?.previousMonth?.label || monthOptions[1]?.value || '';
+  const firstYearValue = firstYear || data?.currentYear?.label || '';
+  const secondYearValue = secondYear || data?.previousYear?.label || '';
+  const selectedFirstMonth = monthOptions.find(option => option.value === firstMonthValue)?.period || data?.currentMonth;
+  const selectedSecondMonth = monthOptions.find(option => option.value === secondMonthValue)?.period || data?.previousMonth;
+  const yearOptions = [data?.currentYear, data?.previousYear].filter(Boolean);
+  const selectedFirstYear = yearOptions.find(period => period.label === firstYearValue) || data?.currentYear;
+  const selectedSecondYear = yearOptions.find(period => period.label === secondYearValue) || data?.previousYear;
+  const valuesForYear = (row, year) => year === data?.currentYear?.label
+    ? { total: row.currentTotal, incidents: row.currentIncidents, dispatches: row.currentDispatches, pcr: row.currentPcr }
+    : { total: row.previousTotal, incidents: row.previousIncidents, dispatches: row.previousDispatches, pcr: row.previousPcr };
+  if (!data) return null;
+  const change = (current, previous) => previous > 0
+    ? ((current - previous) / previous) * 100
+    : current > 0 ? 100 : 0;
+  const comparisonCards = [
+    { title: 'Current Month', period: data.currentMonth, comparison: data.previousMonth, helper: 'vs previous month' },
+    { title: 'Previous Month', period: data.previousMonth },
+    { title: 'Current Year', period: data.currentYear, comparison: data.previousYear, helper: 'vs previous year' },
+    { title: 'Previous Year', period: data.previousYear },
+  ];
+  const monthlyComparison = [
+    ['Total Activity', 'total'],
+    ['Incidents', 'incidents'],
+    ['Dispatches', 'dispatches'],
+    ['PCR Reports', 'pcr'],
+  ];
+  return <section className="rounded-xl border border-border bg-card shadow-sm">
+    <div className="flex flex-col gap-2 border-b border-border bg-secondary/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h2 className="text-sm font-bold text-foreground">Comparative Analysis</h2>
+        <p className="mt-1 text-xs text-muted-foreground">Monthly and annual operational activity compared with previous periods.</p>
+      </div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Incidents + Dispatches + PCR</div>
+    </div>
+    <div className="grid gap-3 border-b border-border p-5 md:grid-cols-2 xl:grid-cols-4">
+      {comparisonCards.map(({ title, period, comparison, helper }) => {
+        const percent = change(period?.total || 0, comparison?.total || 0);
+        const rising = percent >= 0;
+        return <div key={title} className="min-w-0 rounded-lg border border-border bg-secondary/20 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
+              <div className="mt-1 text-2xl font-bold tabular-nums text-foreground">{period?.total || 0}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{period?.label}</div>
+            </div>
+            {comparison && <div className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold ${rising ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+              {rising ? <TrendingUp className="h-3.5 w-3.5"/> : <TrendingDown className="h-3.5 w-3.5"/>}
+              {Math.abs(percent).toFixed(1)}%
+            </div>}
+          </div>
+          <div className="mt-4 grid min-w-0 grid-cols-3 gap-1.5 text-center">
+            {[
+              ['Incidents', period?.incidents],
+              ['Dispatches', period?.dispatches],
+              ['PCR', period?.pcr],
+            ].map(([label, value]) => <div key={label} className="min-w-0 rounded-md border border-border bg-card px-1 py-2">
+              <div className="font-bold text-foreground">{value || 0}</div>
+              <div className="mt-0.5 whitespace-nowrap text-[7px] font-medium uppercase leading-tight tracking-tighter text-muted-foreground sm:text-[8px]">{label}</div>
+            </div>)}
+          </div>
+          <div className="mt-3 text-[10px] text-muted-foreground">
+            {comparison ? `${comparison.total || 0} in ${comparison.label} · ${helper}` : 'Comparison baseline'}
+          </div>
+        </div>;
+      })}
+    </div>
+    <div className="border-b border-border">
+      <div className="flex flex-col gap-3 border-b border-border bg-secondary/10 px-5 py-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h3 className="text-xs font-bold text-foreground">Month vs Month</h3>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">Select any two available months to compare.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">First month<select aria-label="First comparison month" value={firstMonthValue} onChange={event => setFirstMonth(event.target.value)} className="mt-1 block min-w-32 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{monthOptions.map(option => <option key={`first-${option.value}`} value={option.value}>{option.label}</option>)}</select></label>
+          <span className="pb-2 text-xs font-bold text-muted-foreground">vs</span>
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Second month<select aria-label="Second comparison month" value={secondMonthValue} onChange={event => setSecondMonth(event.target.value)} className="mt-1 block min-w-32 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{monthOptions.map(option => <option key={`second-${option.value}`} value={option.value}>{option.label}</option>)}</select></label>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[620px] text-xs">
+          <thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><th className="px-5 py-3">Activity</th><th className="px-4 py-3 text-right">{selectedFirstMonth?.label || 'First Month'}</th><th className="px-4 py-3 text-right">{selectedSecondMonth?.label || 'Second Month'}</th><th className="px-5 py-3 text-right">Change</th></tr></thead>
+          <tbody>{monthlyComparison.map(([label, key]) => {
+            const currentValue = selectedFirstMonth?.[key] || 0;
+            const previousValue = selectedSecondMonth?.[key] || 0;
+            const percent = change(currentValue, previousValue);
+            return <tr key={key} className="border-b border-border/60 last:border-0 hover:bg-secondary/20"><td className="px-5 py-3 font-semibold text-foreground">{label}</td><td className="px-4 py-3 text-right font-semibold text-foreground">{currentValue}</td><td className="px-4 py-3 text-right text-muted-foreground">{previousValue}</td><td className={`px-5 py-3 text-right font-semibold ${percent >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{percent >= 0 ? '+' : ''}{percent.toFixed(1)}%</td></tr>;
+          })}</tbody>
+        </table>
+      </div>
+    </div>
+    <div>
+      <div className="flex flex-col gap-3 border-b border-border bg-secondary/10 px-5 py-3 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <h3 className="text-xs font-bold text-foreground">Year vs Year</h3>
+          <p className="mt-0.5 text-[10px] text-muted-foreground">Select any two available years to compare by month.</p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">First year<select aria-label="First comparison year" value={firstYearValue} onChange={event => setFirstYear(event.target.value)} className="mt-1 block min-w-28 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{yearOptions.map(period => <option key={`first-${period.label}`} value={period.label}>{period.label}</option>)}</select></label>
+          <span className="pb-2 text-xs font-bold text-muted-foreground">vs</span>
+          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Second year<select aria-label="Second comparison year" value={secondYearValue} onChange={event => setSecondYear(event.target.value)} className="mt-1 block min-w-28 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{yearOptions.map(period => <option key={`second-${period.label}`} value={period.label}>{period.label}</option>)}</select></label>
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-xs">
+        <thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><th className="px-5 py-3">Month</th><th className="px-4 py-3 text-right">{selectedFirstYear?.label}</th><th className="px-4 py-3 text-right">{selectedSecondYear?.label}</th><th className="px-4 py-3 text-right">Change</th><th className="px-4 py-3 text-right">Incidents</th><th className="px-4 py-3 text-right">Dispatches</th><th className="px-5 py-3 text-right">PCR</th></tr></thead>
+        <tbody>{(data.monthly || []).map(row => {
+          const firstValues = valuesForYear(row, selectedFirstYear?.label);
+          const secondValues = valuesForYear(row, selectedSecondYear?.label);
+          const percent = change(firstValues.total, secondValues.total);
+          return <tr key={row.month} className="border-b border-border/60 last:border-0 hover:bg-secondary/20"><td className="px-5 py-3 font-semibold text-foreground">{row.month}</td><td className="px-4 py-3 text-right font-semibold text-foreground">{firstValues.total}</td><td className="px-4 py-3 text-right text-muted-foreground">{secondValues.total}</td><td className={`px-4 py-3 text-right font-semibold ${percent >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{percent >= 0 ? '+' : ''}{percent.toFixed(1)}%</td><td className="px-4 py-3 text-right text-muted-foreground">{firstValues.incidents}</td><td className="px-4 py-3 text-right text-muted-foreground">{firstValues.dispatches}</td><td className="px-5 py-3 text-right text-muted-foreground">{firstValues.pcr}</td></tr>;
+        })}</tbody>
+      </table>
+      </div>
+    </div>
+  </section>;
+}
+
 function PerformanceTable({ rows }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -1974,6 +2110,7 @@ export default function Analytics() {
         {tab==='overview' && <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Incidents',totals.incidents],['Dispatches',totals.dispatches],['PCR Reports',totals.pcr],['MVC Incidents',totals.mvc]].map(([label,value])=><MetricCard key={label} label={label} value={value} icon={Activity} helper="Selected period" />)}</div>
           <div className="grid gap-5 lg:grid-cols-2"><ReportChartCard title="Incident Trends" subtitle="Selected date range" data={group('monthly')} kind="line"/><DistributionCard title="Incident Types" data={group('byType')}/><DistributionCard title="Barangays" data={group('byBarangay')}/><DistributionCard title="Severity" data={group('severity')} type="pie"/></div>
+          <ComparativeAnalysis data={data.comparative}/>
         </>}
         {tab==='operations' && <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[['Caller to Dispatcher','callerDispatcher'],['Dispatcher to Field Officer','dispatcherOfficer'],['Acceptance to Scene','acceptanceScene'],['Scene to Hospital','sceneHospital'],['Whole Response','total']].map(([label,key])=><MetricCard key={key} label={label} value={formatMinutes(timing[key])} helper={`${timing.samples?.[key] || 0} measured responses`} icon={Clock}/>)}</div>
