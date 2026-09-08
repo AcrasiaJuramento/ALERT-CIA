@@ -1,4 +1,3 @@
-import { createInformationalRefresh } from '../utils/informationalRefresh';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,20 +12,12 @@ import {
   filterIncidentsByRange, filterOptions, formatBarangayAnalyticsLabel, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
 import { ECHAGUE_BARANGAYS, matchBarangayName } from '../data/gisConfig';
-import { getAnalyticsSummary, clearSupabaseRequestCache, supabase, getStaffAllRecordsAnalytics, listDispatchRecords, listPCRAnalyticsReports, listReceivedDispatchRecords } from '../services/supabase';
+import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRAnalyticsReports, listPCRReports, listReceivedDispatchRecords } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
 
 const colors = ['#2563eb', '#dc2626', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#64748b'];
-
-const triageColors = {
-  black: '#111111',
-  red: '#dc2626',
-  yellow: '#eab308',
-  green: '#16a34a',
-  'no triage recorded': '#94a3b8',
-};
 
 const priorityColors = {
   Critical: '#dc2626',
@@ -37,7 +28,10 @@ const priorityColors = {
 
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
+const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
 const submittedStatuses = new Set(['Submitted', 'Verified', 'Completed']);
+const analyticsPageSize = 1000;
+const analyticsRpcMissingCodes = new Set(['PGRST202', '42883']);
 const verifiedRecordStatuses = new Set(['verified', 'completed', 'admin_verified', 'approved']);
 const verifiedDisplayStatuses = new Set(['Verified', 'Completed', 'Admin Verified', 'Approved']);
 
@@ -70,6 +64,7 @@ const analyticsTabs = [
   ['operations', 'Operations'],
   ['mvc', 'MVC Safety'],
   ['pcr', 'PCR'],
+  ['comparative', 'Comparative Analysis'],
 ];
 
 const locationScopeOptions = [
@@ -235,6 +230,10 @@ function isMvcIncident(record = {}) {
   return classification === 'MVC' || type === 'vehicular';
 }
 
+function isAnalyticsRpcMissing(error) {
+  return analyticsRpcMissingCodes.has(error?.code) || String(error?.message || '').includes('staff_all_records_analytics');
+}
+
 function analyticsTabsForRole(role) {
   if (role === ROLES.DISPATCHER) {
     return [
@@ -361,6 +360,18 @@ function pcrReportToAnalyticsIncident(report = {}) {
     pcrStatus: report.status,
     title: report.responseNumber || report.chiefComplaint || `${classification} verified PCR`,
   };
+}
+
+async function loadAllRows(loader, params = {}) {
+  const allRows = [];
+  let from = 0;
+  while (true) {
+    const rows = await loader({ ...params, limit: analyticsPageSize, from });
+    allRows.push(...rows);
+    if (rows.length < analyticsPageSize || (rows.totalCount && allRows.length >= rows.totalCount)) break;
+    from += analyticsPageSize;
+  }
+  return allRows;
 }
 
 async function loadRoleScopedAnalytics(role, user) {
@@ -1023,11 +1034,10 @@ function DispatcherWorkflowCard({ dispatches, onRecords, onCreate }) {
   );
 }
 
-function DistributionCard({ title, subtitle, data, type = 'bar', colorByName }) {
+function DistributionCard({ title, subtitle, data, type = 'bar' }) {
   const hasData = data.some(item => item.count > 0);
   const total = data.reduce((sum, item) => sum + item.count, 0);
   const visibleData = data.slice(0, 8);
-  const colorFor = (item, index) => colorByName?.[String(item.name || '').trim().toLowerCase()] || colors[index % colors.length];
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -1051,7 +1061,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar', colorByName }) 
           {type === 'pie' ? (
             <PieChart>
               <Pie data={visibleData} dataKey="count" nameKey="name" innerRadius={55} outerRadius={86} paddingAngle={2}>
-                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colorFor(entry, index)} />)}
+                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
             </PieChart>
@@ -1062,7 +1072,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar', colorByName }) 
               <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
               <Bar dataKey="count" name="Count" radius={[4, 4, 0, 0]}>
-                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colorFor(entry, index)} />)}
+                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
               </Bar>
             </BarChart>
           )}
@@ -1075,7 +1085,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar', colorByName }) 
                 <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colorFor(item, index) }} />
+                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colors[index % colors.length] }} />
               </div>
             </div>
           ))}
@@ -1205,142 +1215,6 @@ function HospitalRefusalCard({ records, stats, onSelectHospital }) {
   );
 }
 
-function ComparativeAnalysis({ data }) {
-  const monthOptions = (data?.monthly || []).flatMap(row => [
-    {
-      value: `${row.month} ${data?.currentYear?.label}`,
-      label: `${row.month} ${data?.currentYear?.label}`,
-      period: { label: `${row.month} ${data?.currentYear?.label}`, total: row.currentTotal, incidents: row.currentIncidents, dispatches: row.currentDispatches, pcr: row.currentPcr },
-    },
-    {
-      value: `${row.month} ${data?.previousYear?.label}`,
-      label: `${row.month} ${data?.previousYear?.label}`,
-      period: { label: `${row.month} ${data?.previousYear?.label}`, total: row.previousTotal, incidents: row.previousIncidents, dispatches: row.previousDispatches, pcr: row.previousPcr },
-    },
-  ]);
-  const [firstMonth, setFirstMonth] = useState(data?.currentMonth?.label || monthOptions[0]?.value || '');
-  const [secondMonth, setSecondMonth] = useState(data?.previousMonth?.label || monthOptions[1]?.value || '');
-  const [firstYear, setFirstYear] = useState(data?.currentYear?.label || '');
-  const [secondYear, setSecondYear] = useState(data?.previousYear?.label || '');
-  const firstMonthValue = firstMonth || data?.currentMonth?.label || monthOptions[0]?.value || '';
-  const secondMonthValue = secondMonth || data?.previousMonth?.label || monthOptions[1]?.value || '';
-  const firstYearValue = firstYear || data?.currentYear?.label || '';
-  const secondYearValue = secondYear || data?.previousYear?.label || '';
-  const selectedFirstMonth = monthOptions.find(option => option.value === firstMonthValue)?.period || data?.currentMonth;
-  const selectedSecondMonth = monthOptions.find(option => option.value === secondMonthValue)?.period || data?.previousMonth;
-  const yearOptions = [data?.currentYear, data?.previousYear].filter(Boolean);
-  const selectedFirstYear = yearOptions.find(period => period.label === firstYearValue) || data?.currentYear;
-  const selectedSecondYear = yearOptions.find(period => period.label === secondYearValue) || data?.previousYear;
-  const valuesForYear = (row, year) => year === data?.currentYear?.label
-    ? { total: row.currentTotal, incidents: row.currentIncidents, dispatches: row.currentDispatches, pcr: row.currentPcr }
-    : { total: row.previousTotal, incidents: row.previousIncidents, dispatches: row.previousDispatches, pcr: row.previousPcr };
-  if (!data) return null;
-  const change = (current, previous) => previous > 0
-    ? ((current - previous) / previous) * 100
-    : current > 0 ? 100 : 0;
-  const comparisonCards = [
-    { title: 'Current Month', period: data.currentMonth, comparison: data.previousMonth, helper: 'vs previous month' },
-    { title: 'Previous Month', period: data.previousMonth },
-    { title: 'Current Year', period: data.currentYear, comparison: data.previousYear, helper: 'vs previous year' },
-    { title: 'Previous Year', period: data.previousYear },
-  ];
-  const monthlyComparison = [
-    ['Total Activity', 'total'],
-    ['Incidents', 'incidents'],
-    ['Dispatches', 'dispatches'],
-    ['PCR Reports', 'pcr'],
-  ];
-  return <section className="rounded-xl border border-border bg-card shadow-sm">
-    <div className="flex flex-col gap-2 border-b border-border bg-secondary/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <h2 className="text-sm font-bold text-foreground">Comparative Analysis</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Monthly and annual operational activity compared with previous periods.</p>
-      </div>
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Incidents + Dispatches + PCR</div>
-    </div>
-    <div className="grid gap-3 border-b border-border p-5 md:grid-cols-2 xl:grid-cols-4">
-      {comparisonCards.map(({ title, period, comparison, helper }) => {
-        const percent = change(period?.total || 0, comparison?.total || 0);
-        const rising = percent >= 0;
-        return <div key={title} className="min-w-0 rounded-lg border border-border bg-secondary/20 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div>
-              <div className="mt-1 text-2xl font-bold tabular-nums text-foreground">{period?.total || 0}</div>
-              <div className="mt-1 text-xs text-muted-foreground">{period?.label}</div>
-            </div>
-            {comparison && <div className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold ${rising ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
-              {rising ? <TrendingUp className="h-3.5 w-3.5"/> : <TrendingDown className="h-3.5 w-3.5"/>}
-              {Math.abs(percent).toFixed(1)}%
-            </div>}
-          </div>
-          <div className="mt-4 grid min-w-0 grid-cols-3 gap-1.5 text-center">
-            {[
-              ['Incidents', period?.incidents],
-              ['Dispatches', period?.dispatches],
-              ['PCR', period?.pcr],
-            ].map(([label, value]) => <div key={label} className="min-w-0 rounded-md border border-border bg-card px-1 py-2">
-              <div className="font-bold text-foreground">{value || 0}</div>
-              <div className="mt-0.5 whitespace-nowrap text-[7px] font-medium uppercase leading-tight tracking-tighter text-muted-foreground sm:text-[8px]">{label}</div>
-            </div>)}
-          </div>
-          <div className="mt-3 text-[10px] text-muted-foreground">
-            {comparison ? `${comparison.total || 0} in ${comparison.label} · ${helper}` : 'Comparison baseline'}
-          </div>
-        </div>;
-      })}
-    </div>
-    <div className="border-b border-border">
-      <div className="flex flex-col gap-3 border-b border-border bg-secondary/10 px-5 py-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h3 className="text-xs font-bold text-foreground">Month vs Month</h3>
-          <p className="mt-0.5 text-[10px] text-muted-foreground">Select any two available months to compare.</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">First month<select aria-label="First comparison month" value={firstMonthValue} onChange={event => setFirstMonth(event.target.value)} className="mt-1 block min-w-32 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{monthOptions.map(option => <option key={`first-${option.value}`} value={option.value}>{option.label}</option>)}</select></label>
-          <span className="pb-2 text-xs font-bold text-muted-foreground">vs</span>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Second month<select aria-label="Second comparison month" value={secondMonthValue} onChange={event => setSecondMonth(event.target.value)} className="mt-1 block min-w-32 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{monthOptions.map(option => <option key={`second-${option.value}`} value={option.value}>{option.label}</option>)}</select></label>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[620px] text-xs">
-          <thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><th className="px-5 py-3">Activity</th><th className="px-4 py-3 text-right">{selectedFirstMonth?.label || 'First Month'}</th><th className="px-4 py-3 text-right">{selectedSecondMonth?.label || 'Second Month'}</th><th className="px-5 py-3 text-right">Change</th></tr></thead>
-          <tbody>{monthlyComparison.map(([label, key]) => {
-            const currentValue = selectedFirstMonth?.[key] || 0;
-            const previousValue = selectedSecondMonth?.[key] || 0;
-            const percent = change(currentValue, previousValue);
-            return <tr key={key} className="border-b border-border/60 last:border-0 hover:bg-secondary/20"><td className="px-5 py-3 font-semibold text-foreground">{label}</td><td className="px-4 py-3 text-right font-semibold text-foreground">{currentValue}</td><td className="px-4 py-3 text-right text-muted-foreground">{previousValue}</td><td className={`px-5 py-3 text-right font-semibold ${percent >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{percent >= 0 ? '+' : ''}{percent.toFixed(1)}%</td></tr>;
-          })}</tbody>
-        </table>
-      </div>
-    </div>
-    <div>
-      <div className="flex flex-col gap-3 border-b border-border bg-secondary/10 px-5 py-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h3 className="text-xs font-bold text-foreground">Year vs Year</h3>
-          <p className="mt-0.5 text-[10px] text-muted-foreground">Select any two available years to compare by month.</p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">First year<select aria-label="First comparison year" value={firstYearValue} onChange={event => setFirstYear(event.target.value)} className="mt-1 block min-w-28 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{yearOptions.map(period => <option key={`first-${period.label}`} value={period.label}>{period.label}</option>)}</select></label>
-          <span className="pb-2 text-xs font-bold text-muted-foreground">vs</span>
-          <label className="text-[10px] font-semibold uppercase text-muted-foreground">Second year<select aria-label="Second comparison year" value={secondYearValue} onChange={event => setSecondYear(event.target.value)} className="mt-1 block min-w-28 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium normal-case text-foreground">{yearOptions.map(period => <option key={`second-${period.label}`} value={period.label}>{period.label}</option>)}</select></label>
-        </div>
-      </div>
-      <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-xs">
-        <thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"><th className="px-5 py-3">Month</th><th className="px-4 py-3 text-right">{selectedFirstYear?.label}</th><th className="px-4 py-3 text-right">{selectedSecondYear?.label}</th><th className="px-4 py-3 text-right">Change</th><th className="px-4 py-3 text-right">Incidents</th><th className="px-4 py-3 text-right">Dispatches</th><th className="px-5 py-3 text-right">PCR</th></tr></thead>
-        <tbody>{(data.monthly || []).map(row => {
-          const firstValues = valuesForYear(row, selectedFirstYear?.label);
-          const secondValues = valuesForYear(row, selectedSecondYear?.label);
-          const percent = change(firstValues.total, secondValues.total);
-          return <tr key={row.month} className="border-b border-border/60 last:border-0 hover:bg-secondary/20"><td className="px-5 py-3 font-semibold text-foreground">{row.month}</td><td className="px-4 py-3 text-right font-semibold text-foreground">{firstValues.total}</td><td className="px-4 py-3 text-right text-muted-foreground">{secondValues.total}</td><td className={`px-4 py-3 text-right font-semibold ${percent >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>{percent >= 0 ? '+' : ''}{percent.toFixed(1)}%</td><td className="px-4 py-3 text-right text-muted-foreground">{firstValues.incidents}</td><td className="px-4 py-3 text-right text-muted-foreground">{firstValues.dispatches}</td><td className="px-5 py-3 text-right text-muted-foreground">{firstValues.pcr}</td></tr>;
-        })}</tbody>
-      </table>
-      </div>
-    </div>
-  </section>;
-}
-
 function PerformanceTable({ rows }) {
   return (
     <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -1447,6 +1321,98 @@ function MvcCompletionCard({ rows }) {
   );
 }
 
+function comparisonPercent(first, second) {
+  return second > 0 ? ((first - second) / second) * 100 : first > 0 ? 100 : 0;
+}
+
+function ComparisonSelectPair({ type, firstValue, secondValue, setFirst, setSecond, options }) {
+  return <div className="flex flex-wrap items-end gap-2">
+    <label className="text-[10px] font-semibold uppercase text-muted-foreground">First {type}<select aria-label={`First comparison ${type}`} value={firstValue} onChange={event => setFirst(event.target.value)} className="mt-1 block min-w-32 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium normal-case text-foreground">{options.map(option => <option key={`first-${option.value}`} value={option.value}>{option.label}</option>)}</select></label>
+    <span className="pb-2 text-xs font-bold text-muted-foreground">vs</span>
+    <label className="text-[10px] font-semibold uppercase text-muted-foreground">Second {type}<select aria-label={`Second comparison ${type}`} value={secondValue} onChange={event => setSecond(event.target.value)} className="mt-1 block min-w-32 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium normal-case text-foreground">{options.map(option => <option key={`second-${option.value}`} value={option.value}>{option.label}</option>)}</select></label>
+  </div>;
+}
+
+function ComparisonPeriodCard({ title, data, comparison }) {
+  const change = comparison ? comparisonPercent(data.total, comparison.total) : null;
+  return <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+    <div className="flex items-start justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{title}</div><div className="mt-2 text-2xl font-bold text-foreground">{data.total}</div><div className="mt-1 text-xs text-muted-foreground">{data.label}</div></div>{change !== null && <div className={`rounded-md px-2 py-1 text-xs font-bold ${change >= 0 ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>{change >= 0 ? '+' : ''}{change.toFixed(1)}%</div>}</div>
+    <div className="mt-4 grid grid-cols-3 gap-2">{[['Incidents', data.incidents], ['Dispatches', data.dispatches], ['PCR', data.pcr]].map(([label, value]) => <div key={label} className="min-w-0 rounded-md border border-border bg-secondary/30 px-1 py-2 text-center"><div className="font-bold text-foreground">{value}</div><div className="mt-0.5 whitespace-nowrap text-[8px] uppercase tracking-tighter text-muted-foreground">{label}</div></div>)}</div>
+  </div>;
+}
+
+function ComparisonChange({ first, second }) {
+  const change = comparisonPercent(first, second);
+  return <span className={change >= 0 ? 'text-emerald-400' : 'text-red-400'}>{change >= 0 ? '+' : ''}{change.toFixed(1)}%</span>;
+}
+
+function ComparativeAnalysisSection({ incidents, dispatches, pcrReports }) {
+  const today = new Date();
+  const currentYear = today.getFullYear();
+  const previousYear = currentYear - 1;
+  const previousMonthDate = new Date(currentYear, today.getMonth() - 1, 1);
+  const yearOptions = [...new Set([
+    currentYear,
+    previousYear,
+    ...[...incidents, ...dispatches, ...pcrReports].map(record => {
+      const date = record.date ? new Date(`${String(record.date).slice(0, 10)}T00:00:00`) : null;
+      return date && !Number.isNaN(date.getTime()) ? date.getFullYear() : null;
+    }).filter(Boolean),
+  ])].sort((first, second) => second - first);
+  const monthOptions = yearOptions.flatMap(year => months.map((month, index) => ({
+    value: `${year}-${String(index + 1).padStart(2, '0')}`,
+    label: `${month.slice(0, 3)} ${year}`,
+    year,
+    month: index,
+  })));
+  const currentMonthValue = `${currentYear}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const previousMonthValue = `${previousMonthDate.getFullYear()}-${String(previousMonthDate.getMonth() + 1).padStart(2, '0')}`;
+  const [firstMonth, setFirstMonth] = useState(currentMonthValue);
+  const [secondMonth, setSecondMonth] = useState(previousMonthValue);
+  const [firstYear, setFirstYear] = useState(String(currentYear));
+  const [secondYear, setSecondYear] = useState(String(previousYear));
+  const countPeriod = (records, year, month) => records.filter(record => {
+    if (!record.date) return false;
+    const date = new Date(`${String(record.date).slice(0, 10)}T00:00:00`);
+    return !Number.isNaN(date.getTime()) && date.getFullYear() === Number(year) && (month === undefined || date.getMonth() === Number(month));
+  }).length;
+  const period = (year, month) => {
+    const values = {
+      incidents: countPeriod(incidents, year, month),
+      dispatches: countPeriod(dispatches, year, month),
+      pcr: countPeriod(pcrReports, year, month),
+    };
+    return { ...values, total: values.incidents + values.dispatches + values.pcr };
+  };
+  const monthPeriod = value => {
+    const option = monthOptions.find(item => item.value === value) || monthOptions[0];
+    return { ...period(option?.year, option?.month), label: option?.label || 'No month' };
+  };
+  const firstMonthData = monthPeriod(firstMonth);
+  const secondMonthData = monthPeriod(secondMonth);
+  const firstYearData = { ...period(firstYear), label: firstYear };
+  const secondYearData = { ...period(secondYear), label: secondYear };
+  const comparisonRows = [
+    ['Total Activity', 'total'],
+    ['Incidents', 'incidents'],
+    ['Dispatches', 'dispatches'],
+    ['PCR Reports', 'pcr'],
+  ];
+  return <section className="space-y-5">
+    <SectionHeader title="Comparative Analysis" subtitle="Compare official incidents, dispatches, and PCR reports across selected months and years" />
+    <div className="rounded-lg border border-border bg-card shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-3 lg:flex-row lg:items-end lg:justify-between"><div><h3 className="text-sm font-semibold text-foreground">Month vs Month</h3><p className="text-xs text-muted-foreground">Choose any two available months.</p></div><ComparisonSelectPair type="month" firstValue={firstMonth} secondValue={secondMonth} setFirst={setFirstMonth} setSecond={setSecondMonth} options={monthOptions}/></div>
+      <div className="grid gap-3 p-4 md:grid-cols-2"><ComparisonPeriodCard title="First Month" data={firstMonthData} comparison={secondMonthData}/><ComparisonPeriodCard title="Second Month" data={secondMonthData}/></div>
+      <div className="overflow-x-auto border-t border-border"><table className="w-full min-w-[620px] text-xs"><thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase text-muted-foreground"><th className="px-4 py-3">Activity</th><th className="px-4 py-3 text-right">{firstMonthData.label}</th><th className="px-4 py-3 text-right">{secondMonthData.label}</th><th className="px-4 py-3 text-right">Change</th></tr></thead><tbody>{comparisonRows.map(([label, key]) => <tr key={key} className="border-b border-border/60 last:border-0"><td className="px-4 py-3 font-semibold text-foreground">{label}</td><td className="px-4 py-3 text-right text-foreground">{firstMonthData[key]}</td><td className="px-4 py-3 text-right text-muted-foreground">{secondMonthData[key]}</td><td className="px-4 py-3 text-right font-semibold"><ComparisonChange first={firstMonthData[key]} second={secondMonthData[key]}/></td></tr>)}</tbody></table></div>
+    </div>
+    <div className="rounded-lg border border-border bg-card shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-border px-4 py-3 lg:flex-row lg:items-end lg:justify-between"><div><h3 className="text-sm font-semibold text-foreground">Year vs Year</h3><p className="text-xs text-muted-foreground">Compare annual totals and their monthly breakdown.</p></div><ComparisonSelectPair type="year" firstValue={firstYear} secondValue={secondYear} setFirst={setFirstYear} setSecond={setSecondYear} options={yearOptions.map(year => ({ value: String(year), label: String(year) }))}/></div>
+      <div className="grid gap-3 p-4 md:grid-cols-2"><ComparisonPeriodCard title="First Year" data={firstYearData} comparison={secondYearData}/><ComparisonPeriodCard title="Second Year" data={secondYearData}/></div>
+      <div className="overflow-x-auto border-t border-border"><table className="w-full min-w-[620px] text-xs"><thead><tr className="border-b border-border bg-secondary/20 text-left text-[10px] font-semibold uppercase text-muted-foreground"><th className="px-4 py-3">Month</th><th className="px-4 py-3 text-right">{firstYear}</th><th className="px-4 py-3 text-right">{secondYear}</th><th className="px-4 py-3 text-right">Change</th></tr></thead><tbody>{months.map((month, index) => { const first = period(firstYear, index); const second = period(secondYear, index); return <tr key={month} className="border-b border-border/60 last:border-0"><td className="px-4 py-3 font-semibold text-foreground">{month.slice(0, 3)}</td><td className="px-4 py-3 text-right text-foreground">{first.total}</td><td className="px-4 py-3 text-right text-muted-foreground">{second.total}</td><td className="px-4 py-3 text-right font-semibold"><ComparisonChange first={first.total} second={second.total}/></td></tr>; })}</tbody></table></div>
+    </div>
+  </section>;
+}
+
 function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -1488,7 +1454,7 @@ function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
   );
 }
 
-function AnalyticsDetail() {
+export default function Analytics() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [range, setRange] = useState('all');
@@ -1508,7 +1474,7 @@ function AnalyticsDetail() {
     heatmap: true,
     criticalZones: true,
   });
-  const [activeTab, setActiveTab] = useState('spatial');
+  const [activeTab, setActiveTab] = useState('overview');
   const [locationScope, setLocationScope] = useState('all');
   const [selectedBarangayName, setSelectedBarangayName] = useState('');
   const [drilldown, setDrilldown] = useState(null);
@@ -1537,13 +1503,39 @@ function AnalyticsDetail() {
           }
           return;
         }
-        const allRecords = await getStaffAllRecordsAnalytics();
+        let sourceError = null;
+        const allRecords = await getStaffAllRecordsAnalytics().catch(error => {
+          sourceError = error;
+          return null;
+        });
+        const detailedPcrReports = allRecords
+          ? await loadAllRows(listPCRReports, { archive: 'all' }).catch(() => allRecords.pcrReports)
+          : null;
         if (mounted) {
-          setIncidents(allRecords.incidents);
-          setDispatches(allRecords.dispatches);
-          setPcrReports(allRecords.pcrReports);
+          if (allRecords) {
+            setIncidents(allRecords.incidents);
+            setDispatches(allRecords.dispatches);
+            setPcrReports(detailedPcrReports);
+          } else {
+            const [incidentResult, dispatchResult, pcrResult] = await Promise.allSettled([
+              loadAllRows(listIncidents),
+              loadAllRows(listDispatchRecords),
+              loadAllRows(listPCRReports, { archive: 'all' }),
+            ]);
+            const incidentRows = settledValue(incidentResult, []);
+            const dispatchRows = settledValue(dispatchResult, []);
+            const pcrRows = settledValue(pcrResult, []);
+            setIncidents(incidentRows);
+            setDispatches(dispatchRows);
+            setPcrReports(pcrRows);
+            const failed = [incidentResult, dispatchResult, pcrResult].find(result => result.status === 'rejected');
+            if (isAnalyticsRpcMissing(sourceError)) {
+              setError('All-record analytics is not deployed in Supabase yet. Run migration 63_staff_all_records_analytics_rpc.sql, then refresh this page.');
+            } else {
+              setError(failed?.reason?.message || sourceError?.message || 'Analytics is using role-limited fallback data. Deploy the latest Supabase migration to enable all-record analytics.');
+            }
+          }
         }
-
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load analytics data.');
       } finally {
@@ -1720,10 +1712,19 @@ function AnalyticsDetail() {
     'type',
   ), [filteredPcrReports]);
   const hospitalStats = useMemo(() => summarizeBy(filteredPcrReports, 'receivingFacility'), [filteredPcrReports]);
-  const hospitalRefusalRecords = useMemo(() => filteredPcrReports
-    .filter(report => String(report.hospitalName || '').trim() && String(report.transferReason || '').trim())
-    .sort((first, second) => String(second.date || second.updatedAt || '').localeCompare(String(first.date || first.updatedAt || ''))), [filteredPcrReports]);
-  const hospitalRefusalStats = useMemo(() => summarizeBy(hospitalRefusalRecords, report => report.hospitalName.trim()), [hospitalRefusalRecords]);
+  const hospitalRefusalRecords = useMemo(() => filterIncidentsByRange(pcrReports.map(report => ({
+    ...report,
+    date: pcrAnalyticsDate(report),
+  })), range, customRange)
+    .filter(report => report.waiverAccepted)
+    .map(report => ({
+      ...report,
+      hospitalName: String(report.refusalFacility || '').trim() || 'No Facility Recorded',
+      transferReason: String(report.waiverReason || '').trim() || 'No reason recorded',
+      responseNumber: report.responseNumber || report.responseNo || '',
+    }))
+    .sort((first, second) => String(second.date || '').localeCompare(String(first.date || ''))), [customRange, pcrReports, range]);
+  const hospitalRefusalStats = useMemo(() => summarizeBy(hospitalRefusalRecords, 'hospitalName'), [hospitalRefusalRecords]);
   const teamStats = useMemo(() => summarizeBy(filteredDispatches, dispatch => dispatch.team || dispatch.respondingTeam || 'Unassigned'), [filteredDispatches]);
   const pcrByResponse = useMemo(() => new Map(
     filteredPcrReports
@@ -1987,17 +1988,6 @@ function AnalyticsDetail() {
           <PerformanceTable rows={performanceRows} />
         </div>
         <TeamRunAnalyticsCard rows={teamPerformanceRows} familyRows={teamFamilyRows} />
-        {isFullAnalytics && <div className="mt-5 grid gap-5 xl:grid-cols-2">
-          <HospitalRefusalCard
-            records={hospitalRefusalRecords}
-            stats={hospitalRefusalStats}
-            onSelectHospital={hospitalName => setDrilldown({
-              title: `${hospitalName} Refusal / Not-Admitting Records`,
-              subtitle: 'Verified PCR records containing a reason for transfer or not admitting.',
-              records: hospitalRefusalRecords.filter(report => report.hospitalName.trim() === hospitalName),
-            })}
-          />
-        </div>}
       </section>
       )}
 
@@ -2020,7 +2010,7 @@ function AnalyticsDetail() {
         <div className="grid gap-5 xl:grid-cols-2">
           <DistributionCard title="PCR Status Mix" subtitle="Submitted, verified, completed, and in-progress reports" data={pcrStatusStats} type="pie" />
           <DistributionCard title="Incident Category Comparison" subtitle="Classification of filtered official incident records" data={categoryComparison} />
-          <DistributionCard title="PCR Triage Distribution" subtitle="Clinical triage levels recorded in patient care reports" data={pcrTriageStats} colorByName={triageColors} />
+          <DistributionCard title="PCR Triage Distribution" subtitle="Clinical triage levels recorded in patient care reports" data={pcrTriageStats} />
           <DistributionCard title="Receiving Facility Load" subtitle="Hospital or receiving facility recorded in PCR reports" data={hospitalStats} />
           <div className="xl:col-span-2">
             <OperationalBreakdownCard
@@ -2034,93 +2024,20 @@ function AnalyticsDetail() {
             />
           </div>
         </div>
+        {isFullAnalytics && <div className="mt-5">
+          <HospitalRefusalCard records={hospitalRefusalRecords} stats={hospitalRefusalStats}/>
+        </div>}
       </section>
+      )}
+
+      {isFullAnalytics && activeTab === 'comparative' && (
+        <ComparativeAnalysisSection
+          incidents={analyticsIncidents}
+          dispatches={analyticsDispatches}
+          pcrReports={analyticsPcrReports}
+        />
       )}
       <DrilldownDrawer drilldown={drilldown} onClose={() => setDrilldown(null)} />
     </div>
   );
-}
-
-
-export default function Analytics() {
-  const { user } = useAuth();
-  const [tab, setTab] = useState('overview');
-  const [range, setRange] = useState('all');
-  const [custom, setCustom] = useState({ start: '', end: '' });
-  const [location, setLocation] = useState('all');
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
-  const tabs = analyticsTabsForRole(user?.role);
-  const header = analyticsHeaderForRole(user?.role);
-  const dates = useMemo(() => {
-    const today = new Date();
-    const start = new Date(today);
-    const day = date => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-    if (range === 'all') return {};
-    if (range === 'custom') return { start: custom.start || day(today), end: custom.end || day(today) };
-    if (range === 'week') start.setDate(start.getDate() - 6);
-    if (range === 'month') start.setDate(1);
-    if (range === 'year') start.setMonth(0, 1);
-    return { start: day(start), end: day(today) };
-  }, [range, custom]);
-  const spatial = tab === 'spatial';
-  useEffect(() => {
-    if (spatial) return undefined;
-    let mounted = true;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const summary = await getAnalyticsSummary({ ...dates, location, scopeKey: `${user?.id}:${user?.role}` });
-        if (mounted) { setData(summary); setError(''); }
-      } catch (error) { if (mounted) setError(error.message); }
-      finally { if (mounted) setLoading(false); }
-    };
-    setData(null);
-    load();
-    const refresh = createInformationalRefresh(load, { invalidate: () => clearSupabaseRequestCache('analytics:') });
-    let channel = supabase?.channel('aggregated-analytics');
-    for (const table of ['incidents','dispatch_forms','responses','pcr_reports']) {
-      channel = channel?.on('postgres_changes', { event: '*', schema: 'public', table }, refresh.markStale);
-    }
-    channel?.subscribe();
-    return () => { mounted = false; refresh.dispose(); if (channel) supabase.removeChannel(channel); };
-  }, [dates, location, user?.id, user?.role, spatial]);
-  const group = name => data?.[name] || [];
-  const totals = data?.totals || {};
-  const timing = data?.responseTimes || {};
-  const teamRows = group('teamPerformance').map(row => ({ ...row, ...parseTeamRun(row.name) }));
-  const familyRows = teamFamilies.map(family => ({ family, dispatches: teamRows.filter(row => row.family === family).reduce((n,row) => n+row.dispatches,0) }));
-  const aggregatedHospitalRefusalRecords = group('hospitalRefusalRecords');
-  const aggregatedHospitalRefusalStats = summarizeBy(aggregatedHospitalRefusalRecords, record => record.hospitalName);
-  return <div className="space-y-5 p-5">
-    <div><h1 className="text-xl font-bold">{header.title}</h1><p className="text-sm text-muted-foreground">{header.description}</p></div>
-    <div className="flex flex-wrap gap-2">
-      {tabs.map(([id,label]) => <button key={id} onClick={() => setTab(id)} className={`rounded-lg border px-4 py-2 text-sm ${tab===id ? 'bg-blue-600 text-white' : 'border-border'}`}>{label}</button>)}
-    </div>
-    {tab === 'spatial' ? <AnalyticsDetail /> : <>
-      <div className="flex flex-wrap gap-3">
-        <select aria-label="Date range" value={range} onChange={e=>setRange(e.target.value)} className="rounded border border-border bg-card p-2">{filterOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select>
-        {range==='custom' && <><input aria-label="Start date" type="date" value={custom.start} onChange={e=>setCustom({...custom,start:e.target.value})}/><input aria-label="End date" type="date" value={custom.end} onChange={e=>setCustom({...custom,end:e.target.value})}/></>}
-        <select aria-label="Location scope" value={location} onChange={e=>setLocation(e.target.value)} className="rounded border border-border bg-card p-2">{locationScopeOptions.map(o=><option key={o.value} value={o.value}>{o.label}</option>)}</select>
-      </div>
-      {loading && <p role="status">Loading analytics...</p>}
-      {error && <p role="alert" className="text-red-500">{error}</p>}
-      {data && <>
-        {tab==='overview' && <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Incidents',totals.incidents],['Dispatches',totals.dispatches],['PCR Reports',totals.pcr],['MVC Incidents',totals.mvc]].map(([label,value])=><MetricCard key={label} label={label} value={value} icon={Activity} helper="Selected period" />)}</div>
-          <div className="grid gap-5 lg:grid-cols-2"><ReportChartCard title="Incident Trends" subtitle="Selected date range" data={group('monthly')} kind="line"/><DistributionCard title="Incident Types" data={group('byType')}/><DistributionCard title="Barangays" data={group('byBarangay')}/><DistributionCard title="Severity" data={group('severity')} type="pie"/></div>
-          <ComparativeAnalysis data={data.comparative}/>
-        </>}
-        {tab==='operations' && <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">{[['Caller to Dispatcher','callerDispatcher'],['Dispatcher to Field Officer','dispatcherOfficer'],['Acceptance to Scene','acceptanceScene'],['Scene to Hospital','sceneHospital'],['Whole Response','total']].map(([label,key])=><MetricCard key={key} label={label} value={formatMinutes(timing[key])} helper={`${timing.samples?.[key] || 0} measured responses`} icon={Clock}/>)}</div>
-          <div className="grid gap-5 lg:grid-cols-2"><ReportChartCard title="Monthly Workload Trend" data={group('monthly')} kind="line"/><DistributionCard title="Dispatch Status Mix" data={group('dispatchStatus')} type="pie"/></div>
-          <PerformanceTable rows={group('performance')}/><TeamRunAnalyticsCard rows={teamRows} familyRows={familyRows}/>
-          {user?.role === ROLES.ADMINISTRATOR && <HospitalRefusalCard records={aggregatedHospitalRefusalRecords} stats={aggregatedHospitalRefusalStats}/>}
-        </>}
-        {tab==='mvc' && <><MvcCompletionCard rows={group('mvcCompletion')}/><div className="grid gap-5 lg:grid-cols-2">{[['Role','role'],['Alcohol Breath','alcohol'],['Helmet','helmet'],["Driver's License",'license']].map(([title,key])=><DistributionCard key={key} title={title} data={data.mvc?.[key] || []} type="pie"/>)}</div></>}
-        {tab==='pcr' && <div className="grid gap-5 lg:grid-cols-2">{[['PCR Status','pcrStatus'],['Incident Category','byType'],['Triage','triage'],['Receiving Facility','hospitals'],['Emergency Types','emergencyTypes'],['Trauma Types','traumaTypes'],['Responding Teams','teams'],['Treatment / Transport Refusal','hospitalRefusal']].map(([title,key])=><DistributionCard key={key} title={title} data={group(key)} colorByName={key === 'triage' ? triageColors : undefined}/>)}</div>}
-      </>}
-    </>}
-  </div>;
 }

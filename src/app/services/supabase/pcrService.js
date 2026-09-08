@@ -92,6 +92,7 @@ const PCR_LIST_SELECT = `
   endorsed_to,
   received_by,
   transfer_reason,
+  notes,
   back_to_base_time,
   completed_at,
   submitted_at,
