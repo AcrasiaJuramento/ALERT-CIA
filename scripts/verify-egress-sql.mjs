@@ -108,10 +108,18 @@ for (const [period,length] of [['monthly',12],['quarterly',4],['annual',1]]) {
 }
 await db.exec(`set role anon`);
 const publicGad = await scalar(`select get_public_gad_analytics() value`);
+assert.equal(publicGad.totals.verifiedIncidents,1);
+assert.equal(publicGad.totals.mvcIncidents,1);
+assert.equal(publicGad.totals.verifiedPersons,1);
 assert.equal(publicGad.totals.mvcPersons,1);
 assert.equal(publicGad.totals.maleMvcPersons,1);
+assert.equal(publicGad.incidentTypeTotals.find(row => row.name === 'Motor Vehicle Crash').count,1);
+assert.equal(publicGad.gadBySex.find(row => row.name === 'Male').count,1);
+assert.equal(publicGad.gadByAgeGroup.find(row => row.name === '18-59').count,1);
 assert.equal(publicGad.mvcBySex.find(row => row.name === 'Male').count,1);
 assert.equal(publicGad.mvcBySex.find(row => row.name === 'Female').count,0);
+assert.equal(publicGad.monthlyIncidentsByType.find(row => row.monthStart === '2026-01-01').mvc,1);
+assert.equal(publicGad.barangayIncidentTotals[0].count,1);
 assert.equal(await scalar(`select count(*)::int value from public_scraped_map_incidents_view`),1);
 assert.equal(await scalar(`select incident_date::text value from public_scraped_map_incidents_view`),'2026-01-31');
 assert.equal(await scalar(`select count(*)::int value from (select id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, severity, title, location_text, display_name, latitude, longitude, scraped_at, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, incident_at, incident_date from public_scraped_map_incidents_view) v`),1);
