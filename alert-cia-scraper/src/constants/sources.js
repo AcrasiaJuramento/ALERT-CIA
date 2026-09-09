@@ -51,6 +51,9 @@ export const SOURCES = [
     searchTerms: ["accidents", "aksidente", "banggan", "salpukan", "crash"],
     searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com", term)(page),
     articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
+    maxArticles: 160,
+    maxRuntimeMs: 45_000,
+    noNewArticleLimit: 3,
   }),
 ];
 

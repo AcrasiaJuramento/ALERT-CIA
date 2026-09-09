@@ -571,7 +571,7 @@ function SourceHealthPanel({ healthRows }) {
         <table className="w-full text-xs">
           <thead className="text-muted-foreground">
             <tr>
-              {["Source", "Status", "Links", "Articles", "Matched", "Rejected", "Errors", "Retries", "Last Checked", "Details"].map(item => (
+              {["Source", "Status", "Links", "Articles", "Matched", "Rejected", "Skipped", "Errors", "Retries", "Last Checked", "Details"].map(item => (
                 <th key={item} className="border-b border-border px-3 py-2 text-left font-semibold">{item}</th>
               ))}
             </tr>
@@ -585,6 +585,7 @@ function SourceHealthPanel({ healthRows }) {
                 <td className="px-3 py-2">{row.articlesProcessed}</td>
                 <td className="px-3 py-2 text-green-300">{row.incidentsDetected}</td>
                 <td className="px-3 py-2 text-amber-300">{row.rejectedCount}</td>
+                <td className="px-3 py-2 text-slate-300">{row.skippedRejected}</td>
                 <td className="px-3 py-2 text-red-300">{row.failedCount}</td>
                 <td className="px-3 py-2">{row.retries}</td>
                 <td className="px-3 py-2 text-muted-foreground">{fmt(row.lastScrapedAt)}</td>
@@ -622,10 +623,11 @@ function NewsSourceCheck({ runs, healthRows, running, onCheck }) {
           <RefreshCw className={`h-4 w-4 ${running ? "animate-spin" : ""}`} />{running ? "Checking..." : latest ? "Check Again" : "Check News Sources"}
         </button>
       </div>
-      <div className="mt-4 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/30 sm:grid-cols-4 sm:divide-y-0">
+      <div className="mt-4 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/30 sm:grid-cols-5 sm:divide-y-0">
         <StatItem label="Articles Found" value={latest?.fetched_count ?? "-"} />
         <StatItem label="Matched" value={latest?.matched_count ?? "-"} />
-        <StatItem label="Rejected" value={metadata.rejected_count ?? "-"} />
+        <StatItem label="Newly Rejected" value={metadata.rejected_count ?? "-"} />
+        <StatItem label="Skipped Rejected" value={metadata.skipped_rejected_count ?? "-"} />
         <StatItem label="Last Checked" value={timeLabel(latest?.completed_at || latest?.started_at)} />
       </div>
       {(failedSources > 0 || warningSources > 0) && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">{failedSources + warningSources} news source{failedSources + warningSources === 1 ? "" : "s"} could not be fully checked. Open details below for technical information.</div>}
@@ -810,7 +812,7 @@ export default function ScraperReview() {
 
   const checkNewsSources = async () => {
     try {
-      await startScraperJob("update", { pageFrom: 1, pageTo: 1 });
+      await startScraperJob("update", { pageFrom: 1 });
       await load();
     } catch (error) {
       toast.error(error.message || "Unable to check news sources.");

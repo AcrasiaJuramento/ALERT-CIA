@@ -639,7 +639,7 @@ export default function MapMonitoring() {
   const refreshScraperData = async (mode = 'update') => {
     setScrapeMenuOpen(false);
     try {
-      await startScraperJob(mode, mode === 'update' ? { pageFrom: 1, pageTo: 1 } : {});
+      await startScraperJob(mode, mode === 'update' ? { pageFrom: 1 } : {});
       setReloadKey(key => key + 1);
     } catch {
       // The shared scraper job service owns the visible error state.

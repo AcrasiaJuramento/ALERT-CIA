@@ -10,7 +10,7 @@ import { extractIncidentDateTime } from "../lib/incidentTime.js";
 import { applyLandmarkMatch, loadLandmarkRegistry, matchLocalLandmark } from "../lib/landmarkRegistry.js";
 import { extractLocation, ISABELA_PLACES, isValidLocation } from "../lib/locations.js";
 import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
-import { findExistingSourceUrls } from "../lib/scraperStore.js";
+import { findKnownArticleUrls } from "../lib/scraperStore.js";
 import { normalizeUrl } from "../lib/urls.js";
 
 const DEFAULT_ARTICLE_CONCURRENCY = 8;
@@ -68,6 +68,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
     incidents_detected: 0,
     rejected_count: 0,
     duplicate_count: 0,
+    skipped_rejected: 0,
     failed_count: 0,
     cache_hits: 0,
     retries: 0,
@@ -82,19 +83,19 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
     .filter((url) => !seenUrls.has(url));
   normalizedLinks.forEach((url) => seenUrls.add(url));
 
-  const existing = await findExistingSourceUrls(normalizedLinks);
+  const known = await findKnownArticleUrls(normalizedLinks);
+  const skippedRejected = mode === "full" ? new Map() : known.rejected;
+  const existing = known.saved;
   stats.duplicates_skipped += existing.size;
+  stats.rejected_skipped += skippedRejected.size;
   sourceHealth.duplicate_count += existing.size;
   sourceHealth.skipped_existing = existing.size;
-  const rejected = [...existing].map((url) => ({
-    source_url: url,
-    source_site: source.key,
-    source_name: source.name,
-    rejection_reason: "duplicate",
-    rejection_details: "Exact source URL already exists before article download.",
-  }));
+  sourceHealth.skipped_rejected = skippedRejected.size;
+  const rejected = [];
   // Full mode re-fetches known URLs so improved extraction can repair stored mappings.
-  const pending = mode === "full" ? normalizedLinks : normalizedLinks.filter((url) => !existing.has(url));
+  const pending = mode === "full"
+    ? normalizedLinks
+    : normalizedLinks.filter((url) => !existing.has(url) && !skippedRejected.has(url));
   sourceHealth.new_links = pending.length;
   console.info("[alert-cia-scraper] source discovery", {
     source: source.key,
@@ -102,6 +103,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
     discovered: listLinks.length,
     unique: normalizedLinks.length,
     duplicates: existing.size,
+    skipped_rejected: skippedRejected.size,
     pending: pending.length,
     pages: sourceHealth.pages_checked,
   });
@@ -286,6 +288,7 @@ export async function scrapeSources({ mode = "update", sourceKey = null, pageFro
     pages_checked: 0,
     articles_checked: 0,
     duplicates_skipped: 0,
+    rejected_skipped: 0,
     failed_urls: [],
   };
   const records = [];
@@ -325,6 +328,7 @@ export async function scrapeSources({ mode = "update", sourceKey = null, pageFro
         incidents_detected: 0,
         rejected_count: 1,
         duplicate_count: 0,
+        skipped_rejected: 0,
         failed_count: 1,
         cache_hits: 0,
         retries: 0,

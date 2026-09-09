@@ -11,7 +11,7 @@ export function startScraperScheduler() {
 
   globalThis[globalKey] = setInterval(async () => {
     try {
-      await runScraper({ endpointType: "all", mode: "update", pageFrom: 1, pageTo: 1 });
+      await runScraper({ endpointType: "all", mode: "update", pageFrom: 1 });
     } catch (error) {
       console.error("[alert-cia-scraper] scheduled run failed:", error);
     }
