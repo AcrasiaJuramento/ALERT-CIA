@@ -36,7 +36,8 @@ import { GeolocationProvider } from './contexts/GeolocationContext'
 const protect = (permission, element) => <ProtectedRoute permission={permission}>{element}</ProtectedRoute>
 
 export const router = createBrowserRouter([
-  { path: '/', element: <LandingPage /> },
+  { path: '/', element: <Navigate to="/public" replace /> },
+  { path: '/about', element: <LandingPage /> },
   { path: '/login', element: <LoginPage /> },
   { path: '/forgot-password', element: <ForgotPasswordPage /> },
   { path: '/reset-password', element: <ChangePasswordPage /> },

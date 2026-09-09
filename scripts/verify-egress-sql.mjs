@@ -19,17 +19,19 @@ create function public.is_dispatcher() returns boolean language sql stable as $$
 create function public.has_role(text) returns boolean language sql stable as $$ select current_setting('test.role',true)=$1 $$;
 create function public.classify_response_incident(text) returns text language sql immutable as $$ select case when $1 ilike '%vehicle%' then 'mvc' else 'medical' end $$;
 create function public.priority_from_pcr_triage(text) returns text language sql immutable as $$ select case when $1='red' then 'high' else 'medium' end $$;
+revoke execute on function public.classify_response_incident(text) from public, anon;
+revoke execute on function public.priority_from_pcr_triage(text) from public, anon;
 create function public.alert_cia_safe_jsonb(text) returns jsonb language plpgsql immutable as $$ begin return $1::jsonb; exception when others then return '{}'::jsonb; end $$;
 create table barangays(id uuid primary key,name text,municipality text,centroid extensions.geometry);
 create table responding_teams(id uuid primary key,name text);
 create table responses(id uuid primary key,barangay_id uuid,responding_team_id uuid,date_of_incident date,time_of_incident time,
- type_of_incident text,location_text text,place_of_incident text,latitude numeric,longitude numeric,status text,
+ type_of_incident text,patient_sex text,patient_age integer,location_text text,place_of_incident text,latitude numeric,longitude numeric,status text,
  accepted_at timestamptz,deleted_at timestamptz);
 create table incidents(id uuid primary key,response_id uuid,barangay_id uuid,classification text,priority text,title text,
  incident_date date,incident_time time,location_text text,latitude numeric,longitude numeric,status text,public_visible boolean,deleted_at timestamptz);
 create table dispatch_forms(id uuid primary key,response_id uuid,dispatch_time time,arrival_scene_time time,departure_scene_time time,
  arrival_hospital_time time,sent_at timestamptz,created_at timestamptz,status text,notes text,deleted_at timestamptz);
-create table dispatch_patients(id uuid);
+create table dispatch_patients(id uuid,dispatch_form_id uuid,sex text,age integer);
 create table pcr_reports(id uuid primary key,response_id uuid,dispatch_form_id uuid,triage text,incident_nature text,
  status text,verified_at timestamptz,submitted_at timestamptz,completed_at timestamptz,created_at timestamptz,updated_at timestamptz,
  emergency_types text[],trauma_types text[],hospital_name text,endorsed_to text,received_by text,notes text,chief_complaint text,deleted_at timestamptz,archived_at timestamptz);
@@ -45,7 +47,7 @@ grant select on all tables in schema public to authenticated,anon;
 select set_config('test.uid','00000000-0000-0000-0000-000000000001',false);
 select set_config('test.role','administrator',false);
 `);
-for (const name of ['94_public_data_layer.sql','95_aggregated_analytics.sql','96_reports_aggregation.sql']) {
+for (const name of ['94_public_data_layer.sql','95_aggregated_analytics.sql','96_reports_aggregation.sql','101_public_projection_anon_repair.sql','102_public_gad_analytics.sql']) {
   try { await db.exec(await readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')); }
   catch (error) { console.error(`Migration failed: ${name}`, error.message, error.position); throw error; }
 }
@@ -61,6 +63,8 @@ insert into incidents(id,response_id,barangay_id,classification,priority,inciden
 values ('00000000-0000-0000-0000-000000000040','00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000010','mvc','high','2026-01-31',16.7,121.7,'verified',true);
 insert into dispatch_forms(id,response_id,dispatch_time,arrival_scene_time,departure_scene_time,arrival_hospital_time,sent_at,created_at,status)
 values ('00000000-0000-0000-0000-000000000050','00000000-0000-0000-0000-000000000030','23:45','00:05','00:15','00:35','2026-01-31 23:50+08','2026-01-31','verified');
+insert into dispatch_patients(id,dispatch_form_id,sex,age)
+values ('00000000-0000-0000-0000-000000000051','00000000-0000-0000-0000-000000000050','Male',32);
 insert into pcr_reports(id,response_id,dispatch_form_id,triage,incident_nature,status,created_at,updated_at,notes,emergency_types,trauma_types)
 values ('00000000-0000-0000-0000-000000000060','00000000-0000-0000-0000-000000000030','00000000-0000-0000-0000-000000000050','red','Motor Vehicle Crash','verified','2026-01-31','2026-01-31',
 '{"__alertCiaExtended":{"crash":{"role":"Driver","vehicle":"Single Motor","helmet":"Yes","license":"No","alcohol":"No"},"natureTypes":["Conduction"]}}',array['Medical'],array['Fall']);
@@ -103,11 +107,17 @@ for (const [period,length] of [['monthly',12],['quarterly',4],['annual',1]]) {
   assert.equal(getRow(getSection(report,'Trauma'),'Assault').total,1);
 }
 await db.exec(`set role anon`);
+const publicGad = await scalar(`select get_public_gad_analytics() value`);
+assert.equal(publicGad.totals.mvcPersons,1);
+assert.equal(publicGad.totals.maleMvcPersons,1);
+assert.equal(publicGad.mvcBySex.find(row => row.name === 'Male').count,1);
+assert.equal(publicGad.mvcBySex.find(row => row.name === 'Female').count,0);
 assert.equal(await scalar(`select count(*)::int value from public_scraped_map_incidents_view`),1);
 assert.equal(await scalar(`select incident_date::text value from public_scraped_map_incidents_view`),'2026-01-31');
 assert.equal(await scalar(`select count(*)::int value from (select id, related_incident_id, status, public_visible, source_site, source_url, category, incident_type, severity, title, location_text, display_name, latitude, longitude, scraped_at, verified_barangay, verified_municipality, geocode_precision, location_confidence, mapping_status, incident_at, incident_date from public_scraped_map_incidents_view) v`),1);
 assert.equal(await scalar(`select count(*)::int value from public_map_incidents_view where latitude between 16.6 and 16.8 and longitude between 121.6 and 121.8`),1);
 assert.equal(await scalar(`select count(*)::int value from public_map_incidents_view where latitude between 17 and 18`),0);
+assert.equal(await scalar(`select count(*)::int value from public_pcr_map_incidents_view where latitude between 16.6 and 16.8 and longitude between 121.6 and 121.8`),1);
 const publicRow = await scalar(`select to_jsonb(v) value from public_scraped_map_incidents_view v`);
 assert.ok(!JSON.stringify(publicRow).includes('secret'));
 assert.ok(!('raw_payload' in publicRow));

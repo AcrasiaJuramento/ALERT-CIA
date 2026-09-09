@@ -1,8 +1,11 @@
 import { subscribeToPublicDataChanges } from '../../services/supabase/publicRealtime';
 import { createInformationalRefresh } from '../../utils/informationalRefresh';
-import { invalidatePublicData } from '../../services/supabase/publicDataService';
+import { getPublicGadAnalytics, invalidatePublicData } from '../../services/supabase/publicDataService';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from 'recharts';
 import {
   AlertTriangle, Activity, CheckCircle2, MapPin, Clock, ChevronRight,
   Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2, X
@@ -54,6 +57,14 @@ const mdrrmoContacts = [
   { label: 'Echague Rescue', value: 'Facebook', href: 'https://www.facebook.com/mdrrmoechague', color: 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-500/10' },
 ];
 
+const sexSeries = [
+  { key: 'female', label: 'Female', color: '#dc2626' },
+  { key: 'male', label: 'Male', color: '#2563eb' },
+  { key: 'unspecified', label: 'Unspecified', color: '#64748b' },
+];
+
+const chartColors = ['#dc2626', '#2563eb', '#64748b', '#14b8a6', '#eab308'];
+
 function isPublicAnnouncementAdvisory(advisory = {}) {
   return !['accident_prone_area', 'accident_hotspot'].includes(String(advisory.advisoryType || advisory.category || '').toLowerCase());
 }
@@ -63,6 +74,9 @@ export default function PublicDashboard() {
   const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories().filter(isPublicAnnouncementAdvisory));
   const [dismissedAdvisoryId, setDismissedAdvisoryId] = useState('');
   const [incidents, setIncidents] = useState([]);
+  const [gadAnalytics, setGadAnalytics] = useState(null);
+  const [gadLoading, setGadLoading] = useState(true);
+  const [gadError, setGadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
@@ -104,9 +118,30 @@ export default function PublicDashboard() {
         if (mounted && !silent) setLoading(false);
       }
     }
-    const refresh = createInformationalRefresh(() => loadIncidents({ silent: true }), { invalidate: invalidatePublicData });
+
+    async function loadGadAnalytics({ silent = false } = {}) {
+      if (!silent) setGadLoading(true);
+      if (!silent) setGadError('');
+      try {
+        const analytics = await getPublicGadAnalytics();
+        if (mounted) {
+          setGadAnalytics(analytics);
+          setGadError('');
+        }
+      } catch (requestError) {
+        if (mounted && !silent) setGadError(requestError.message || 'Unable to load public GAD analytics.');
+      } finally {
+        if (mounted && !silent) setGadLoading(false);
+      }
+    }
+
+    const refresh = createInformationalRefresh(() => {
+      loadIncidents({ silent: true });
+      loadGadAnalytics({ silent: true });
+    }, { invalidate: invalidatePublicData });
     const queueIncidentRefresh = refresh.markStale;
     loadIncidents();
+    loadGadAnalytics();
     loadAdvisoriesFromDatabase();
     const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
     const refreshTimer = window.setInterval(() => { if (document.visibilityState === 'visible') loadAdvisoriesFromDatabase(); }, 60000);
@@ -203,6 +238,8 @@ export default function PublicDashboard() {
             </div>
           ))}
         </div>
+
+        <PublicGadAnalyticsSection analytics={gadAnalytics} loading={gadLoading} error={gadError} />
 
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -374,6 +411,235 @@ export default function PublicDashboard() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PublicGadAnalyticsSection({ analytics, loading, error }) {
+  const totals = analytics?.totals || {};
+  const mvcTotal = totals.mvcPersons || 0;
+  const completionRows = analytics?.completion || [];
+  const mvcBySex = analytics?.mvcBySex || [];
+  const monthlyRows = analytics?.monthlyMvcBySex || [];
+  const typeRows = analytics?.incidentTypeBySex || [];
+  const barangayRows = analytics?.barangayMvcBySex || [];
+  const hasMvcData = mvcTotal > 0;
+
+  return (
+    <section className="space-y-5">
+      <div className="border-l-2 border-blue-500 pl-4">
+        <h2 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+          GAD/MVC Safety Analytics
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Public aggregate counts for verified motor vehicle crash records by sex, age group, month, and barangay.
+        </p>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-500">
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div className="rounded-lg border border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
+          Loading GAD analytics...
+        </div>
+      )}
+
+      {!loading && !error && (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {completionRows.map(row => <CompletionTile key={row.label} row={row} />)}
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-2">
+            <PublicDistributionCard
+              title="MVC Patients by Sex"
+              subtitle={`${mvcTotal} verified MVC affected person${mvcTotal === 1 ? '' : 's'}`}
+              data={mvcBySex}
+              type="bar"
+            />
+            <PublicDistributionCard
+              title="MVC Age Groups"
+              subtitle="Age brackets from verified response and dispatch patient records"
+              data={analytics?.mvcByAgeGroup || []}
+              type="pie"
+            />
+            <StackedChartCard
+              title="Monthly MVC by Sex"
+              subtitle="Last 12 calendar months"
+              data={monthlyRows}
+            />
+            <StackedChartCard
+              title="Incident Type by Sex"
+              subtitle={`${totals.verifiedPersons || 0} verified public-safe affected person${totals.verifiedPersons === 1 ? '' : 's'}`}
+              data={typeRows.slice(0, 6)}
+              categoryKey="name"
+            />
+            <div className="xl:col-span-2">
+              <StackedChartCard
+                title="MVC Affected Persons by Barangay"
+                subtitle="Top barangays among verified MVC records"
+                data={barangayRows}
+                layout="vertical"
+              />
+            </div>
+          </div>
+
+          {!hasMvcData && (
+            <div className="rounded-lg border border-border bg-secondary/30 px-4 py-5 text-center text-sm text-muted-foreground">
+              No verified MVC GAD records are available for public analytics yet.
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function CompletionTile({ row }) {
+  return (
+    <div className="rounded-lg border border-border bg-card p-3 shadow-sm">
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="font-semibold text-foreground">{row.label}</span>
+        <span className="font-bold text-blue-500">{row.percent}%</span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
+        <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }} />
+      </div>
+      <div className="mt-2 text-[10px] text-muted-foreground">{row.complete} complete / {row.missing} missing</div>
+    </div>
+  );
+}
+
+function PublicChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs shadow-xl">
+      {label && <div className="mb-1 font-semibold text-foreground">{label}</div>}
+      {payload.map(item => (
+        <div key={`${item.name}-${item.dataKey}`} className="flex items-center justify-between gap-5">
+          <span className="text-muted-foreground">{item.name}</span>
+          <span className="font-semibold text-foreground">{item.value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PublicDistributionCard({ title, subtitle, data, type = 'bar' }) {
+  const total = data.reduce((sum, item) => sum + item.count, 0);
+  const hasData = data.some(item => item.count > 0);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <ChartHeader title={title} subtitle={subtitle} total={total} />
+      {!hasData ? <EmptyChart /> : (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <ResponsiveContainer width="100%" height={220}>
+            {type === 'pie' ? (
+              <PieChart>
+                <Pie data={data} dataKey="count" nameKey="name" innerRadius={55} outerRadius={86} paddingAngle={2}>
+                  {data.map((entry, index) => <Cell key={entry.name} fill={chartColors[index % chartColors.length]} />)}
+                </Pie>
+                <Tooltip content={<PublicChartTooltip />} />
+              </PieChart>
+            ) : (
+              <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip content={<PublicChartTooltip />} />
+                <Bar dataKey="count" name="Count" radius={[4, 4, 0, 0]}>
+                  {data.map((entry, index) => <Cell key={entry.name} fill={chartColors[index % chartColors.length]} />)}
+                </Bar>
+              </BarChart>
+            )}
+          </ResponsiveContainer>
+          <ChartLegendRows data={data} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StackedChartCard({ title, subtitle, data, layout = 'horizontal', categoryKey = 'month' }) {
+  const total = data.reduce((sum, item) => sum + item.total, 0);
+  const hasData = data.some(item => item.total > 0);
+  const vertical = layout === 'vertical';
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <ChartHeader title={title} subtitle={subtitle} total={total} />
+      {!hasData ? <EmptyChart /> : (
+        <ResponsiveContainer width="100%" height={vertical ? 300 : 240}>
+          <BarChart
+            data={data}
+            layout={vertical ? 'vertical' : 'horizontal'}
+            margin={vertical ? { top: 4, right: 18, left: 26, bottom: 0 } : { top: 4, right: 8, left: -18, bottom: 0 }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.18)" />
+            {vertical ? (
+              <>
+                <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <YAxis type="category" dataKey="name" width={110} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+              </>
+            ) : (
+              <>
+                <XAxis dataKey={categoryKey} tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} allowDecimals={false} />
+              </>
+            )}
+            <Tooltip content={<PublicChartTooltip />} />
+            <Legend wrapperStyle={{ fontSize: 11 }} />
+            {sexSeries.map(series => (
+              <Bar key={series.key} dataKey={series.key} name={series.label} stackId="sex" fill={series.color} radius={[3, 3, 0, 0]} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function ChartHeader({ title, subtitle, total }) {
+  return (
+    <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="min-w-0">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{subtitle}</p>
+      </div>
+      <span className="shrink-0 rounded-md border border-border bg-secondary/50 px-2 py-1 text-[10px] font-semibold text-muted-foreground">
+        {total} total
+      </span>
+    </div>
+  );
+}
+
+function ChartLegendRows({ data }) {
+  return (
+    <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+      {data.map((item, index) => (
+        <div key={item.name}>
+          <div className="mb-1 flex justify-between gap-3 text-xs">
+            <span className="truncate text-muted-foreground">{item.name}</span>
+            <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-secondary">
+            <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: chartColors[index % chartColors.length] }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyChart() {
+  return (
+    <div className="rounded-lg border border-border bg-secondary/30 px-3 py-8 text-center text-xs text-muted-foreground">
+      No verified public aggregate records available yet
     </div>
   );
 }
