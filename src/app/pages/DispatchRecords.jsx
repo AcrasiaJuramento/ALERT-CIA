@@ -26,9 +26,16 @@ import {
 } from "../utils/dispatchWorkflow";
 import { hybridRepository } from "../api/hybrid-client";
 import { cloudClient } from "../api/cloud-client";
-import { getConnectionState, subscribeConnection } from "../network/connection-manager";
+import {
+  getConnectionState,
+  subscribeConnection,
+} from "../network/connection-manager";
 import { subscribeLiveSyncEvents } from "../network/live-sync-events";
-import { getPCRReportByResponse, listDispatchRecords, listPCRReportsByResponses } from "../services/supabase";
+import {
+  getPCRReportByResponse,
+  listDispatchRecords,
+  listPCRReportsByResponses,
+} from "../services/supabase";
 import { getAllRecords, putRecord } from "../db/indexed-db";
 import { formatDateAndTime, formatLongDateTime } from "../utils/dateFormat";
 
@@ -37,15 +44,20 @@ const statusClass = (status = "Draft") => {
   if (status.includes("Submitted")) return "bg-amber-500/15 text-amber-500";
   if (status.includes("Verified")) return "bg-green-500/15 text-green-500";
   if (status.includes("Accepted")) return "bg-emerald-500/15 text-emerald-400";
-  if (status.includes("Sent") || status.includes("Progress")) return "bg-blue-500/15 text-blue-400";
+  if (status.includes("Sent") || status.includes("Progress"))
+    return "bg-blue-500/15 text-blue-400";
   return "bg-slate-500/15 text-slate-400";
 };
 
-const formatDate = value => {
+const formatDate = (value) => {
   if (!value) return "-";
-  const normalized = typeof value === "object"
-    ? value.toDate?.() || value.toISOString?.() || value.updated_at || value.created_at
-    : value;
+  const normalized =
+    typeof value === "object"
+      ? value.toDate?.() ||
+        value.toISOString?.() ||
+        value.updated_at ||
+        value.created_at
+      : value;
   return formatLongDateTime(normalized);
 };
 
@@ -73,15 +85,17 @@ const DISPATCH_FILTER_STATUSES = [
 ];
 
 function compactIdSet(values = []) {
-  return new Set(values.filter(Boolean).map(value => String(value)));
+  return new Set(values.filter(Boolean).map((value) => String(value)));
 }
 
 function linkedPcrKey(record = {}) {
-  return record.responseId
-    || record.responseClientId
-    || record.dispatchId
-    || record.dispatchClientId
-    || logicalDispatchKey(record);
+  return (
+    record.responseId ||
+    record.responseClientId ||
+    record.dispatchId ||
+    record.dispatchClientId ||
+    logicalDispatchKey(record)
+  );
 }
 
 function linkedPcrFromMap(linkedPCRs = {}, record = {}) {
@@ -116,14 +130,26 @@ function sameLinkedPcrForDispatch(record = {}, pcr = {}) {
     pcr.dispatchClientId,
     pcr.dispatch_client_id,
   ]);
-  if ([...dispatchParentIds].some(id => pcrParentIds.has(id))) return true;
+  if ([...dispatchParentIds].some((id) => pcrParentIds.has(id))) return true;
 
-  const linkedPcrIds = compactIdSet([record.linkedPcrId, record.sourcePcrId, record.pcrId]);
-  const pcrIds = compactIdSet([pcr.id, pcr.pcrId, pcr.pcrClientId, pcr.client_generated_id]);
-  if ([...linkedPcrIds].some(id => pcrIds.has(id))) return true;
+  const linkedPcrIds = compactIdSet([
+    record.linkedPcrId,
+    record.sourcePcrId,
+    record.pcrId,
+  ]);
+  const pcrIds = compactIdSet([
+    pcr.id,
+    pcr.pcrId,
+    pcr.pcrClientId,
+    pcr.client_generated_id,
+  ]);
+  if ([...linkedPcrIds].some((id) => pcrIds.has(id))) return true;
 
   const responseNumber = normalizeKeyPart(record.responseNumber);
-  if (responseNumber && responseNumber === normalizeKeyPart(pcr.responseNumber)) {
+  if (
+    responseNumber &&
+    responseNumber === normalizeKeyPart(pcr.responseNumber)
+  ) {
     const recordPatientKey = pcrPatientKey(record);
     const pcrKey = pcrPatientKey(pcr);
     return !recordPatientKey || !pcrKey || recordPatientKey === pcrKey;
@@ -133,48 +159,60 @@ function sameLinkedPcrForDispatch(record = {}, pcr = {}) {
 
 async function getLocalPcrForDispatch(record = {}) {
   const rows = await hybridRepository.getLocalPcrReports().catch(() => []);
-  return rows.find(pcr => sameLinkedPcrForDispatch(record, pcr)) || null;
+  return rows.find((pcr) => sameLinkedPcrForDispatch(record, pcr)) || null;
 }
 
 function displayStatus(record, linkedPcr = null) {
-  const pcrStatus = linkedPcr?.recordSource === "cloud"
-    ? linkedPcr?.status
-    : linkedPcr?.localStatus || linkedPcr?.status;
+  const pcrStatus =
+    linkedPcr?.recordSource === "cloud"
+      ? linkedPcr?.status
+      : linkedPcr?.localStatus || linkedPcr?.status;
   if (pcrStatus === "Submitted Locally") return "Submitted on Device";
-  if (["Submitted", "Submitted on Device", "Verified"].includes(pcrStatus)) return pcrStatus;
+  if (["Submitted", "Submitted on Device", "Verified"].includes(pcrStatus))
+    return pcrStatus;
   return record.localStatus || record.status || "Draft";
 }
 
 function needsCloudUpload(record = {}, linkedPcr = null) {
   const statusText = String(record.status || "").toLowerCase();
   const localStatusText = String(record.localStatus || "").toLowerCase();
-  const syncText = String(record.syncLabel || record.sync_status || "").toLowerCase();
-  const displayText = String(displayStatus(record, linkedPcr) || "").toLowerCase();
+  const syncText = String(
+    record.syncLabel || record.sync_status || "",
+  ).toLowerCase();
+  const displayText = String(
+    displayStatus(record, linkedPcr) || "",
+  ).toLowerCase();
   const hasLinkedPcr = Boolean(linkedPcr || record.linkedPcrId || record.pcr);
-  const linkedPcrSource = String(linkedPcr?.recordSource || linkedPcr?.source || "").toLowerCase();
-  const linkedPcrSyncText = String(linkedPcr?.syncLabel || linkedPcr?.sync_status || "").toLowerCase();
-  const linkedPcrNeedsCloud = Boolean(linkedPcr)
-    && linkedPcrSource !== "cloud"
-    && (
-      !linkedPcr?.synced_to_cloud
-      || linkedPcrSyncText.includes("pending")
-      || linkedPcrSyncText.includes("waiting for internet")
-      || String(linkedPcr.localStatus || "").toLowerCase().includes("device")
-    );
+  const linkedPcrSource = String(
+    linkedPcr?.recordSource || linkedPcr?.source || "",
+  ).toLowerCase();
+  const linkedPcrSyncText = String(
+    linkedPcr?.syncLabel || linkedPcr?.sync_status || "",
+  ).toLowerCase();
+  const linkedPcrNeedsCloud =
+    Boolean(linkedPcr) &&
+    linkedPcrSource !== "cloud" &&
+    (!linkedPcr?.synced_to_cloud ||
+      linkedPcrSyncText.includes("pending") ||
+      linkedPcrSyncText.includes("waiting for internet") ||
+      String(linkedPcr.localStatus || "")
+        .toLowerCase()
+        .includes("device"));
   if (linkedPcrNeedsCloud) return true;
-  const cloudSynced = record.synced_to_cloud === true || syncText.includes("cloud synced");
+  const cloudSynced =
+    record.synced_to_cloud === true || syncText.includes("cloud synced");
   if (cloudSynced && !syncText.includes("pending")) return false;
   return (
-      syncText.includes("pending")
-      || syncText.includes("waiting for internet")
-      || localStatusText.includes("submitted on device")
-      || localStatusText.includes("pcr draft on device")
-      || statusText.includes("submitted on device")
-      || statusText.includes("pcr completed")
-      || displayText.includes("submitted on device")
-      || displayText.includes("pcr completed")
-      || (hasLinkedPcr && record.recordSource === "device")
-    );
+    syncText.includes("pending") ||
+    syncText.includes("waiting for internet") ||
+    localStatusText.includes("submitted on device") ||
+    localStatusText.includes("pcr draft on device") ||
+    statusText.includes("submitted on device") ||
+    statusText.includes("pcr completed") ||
+    displayText.includes("submitted on device") ||
+    displayText.includes("pcr completed") ||
+    (hasLinkedPcr && record.recordSource === "device")
+  );
 }
 
 function dispatchStatusRank(record = {}) {
@@ -194,15 +232,19 @@ function dispatchStatusRank(record = {}) {
 function logicalDispatchKey(record = {}) {
   // A response can have more than one dispatch form. Keep each dispatch form
   // distinct so a verified record is not hidden by a draft for the response.
-  return record.dispatchId
-    || record.id
-    || record.dispatchClientId
-    || record.responseClientId
-    || record.responseId;
+  return (
+    record.dispatchId ||
+    record.id ||
+    record.dispatchClientId ||
+    record.responseClientId ||
+    record.responseId
+  );
 }
 
 function normalizeKeyPart(value) {
-  return String(value || "").trim().toLowerCase();
+  return String(value || "")
+    .trim()
+    .toLowerCase();
 }
 
 function pcrPatientKey(record = {}) {
@@ -212,24 +254,46 @@ function pcrPatientKey(record = {}) {
     normalizeKeyPart(record.timeOfIncident),
     normalizeKeyPart(record.latitude || "").slice(0, 8),
     normalizeKeyPart(record.longitude || "").slice(0, 8),
-  ].filter(Boolean).join("|");
+  ]
+    .filter(Boolean)
+    .join("|");
 }
 
 function firstPreviewValue(...values) {
-  return values.find(value => value !== null && value !== undefined && String(value).trim() !== "") || "";
+  return (
+    values.find(
+      (value) =>
+        value !== null && value !== undefined && String(value).trim() !== "",
+    ) || ""
+  );
 }
 
 function latestPcrVital(pcr = {}) {
-  return [...(pcr.vitals || [])].reverse().find(row =>
-    [row?.bp, row?.pulse, row?.respiratory, row?.temperature, row?.oxygen].some(Boolean)
-  ) || {};
+  return (
+    [...(pcr.vitals || [])]
+      .reverse()
+      .find((row) =>
+        [
+          row?.bp,
+          row?.pulse,
+          row?.respiratory,
+          row?.temperature,
+          row?.oxygen,
+        ].some(Boolean),
+      ) || {}
+  );
 }
 
 function latestPcrGcsTotal(pcr = {}) {
-  const row = [...(pcr.gcsRows || (pcr.gcs ? [pcr.gcs] : []))].reverse().find(item =>
-    [item?.eye, item?.verbal, item?.motor].some(Boolean)
-  ) || {};
-  const total = [row.eye, row.verbal, row.motor].reduce((sum, score) => sum + Number(score || 0), 0);
+  const row =
+    [...(pcr.gcsRows || (pcr.gcs ? [pcr.gcs] : []))]
+      .reverse()
+      .find((item) => [item?.eye, item?.verbal, item?.motor].some(Boolean)) ||
+    {};
+  const total = [row.eye, row.verbal, row.motor].reduce(
+    (sum, score) => sum + Number(score || 0),
+    0,
+  );
   return total || "";
 }
 
@@ -243,10 +307,13 @@ function pcrCrashRoleFlags(crash = {}) {
 }
 
 function plusMinusPreview(value) {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (["positive", "+", "yes"].includes(normalized)) return "+";
   if (["negative", "-", "no"].includes(normalized)) return "-";
-  if (["n/a", "n-a", "na", "unknown", "not applicable"].includes(normalized)) return "N-A";
+  if (["n/a", "n-a", "na", "unknown", "not applicable"].includes(normalized))
+    return "N-A";
   return value || "";
 }
 
@@ -307,11 +374,23 @@ function dispatchPreviewRecord(record = {}, pcr = null) {
   if (!pcr) return { ...record, linkedPcr: null, pcr: null };
   const pcrPatient = pcrPatientForDispatchPreview(pcr);
   const patients = record.patients?.length
-    ? record.patients.map((patient, index) => index ? patient : mergePreferPcr(patient, pcrPatient))
+    ? record.patients.map((patient, index) =>
+        index ? patient : mergePreferPcr(patient, pcrPatient),
+      )
     : [pcrPatient];
   const pcrTimeline = pcr.timeline || {};
-  const arrivalOffice = firstPreviewValue(pcr.backToBase, pcrTimeline.backToBase, record.arrivalAtOffice, record.arrivalOffice, record.backToBase);
-  const pcrHospital = firstPreviewValue(pcr.hospitalName, pcr.endorsementHospital, pcr.hospitalization?.where);
+  const arrivalOffice = firstPreviewValue(
+    pcr.backToBase,
+    pcrTimeline.backToBase,
+    record.arrivalAtOffice,
+    record.arrivalOffice,
+    record.backToBase,
+  );
+  const pcrHospital = firstPreviewValue(
+    pcr.hospitalName,
+    pcr.endorsementHospital,
+    pcr.hospitalization?.where,
+  );
   return {
     ...pcr,
     ...record,
@@ -321,48 +400,160 @@ function dispatchPreviewRecord(record = {}, pcr = null) {
     driver: firstPreviewValue(record.driver, pcr.driver),
     mainAider: firstPreviewValue(record.mainAider, pcr.mainAider),
     groupLeader: firstPreviewValue(record.groupLeader, pcr.groupLeader),
-    assistantAider: firstPreviewValue(record.assistantAider, pcr.assistantAider),
-    callerName: firstPreviewValue(record.callerName, pcr.callerName, pcr.contactPerson),
-    callerAddress: firstPreviewValue(record.callerAddress, pcr.callerAddress, pcr.contactAddress, pcr.address),
-    callerContact: firstPreviewValue(record.callerContact, pcr.callerContact, pcr.contactNumber),
+    assistantAider: firstPreviewValue(
+      record.assistantAider,
+      pcr.assistantAider,
+    ),
+    callerName: firstPreviewValue(
+      record.callerName,
+      pcr.callerName,
+      pcr.contactPerson,
+    ),
+    callerAddress: firstPreviewValue(
+      record.callerAddress,
+      pcr.callerAddress,
+      pcr.contactAddress,
+      pcr.address,
+    ),
+    callerContact: firstPreviewValue(
+      record.callerContact,
+      pcr.callerContact,
+      pcr.contactNumber,
+    ),
     natureTypes: pcrIncidentTypesForDispatchPreview(record, pcr),
     otherMedical: firstPreviewValue(pcr.emergencyOther, record.otherMedical),
     otherTrauma: firstPreviewValue(record.otherTrauma, pcr.traumaOther),
-    incidentNature: firstPreviewValue(pcr.incidentNature, record.incidentNature),
-    ingestionDetails: firstPreviewValue(pcr.ingestionItem, record.ingestionDetails),
+    incidentNature: firstPreviewValue(
+      pcr.incidentNature,
+      record.incidentNature,
+    ),
+    ingestionDetails: firstPreviewValue(
+      pcr.ingestionItem,
+      record.ingestionDetails,
+    ),
     ifIngestion: firstPreviewValue(pcr.ingestionItem, record.ifIngestion),
-    ingestionQuantity: firstPreviewValue(pcr.ingestionQuantity, record.ingestionQuantity),
+    ingestionQuantity: firstPreviewValue(
+      pcr.ingestionQuantity,
+      record.ingestionQuantity,
+    ),
     quantity: firstPreviewValue(pcr.ingestionQuantity, record.quantity),
     fallDetails: firstPreviewValue(pcr.fallDetails, record.fallDetails),
     ifFall: firstPreviewValue(pcr.fallDetails, record.ifFall),
     selfAccident: Boolean(pcr.crash?.selfAccident || record.selfAccident),
     collision: Boolean(pcr.crash?.collision || record.collision),
-    vehicleInvolved: firstPreviewValue(pcr.crash?.vehicle, record.vehicleInvolved, record.vehicleInvolve),
-    vehicleInvolve: firstPreviewValue(pcr.crash?.vehicle, record.vehicleInvolve, record.vehicleInvolved),
-    placeOfIncident: firstPreviewValue(record.placeOfIncident, pcr.placeOfIncident, pcr.locationText),
-    locationText: firstPreviewValue(record.locationText, pcr.locationText, pcr.placeOfIncident),
+    vehicleInvolved: firstPreviewValue(
+      pcr.crash?.vehicle,
+      record.vehicleInvolved,
+      record.vehicleInvolve,
+    ),
+    vehicleInvolve: firstPreviewValue(
+      pcr.crash?.vehicle,
+      record.vehicleInvolve,
+      record.vehicleInvolved,
+    ),
+    placeOfIncident: firstPreviewValue(
+      record.placeOfIncident,
+      pcr.placeOfIncident,
+      pcr.locationText,
+    ),
+    locationText: firstPreviewValue(
+      record.locationText,
+      pcr.locationText,
+      pcr.placeOfIncident,
+    ),
     barangay: firstPreviewValue(record.barangay, pcr.barangay),
     barangayId: record.barangayId || pcr.barangayId || null,
     latitude: firstPreviewValue(record.latitude, pcr.latitude),
     longitude: firstPreviewValue(record.longitude, pcr.longitude),
-    locationGeography: firstPreviewValue(record.locationGeography, pcr.locationGeography),
-    dispatchedTime: firstPreviewValue(pcr.dispatchTime, pcr.dispatchedTime, pcrTimeline.dispatchTime, record.dispatchedTime, record.dispatchTime),
-    dispatchTime: firstPreviewValue(pcr.dispatchTime, pcr.dispatchedTime, pcrTimeline.dispatchTime, record.dispatchTime, record.dispatchedTime),
-    arrivalAtScene: firstPreviewValue(pcr.arrivalScene, pcrTimeline.arrivalScene, record.arrivalAtScene, record.arrivalScene),
-    arrivalScene: firstPreviewValue(pcr.arrivalScene, pcrTimeline.arrivalScene, record.arrivalScene, record.arrivalAtScene),
-    departureAtScene: firstPreviewValue(pcr.departureScene, pcrTimeline.departureScene, record.departureAtScene, record.departureScene),
-    departureScene: firstPreviewValue(pcr.departureScene, pcrTimeline.departureScene, record.departureScene, record.departureAtScene),
-    arrivalAtHospital: firstPreviewValue(pcr.arrivalHospital, pcrTimeline.arrivalHospital, record.arrivalAtHospital, record.arrivalHospital),
-    arrivalHospital: firstPreviewValue(pcr.arrivalHospital, pcrTimeline.arrivalHospital, record.arrivalHospital, record.arrivalAtHospital),
-    departureAtHospital: firstPreviewValue(pcr.departureHospital, pcrTimeline.departureHospital, record.departureAtHospital, record.departureHospital),
-    departureHospital: firstPreviewValue(pcr.departureHospital, pcrTimeline.departureHospital, record.departureHospital, record.departureAtHospital),
+    locationGeography: firstPreviewValue(
+      record.locationGeography,
+      pcr.locationGeography,
+    ),
+    dispatchedTime: firstPreviewValue(
+      pcr.dispatchTime,
+      pcr.dispatchedTime,
+      pcrTimeline.dispatchTime,
+      record.dispatchedTime,
+      record.dispatchTime,
+    ),
+    dispatchTime: firstPreviewValue(
+      pcr.dispatchTime,
+      pcr.dispatchedTime,
+      pcrTimeline.dispatchTime,
+      record.dispatchTime,
+      record.dispatchedTime,
+    ),
+    arrivalAtScene: firstPreviewValue(
+      pcr.arrivalScene,
+      pcrTimeline.arrivalScene,
+      record.arrivalAtScene,
+      record.arrivalScene,
+    ),
+    arrivalScene: firstPreviewValue(
+      pcr.arrivalScene,
+      pcrTimeline.arrivalScene,
+      record.arrivalScene,
+      record.arrivalAtScene,
+    ),
+    departureAtScene: firstPreviewValue(
+      pcr.departureScene,
+      pcrTimeline.departureScene,
+      record.departureAtScene,
+      record.departureScene,
+    ),
+    departureScene: firstPreviewValue(
+      pcr.departureScene,
+      pcrTimeline.departureScene,
+      record.departureScene,
+      record.departureAtScene,
+    ),
+    arrivalAtHospital: firstPreviewValue(
+      pcr.arrivalHospital,
+      pcrTimeline.arrivalHospital,
+      record.arrivalAtHospital,
+      record.arrivalHospital,
+    ),
+    arrivalHospital: firstPreviewValue(
+      pcr.arrivalHospital,
+      pcrTimeline.arrivalHospital,
+      record.arrivalHospital,
+      record.arrivalAtHospital,
+    ),
+    departureAtHospital: firstPreviewValue(
+      pcr.departureHospital,
+      pcrTimeline.departureHospital,
+      record.departureAtHospital,
+      record.departureHospital,
+    ),
+    departureHospital: firstPreviewValue(
+      pcr.departureHospital,
+      pcrTimeline.departureHospital,
+      record.departureHospital,
+      record.departureAtHospital,
+    ),
     arrivalAtOffice: arrivalOffice,
     arrivalOffice,
     backToBase: arrivalOffice,
-    hospitalName: firstPreviewValue(pcrHospital, record.hospitalName, record.nameOfHospital),
-    nameOfHospital: firstPreviewValue(pcrHospital, record.nameOfHospital, record.hospitalName),
-    dateOfIncident: firstPreviewValue(record.dateOfIncident, pcr.dateOfIncident, pcrTimeline.dateOfIncident),
-    timeOfIncident: firstPreviewValue(record.timeOfIncident, pcr.timeOfIncident, pcrTimeline.timeOfIncident),
+    hospitalName: firstPreviewValue(
+      pcrHospital,
+      record.hospitalName,
+      record.nameOfHospital,
+    ),
+    nameOfHospital: firstPreviewValue(
+      pcrHospital,
+      record.nameOfHospital,
+      record.hospitalName,
+    ),
+    dateOfIncident: firstPreviewValue(
+      record.dateOfIncident,
+      pcr.dateOfIncident,
+      pcrTimeline.dateOfIncident,
+    ),
+    timeOfIncident: firstPreviewValue(
+      record.timeOfIncident,
+      pcr.timeOfIncident,
+      pcrTimeline.timeOfIncident,
+    ),
     patients,
     linkedPcr: pcr,
     pcr,
@@ -387,37 +578,59 @@ function samePcrRecord(local = {}, cloud = {}) {
     local.pcrClientId,
     local.responseId,
     local.responseClientId,
-  ].filter(Boolean).map(String);
+  ]
+    .filter(Boolean)
+    .map(String);
   const cloudKeys = [
     cloud.id,
     cloud.pcrId,
     cloud.pcrClientId,
     cloud.responseId,
     cloud.responseClientId,
-  ].filter(Boolean).map(String);
-  if (localKeys.some(key => cloudKeys.includes(key))) return true;
+  ]
+    .filter(Boolean)
+    .map(String);
+  if (localKeys.some((key) => cloudKeys.includes(key))) return true;
   const responseNumber = normalizeKeyPart(local.responseNumber);
-  if (responseNumber && responseNumber === normalizeKeyPart(cloud.responseNumber)) {
+  if (
+    responseNumber &&
+    responseNumber === normalizeKeyPart(cloud.responseNumber)
+  ) {
     const localPatientKey = pcrPatientKey(local);
     const cloudPatientKey = pcrPatientKey(cloud);
-    return !localPatientKey || !cloudPatientKey || localPatientKey === cloudPatientKey;
+    return (
+      !localPatientKey ||
+      !cloudPatientKey ||
+      localPatientKey === cloudPatientKey
+    );
   }
   return false;
 }
 
 async function confirmCloudPcrUpload(savedRecord, fallbackRecord) {
   const responseId = savedRecord?.responseId || fallbackRecord?.responseId;
-  if (!responseId) throw new Error("Cloud upload did not return a response ID.");
+  if (!responseId)
+    throw new Error("Cloud upload did not return a response ID.");
   const confirmed = await getPCRReportByResponse(responseId);
   if (!confirmed?.id && !confirmed?.pcrId) {
-    throw new Error("PCR upload was attempted, but Supabase did not return the PCR record.");
+    throw new Error(
+      "PCR upload was attempted, but Supabase did not return the PCR record.",
+    );
   }
   return {
     ...fallbackRecord,
     ...savedRecord,
     ...confirmed,
-    responseId: confirmed.responseId || savedRecord.responseId || fallbackRecord.responseId,
-    pcrId: confirmed.pcrId || confirmed.id || savedRecord.pcrId || savedRecord.id || fallbackRecord.pcrId,
+    responseId:
+      confirmed.responseId ||
+      savedRecord.responseId ||
+      fallbackRecord.responseId,
+    pcrId:
+      confirmed.pcrId ||
+      confirmed.id ||
+      savedRecord.pcrId ||
+      savedRecord.id ||
+      fallbackRecord.pcrId,
   };
 }
 
@@ -431,22 +644,53 @@ function mergeDispatchRecords(records) {
     const currentStatusRank = dispatchStatusRank(current);
     const recordSourceRank = SOURCE_RANK[record.recordSource] || 0;
     const currentSourceRank = SOURCE_RANK[current?.recordSource] || 0;
-    if (!current || recordStatusRank > currentStatusRank || (recordStatusRank === currentStatusRank && recordSourceRank >= currentSourceRank)) {
+    if (
+      !current ||
+      recordStatusRank > currentStatusRank ||
+      (recordStatusRank === currentStatusRank &&
+        recordSourceRank >= currentSourceRank)
+    ) {
       const cloudWinner = record.recordSource === "cloud";
-      const hasPendingLocal = [record, current].some(item => item && item.recordSource === "device" && item.synced_to_cloud !== true);
+      const hasPendingLocal = [record, current].some(
+        (item) =>
+          item &&
+          item.recordSource === "device" &&
+          item.synced_to_cloud !== true,
+      );
       byId.set(id, {
         ...current,
         ...record,
-        localStatus: cloudWinner && !hasPendingLocal ? null : recordStatusRank >= currentStatusRank ? record.localStatus : current?.localStatus,
-        status: recordStatusRank >= currentStatusRank ? record.status : current?.status,
-        syncLabel: hasPendingLocal ? "Pending cloud synchronization" : cloudWinner ? "Cloud synced" : record.syncLabel || current?.syncLabel,
+        localStatus:
+          cloudWinner && !hasPendingLocal
+            ? null
+            : recordStatusRank >= currentStatusRank
+              ? record.localStatus
+              : current?.localStatus,
+        status:
+          recordStatusRank >= currentStatusRank
+            ? record.status
+            : current?.status,
+        syncLabel: hasPendingLocal
+          ? "Pending cloud synchronization"
+          : cloudWinner
+            ? "Cloud synced"
+            : record.syncLabel || current?.syncLabel,
         id: record.id || current?.id || id,
         dispatchId: record.dispatchId || current?.dispatchId || record.id || id,
-        updatedAt: record.updatedAt || record.updated_at_device || record.updated_at || current?.updatedAt || new Date().toISOString(),
+        updatedAt:
+          record.updatedAt ||
+          record.updated_at_device ||
+          record.updated_at ||
+          current?.updatedAt ||
+          new Date().toISOString(),
       });
     }
   }
-  return [...byId.values()].sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+  return [...byId.values()].sort((a, b) =>
+    String(b.updatedAt || b.createdAt || "").localeCompare(
+      String(a.updatedAt || a.createdAt || ""),
+    ),
+  );
 }
 
 export default function DispatchRecords() {
@@ -481,114 +725,236 @@ export default function DispatchRecords() {
     setError("");
     try {
       const mode = getConnectionState().mode;
-      const cloudRows = await listDispatchRecords({ limit: 50 }).catch(error => {
-        if (mode === "cloud") throw error;
-        return [];
-      });
-      const localDeviceRows = await hybridRepository.getLocalDispatchRecords().catch(() => []);
+      const cloudRows = await listDispatchRecords({ limit: 50 }).catch(
+        (error) => {
+          if (mode === "cloud") throw error;
+          return [];
+        },
+      );
+      const localDeviceRows = await hybridRepository
+        .getLocalDispatchRecords()
+        .catch(() => []);
       if (cloudRows.length) {
-        await hybridRepository.reconcileCloudDispatches(cloudRows).catch(() => 0);
+        await hybridRepository
+          .reconcileCloudDispatches(cloudRows)
+          .catch(() => 0);
       }
       const reconciledLocalRows = cloudRows.length
-        ? await hybridRepository.getLocalDispatchRecords().catch(() => localDeviceRows)
+        ? await hybridRepository
+            .getLocalDispatchRecords()
+            .catch(() => localDeviceRows)
         : localDeviceRows;
-      const localPcrRows = await hybridRepository.getLocalPcrReports().catch(() => []);
+      const localPcrRows = await hybridRepository
+        .getLocalPcrReports()
+        .catch(() => []);
       const rows = mergeDispatchRecords([
-        ...reconciledLocalRows.map(record => ({ ...record, recordSource: "device" })),
-        ...cloudRows.map(record => ({ ...record, recordSource: "cloud" })),
+        ...reconciledLocalRows.map((record) => ({
+          ...record,
+          recordSource: "device",
+        })),
+        ...cloudRows.map((record) => ({ ...record, recordSource: "cloud" })),
       ]);
       if (!mountedRef.current) return;
       setRecords(rows);
       const cloudPcrByResponse = new Map();
       if (mode === "cloud") {
-        const responseIds = rows.map(record => record.responseId).filter(Boolean);
-        const cloudPcrRows = await listPCRReportsByResponses(responseIds).catch(() => []);
-        cloudPcrRows.forEach(pcr => {
-          const linked = { ...pcr, recordSource: "cloud", syncLabel: "Cloud synced" };
-          [pcr.responseId, pcr.responseClientId, pcr.dispatchId, pcr.dispatchClientId]
+        const responseIds = rows
+          .map((record) => record.responseId)
+          .filter(Boolean);
+        const cloudPcrRows = await listPCRReportsByResponses(responseIds).catch(
+          () => [],
+        );
+        cloudPcrRows.forEach((pcr) => {
+          const linked = {
+            ...pcr,
+            recordSource: "cloud",
+            syncLabel: "Cloud synced",
+          };
+          [
+            pcr.responseId,
+            pcr.responseClientId,
+            pcr.dispatchId,
+            pcr.dispatchClientId,
+          ]
             .filter(Boolean)
-            .forEach(id => cloudPcrByResponse.set(String(id), linked));
+            .forEach((id) => cloudPcrByResponse.set(String(id), linked));
         });
       }
-      const pairs = await Promise.all(rows.map(async record => {
-        const key = linkedPcrKey(record);
-        const cloudPcr = [record.responseId, record.responseClientId, record.dispatchId, record.dispatchClientId]
-          .filter(Boolean)
-          .map(id => cloudPcrByResponse.get(String(id)))
-          .find(Boolean);
-        if (cloudPcr) {
-          logPcrSync("Linked cloud PCR to dispatch", {
-            key,
-            responseId: record.responseId,
-            responseClientId: record.responseClientId,
-            dispatchId: record.dispatchId,
-            dispatchClientId: record.dispatchClientId,
-            pcrId: cloudPcr.pcrId || cloudPcr.id,
-            pcrResponseId: cloudPcr.responseId,
-          });
-          return [key, cloudPcr];
-        }
-        const localPcr = localPcrRows
-          .find(pcr => sameLinkedPcrForDispatch(record, pcr));
-        if (localPcr) {
-          logPcrSync("Linked device PCR to dispatch", {
-            key,
-            responseId: record.responseId,
-            responseClientId: record.responseClientId,
-            dispatchId: record.dispatchId,
-            dispatchClientId: record.dispatchClientId,
-            pcrId: localPcr.pcrId || localPcr.id,
-            pcrResponseId: localPcr.responseId || localPcr.response_id,
-            pcrDispatchId: localPcr.dispatchId || localPcr.dispatch_form_id,
-            source: localPcr.recordSource || localPcr.source,
-            syncStatus: localPcr.sync_status,
-            syncLabel: localPcr.syncLabel,
-          });
-          const cloudEquivalent = localPcrRows.find(pcr =>
-            (pcr.synced_to_cloud || String(pcr.syncLabel || pcr.sync_status || "").toLowerCase().includes("cloud synced"))
-            && samePcrRecord(localPcr, pcr)
-          );
-          if (cloudEquivalent) {
-            logPcrSync("Local PCR already has a cloud-synced equivalent", {
+      const pairs = await Promise.all(
+        rows.map(async (record) => {
+          const key = linkedPcrKey(record);
+          const cloudPcr = [
+            record.responseId,
+            record.responseClientId,
+            record.dispatchId,
+            record.dispatchClientId,
+          ]
+            .filter(Boolean)
+            .map((id) => cloudPcrByResponse.get(String(id)))
+            .find(Boolean);
+          if (cloudPcr) {
+            logPcrSync("Linked cloud PCR to dispatch", {
               key,
-              localPcrId: localPcr.pcrId || localPcr.id,
-              cloudPcrId: cloudEquivalent.pcrId || cloudEquivalent.id,
-              cloudResponseId: cloudEquivalent.responseId,
+              responseId: record.responseId,
+              responseClientId: record.responseClientId,
+              dispatchId: record.dispatchId,
+              dispatchClientId: record.dispatchClientId,
+              pcrId: cloudPcr.pcrId || cloudPcr.id,
+              pcrResponseId: cloudPcr.responseId,
             });
-            return [key, { ...cloudEquivalent, recordSource: "cloud", syncLabel: "Cloud synced" }];
+            return [key, cloudPcr];
           }
-        } else {
-          logPcrSync("No linked PCR found for dispatch during refresh", {
+          const localPcr = localPcrRows.find((pcr) =>
+            sameLinkedPcrForDispatch(record, pcr),
+          );
+          if (localPcr) {
+            logPcrSync("Linked device PCR to dispatch", {
+              key,
+              responseId: record.responseId,
+              responseClientId: record.responseClientId,
+              dispatchId: record.dispatchId,
+              dispatchClientId: record.dispatchClientId,
+              pcrId: localPcr.pcrId || localPcr.id,
+              pcrResponseId: localPcr.responseId || localPcr.response_id,
+              pcrDispatchId: localPcr.dispatchId || localPcr.dispatch_form_id,
+              source: localPcr.recordSource || localPcr.source,
+              syncStatus: localPcr.sync_status,
+              syncLabel: localPcr.syncLabel,
+            });
+            const cloudEquivalent = localPcrRows.find(
+              (pcr) =>
+                (pcr.synced_to_cloud ||
+                  String(pcr.syncLabel || pcr.sync_status || "")
+                    .toLowerCase()
+                    .includes("cloud synced")) &&
+                samePcrRecord(localPcr, pcr),
+            );
+            if (cloudEquivalent) {
+              logPcrSync("Local PCR already has a cloud-synced equivalent", {
+                key,
+                localPcrId: localPcr.pcrId || localPcr.id,
+                cloudPcrId: cloudEquivalent.pcrId || cloudEquivalent.id,
+                cloudResponseId: cloudEquivalent.responseId,
+              });
+              return [
+                key,
+                {
+                  ...cloudEquivalent,
+                  recordSource: "cloud",
+                  syncLabel: "Cloud synced",
+                },
+              ];
+            }
+          } else {
+            logPcrSync("No linked PCR found for dispatch during refresh", {
+              key,
+              responseId: record.responseId,
+              responseClientId: record.responseClientId,
+              dispatchId: record.dispatchId,
+              dispatchClientId: record.dispatchClientId,
+              responseNumber: record.responseNumber,
+            });
+          }
+          return [
             key,
-            responseId: record.responseId,
-            responseClientId: record.responseClientId,
-            dispatchId: record.dispatchId,
-            dispatchClientId: record.dispatchClientId,
-            responseNumber: record.responseNumber,
-          });
-        }
-        return [key, localPcr ? {
-          ...localPcr,
-          recordSource: localPcr.recordSource || localPcr.source || "device",
-          syncLabel: localPcr.syncLabel || "Waiting for internet",
-        } : null];
-      }));
+            localPcr
+              ? {
+                  ...localPcr,
+                  recordSource:
+                    localPcr.recordSource || localPcr.source || "device",
+                  syncLabel: localPcr.syncLabel || "Waiting for internet",
+                }
+              : null,
+          ];
+        }),
+      );
       if (!mountedRef.current) return;
       setLinkedPCRs(Object.fromEntries(pairs));
     } catch (requestError) {
       if (!mountedRef.current) return;
       setError(requestError.message || "Unable to load Dispatch Form Records.");
-      toast.error(requestError.message || "Unable to load Dispatch Form Records.");
+      toast.error(
+        requestError.message || "Unable to load Dispatch Form Records.",
+      );
     } finally {
       if (mountedRef.current && !silent) setLoading(false);
       refreshInFlightRef.current = false;
       if (mountedRef.current && refreshQueuedRef.current) {
         refreshQueuedRef.current = false;
         window.clearTimeout(refreshQueuedTimerRef.current);
-        refreshQueuedTimerRef.current = window.setTimeout(() => refresh({ silent: true }), 150);
+        refreshQueuedTimerRef.current = window.setTimeout(
+          () => refresh({ silent: true }),
+          150,
+        );
       }
     }
   }, []);
+
+  const [sortColumn, setSortColumn] = useState("updatedAt");
+  const [sortDirection, setSortDirection] = useState("desc");
+
+  const sortRecords = useCallback((recordsToSort) => {
+  return [...recordsToSort].sort((a, b) => {
+    let aValue, bValue;
+
+    switch (sortColumn) {
+      case "Response No.":
+        aValue = String(a.responseNumber || "").toLowerCase();
+        bValue = String(b.responseNumber || "").toLowerCase();
+        break;
+      case "Incident":
+        aValue = String(a.natureTypes?.join("") || "").toLowerCase();
+        bValue = String(b.natureTypes?.join("") || "").toLowerCase();
+        break;
+      case "Patient":
+        aValue = String(a.patients?.[0]?.name || a.patientName || "").toLowerCase();
+        bValue = String(b.patients?.[0]?.name || b.patientName || "").toLowerCase();
+        break;
+      case "Location / Barangay":
+        aValue = String(a.barangay || a.placeOfIncident || "").toLowerCase();
+        bValue = String(b.barangay || b.placeOfIncident || "").toLowerCase();
+        break;
+      case "Responding Team / Unit":
+        aValue = String(a.team || "").toLowerCase();
+        bValue = String(b.team || "").toLowerCase();
+        break;
+      case "Status":
+        aValue = displayStatus(a, linkedPcrFromMap(linkedPCRs, a));
+        bValue = displayStatus(b, linkedPcrFromMap(linkedPCRs, b));
+        aValue = String(aValue || "").toLowerCase();
+        bValue = String(bValue || "").toLowerCase();
+        break;
+      case "Updated":
+        aValue = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        bValue = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        break;
+      default:
+        return 0;
+    }
+
+    if (typeof aValue === "string") {
+      return sortDirection === "asc" 
+        ? aValue.localeCompare(bValue)
+        : bValue.localeCompare(aValue);
+    }
+    
+    return sortDirection === "asc" ? aValue - bValue : bValue - aValue;
+  });
+}, [sortColumn, sortDirection, linkedPCRs]);
+
+
+
+    const handleHeaderClick = (column) => {
+    if (sortColumn === column) {
+   
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+   
+      setSortColumn(column);
+      setSortDirection("asc");
+    }
+  };
+
 
   useEffect(() => {
     mountedRef.current = true;
@@ -603,8 +969,13 @@ export default function DispatchRecords() {
 
   useEffect(() => {
     let timer;
-    const unsubscribe = subscribeLiveSyncEvents(event => {
-      if (!["dispatch_changed", "pcr_changed", "response_changed"].includes(event.type)) return;
+    const unsubscribe = subscribeLiveSyncEvents((event) => {
+      if (
+        !["dispatch_changed", "pcr_changed", "response_changed"].includes(
+          event.type,
+        )
+      )
+        return;
       clearTimeout(timer);
       timer = window.setTimeout(() => refresh({ silent: true }), 250);
     });
@@ -624,30 +995,53 @@ export default function DispatchRecords() {
     return () => window.clearInterval(interval);
   }, [connection.mode, refresh]);
 
-  const filtered = useMemo(() => records.filter(record => {
-    const derivedStatus = displayStatus(record, linkedPcrFromMap(linkedPCRs, record));
-    const archived = Boolean(record.archived || record.deleted_at || record.deletedAt);
-    const text = [
-      record.responseNumber,
-      record.callerName,
-      record.placeOfIncident,
-      record.team,
-      record.vehicle,
-      record.groupLeader,
-      record.patients?.[0]?.name,
-    ].join(" ").toLowerCase();
-    return (archiveView === "Archived" ? archived : !archived)
-      && (status === "All" || record.status === status || record.localStatus === status || derivedStatus === status)
-      && text.includes(query.toLowerCase());
-  }), [records, linkedPCRs, query, status, archiveView]);
+  const filtered = useMemo(
+    () =>
+      records.filter((record) => {
+        const derivedStatus = displayStatus(
+          record,
+          linkedPcrFromMap(linkedPCRs, record),
+        );
+        const archived = Boolean(
+          record.archived || record.deleted_at || record.deletedAt,
+        );
+        const text = [
+          record.responseNumber,
+          record.callerName,
+          record.placeOfIncident,
+          record.team,
+          record.vehicle,
+          record.groupLeader,
+          record.patients?.[0]?.name,
+        ]
+          .join(" ")
+          .toLowerCase();
+        return (
+          (archiveView === "Archived" ? archived : !archived) &&
+          (status === "All" ||
+            record.status === status ||
+            record.localStatus === status ||
+            derivedStatus === status) &&
+          text.includes(query.toLowerCase())
+        );
+      }),
+    [records, linkedPCRs, query, status, archiveView],
+  );
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const visibleRecords = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const sortedRecords = useMemo(
+    () => sortRecords(filtered),
+    [filtered, sortRecords],
+  );
+
+  const pageCount = Math.max(1, Math.ceil(sortedRecords.length / pageSize));
+  const visibleRecords = sortedRecords.slice((page - 1) * pageSize, page * pageSize);
 
   const selectedPreview = useMemo(() => {
     if (!selected) return null;
     const selectedKey = logicalDispatchKey(selected);
-    const latestRecord = records.find(record => logicalDispatchKey(record) === selectedKey);
+    const latestRecord = records.find(
+      (record) => logicalDispatchKey(record) === selectedKey,
+    );
     if (!latestRecord) return selected;
     const latestPcr = linkedPcrFromMap(linkedPCRs, latestRecord);
     return {
@@ -658,49 +1052,85 @@ export default function DispatchRecords() {
 
   useEffect(() => setPage(1), [query, status, archiveView]);
 
-  const edit = record => {
+  const edit = (record) => {
     sessionStorage.setItem(DISPATCH_EDIT_KEY, record.id);
     navigate(`/admin/dispatch/new?edit=${record.id}`);
   };
 
-  const resolveLinkedPcr = async record => {
+  const resolveLinkedPcr = async (record) => {
     const cached = linkedPcrFromMap(linkedPCRs, record);
     if (cached) return cached;
     if (record.responseId) {
-      const cloudPcr = await getPCRReportByResponse(record.responseId).catch(() => null);
-      if (cloudPcr) return { ...cloudPcr, recordSource: "cloud", syncLabel: "Cloud synced" };
+      const cloudPcr = await getPCRReportByResponse(record.responseId).catch(
+        () => null,
+      );
+      if (cloudPcr)
+        return {
+          ...cloudPcr,
+          recordSource: "cloud",
+          syncLabel: "Cloud synced",
+        };
       const localPcr = await getLocalPcrForDispatch(record);
       if (localPcr) return localPcr;
     }
-    const localPcrRows = await hybridRepository.getLocalPcrReports().catch(() => []);
-    return localPcrRows.find(pcr => sameLinkedPcrForDispatch(record, pcr)) || null;
+    const localPcrRows = await hybridRepository
+      .getLocalPcrReports()
+      .catch(() => []);
+    return (
+      localPcrRows.find((pcr) => sameLinkedPcrForDispatch(record, pcr)) || null
+    );
   };
 
-  const openPCR = async record => {
+  const openPCR = async (record) => {
     const pcr = await resolveLinkedPcr(record);
     if (!pcr) {
-      toast.error("No linked PCR found. The responding team must accept this dispatch first.");
+      toast.error(
+        "No linked PCR found. The responding team must accept this dispatch first.",
+      );
       return;
     }
     setSelectedPcr(pcr);
   };
 
   const counts = {
-    draft: records.filter(record => !record.archived && !record.deleted_at && !record.deletedAt && record.status === "Draft").length,
-    sent: records.filter(record => {
-      if (record.archived || record.deleted_at || record.deletedAt) return false;
-      const derivedStatus = displayStatus(record, linkedPcrFromMap(linkedPCRs, record));
-      return derivedStatus.includes("Sent") || derivedStatus.includes("Accepted") || derivedStatus.includes("Progress");
+    draft: records.filter(
+      (record) =>
+        !record.archived &&
+        !record.deleted_at &&
+        !record.deletedAt &&
+        record.status === "Draft",
+    ).length,
+    sent: records.filter((record) => {
+      if (record.archived || record.deleted_at || record.deletedAt)
+        return false;
+      const derivedStatus = displayStatus(
+        record,
+        linkedPcrFromMap(linkedPCRs, record),
+      );
+      return (
+        derivedStatus.includes("Sent") ||
+        derivedStatus.includes("Accepted") ||
+        derivedStatus.includes("Progress")
+      );
     }).length,
-    linked: records.filter(record => !record.archived && !record.deleted_at && !record.deletedAt && linkedPcrFromMap(linkedPCRs, record)).length,
+    linked: records.filter(
+      (record) =>
+        !record.archived &&
+        !record.deleted_at &&
+        !record.deletedAt &&
+        linkedPcrFromMap(linkedPCRs, record),
+    ).length,
   };
 
   const uploadRecordToCloud = async (record, linkedPcr = null) => {
     try {
-      const localPcrRows = await hybridRepository.getLocalPcrReports().catch(() => []);
-      const localPcr = linkedPcr
-        || await getLocalPcrForDispatch(record)
-        || localPcrRows.find(pcr => sameLinkedPcrForDispatch(record, pcr));
+      const localPcrRows = await hybridRepository
+        .getLocalPcrReports()
+        .catch(() => []);
+      const localPcr =
+        linkedPcr ||
+        (await getLocalPcrForDispatch(record)) ||
+        localPcrRows.find((pcr) => sameLinkedPcrForDispatch(record, pcr));
       logPcrSync("Manual cloud upload requested", {
         responseId: record.responseId,
         responseClientId: record.responseClientId,
@@ -713,27 +1143,50 @@ export default function DispatchRecords() {
         localPcrDispatchId: localPcr?.dispatchId || localPcr?.dispatch_form_id,
         localPcrSyncStatus: localPcr?.sync_status,
       });
-      const dispatchIds = new Set([record.id, record.dispatchId, record.dispatchClientId, record.responseId, record.responseClientId].filter(Boolean));
-      const pcrIds = new Set([localPcr?.id, localPcr?.pcrId, localPcr?.pcrClientId, localPcr?.responseId, localPcr?.responseClientId, record.linkedPcrId, record.responseId, record.responseClientId].filter(Boolean));
+      const dispatchIds = new Set(
+        [
+          record.id,
+          record.dispatchId,
+          record.dispatchClientId,
+          record.responseId,
+          record.responseClientId,
+        ].filter(Boolean),
+      );
+      const pcrIds = new Set(
+        [
+          localPcr?.id,
+          localPcr?.pcrId,
+          localPcr?.pcrClientId,
+          localPcr?.responseId,
+          localPcr?.responseClientId,
+          record.linkedPcrId,
+          record.responseId,
+          record.responseClientId,
+        ].filter(Boolean),
+      );
       const rows = await getAllRecords("sync_queue");
-      const matching = rows.filter(row => {
+      const matching = rows.filter((row) => {
         const payload = row.payload || {};
         if (row.destination !== "cloud") return false;
         if (row.entity_type === "dispatch") {
-          return dispatchIds.has(row.entity_id)
-            || dispatchIds.has(payload.id)
-            || dispatchIds.has(payload.dispatchId)
-            || dispatchIds.has(payload.dispatchClientId)
-            || dispatchIds.has(payload.responseId)
-            || dispatchIds.has(payload.responseClientId);
+          return (
+            dispatchIds.has(row.entity_id) ||
+            dispatchIds.has(payload.id) ||
+            dispatchIds.has(payload.dispatchId) ||
+            dispatchIds.has(payload.dispatchClientId) ||
+            dispatchIds.has(payload.responseId) ||
+            dispatchIds.has(payload.responseClientId)
+          );
         }
         if (row.entity_type === "pcr") {
-          return pcrIds.has(row.entity_id)
-            || pcrIds.has(payload.id)
-            || pcrIds.has(payload.pcrId)
-            || pcrIds.has(payload.pcrClientId)
-            || pcrIds.has(payload.responseId)
-            || pcrIds.has(payload.responseClientId);
+          return (
+            pcrIds.has(row.entity_id) ||
+            pcrIds.has(payload.id) ||
+            pcrIds.has(payload.pcrId) ||
+            pcrIds.has(payload.pcrClientId) ||
+            pcrIds.has(payload.responseId) ||
+            pcrIds.has(payload.responseClientId)
+          );
         }
         return false;
       });
@@ -741,7 +1194,7 @@ export default function DispatchRecords() {
       logPcrSync("Matched pending sync queue rows for upload", {
         dispatchId: record.dispatchId || record.id,
         responseId: record.responseId,
-        matchedRows: matching.map(row => ({
+        matchedRows: matching.map((row) => ({
           id: row.id,
           entityType: row.entity_type,
           entityId: row.entity_id,
@@ -751,24 +1204,32 @@ export default function DispatchRecords() {
         })),
       });
       if (matching.length) {
-        await Promise.all(matching.map(row => putRecord("sync_queue", {
-          ...row,
-          attempts: 0,
-          dependency_keys: [],
-          sync_status: "pending",
-          error_category: null,
-          blocked_reason: null,
-          last_sync_error: null,
-          next_attempt_at: now,
-          updated_at_device: now,
-        })));
+        await Promise.all(
+          matching.map((row) =>
+            putRecord("sync_queue", {
+              ...row,
+              attempts: 0,
+              dependency_keys: [],
+              sync_status: "pending",
+              error_category: null,
+              blocked_reason: null,
+              last_sync_error: null,
+              next_attempt_at: now,
+              updated_at_device: now,
+            }),
+          ),
+        );
       }
       toast.info("Uploading this dispatch and linked PCR to cloud...");
       await hybridRepository.updateDispatch(record.dispatchId || record.id, {
         ...record,
         id: record.dispatchId || record.id,
         dispatchId: record.dispatchId || record.id,
-        status: ["Submitted on Device", "Submitted Locally"].includes(displayStatus(record, localPcr)) ? "PCR Completed" : record.status,
+        status: ["Submitted on Device", "Submitted Locally"].includes(
+          displayStatus(record, localPcr),
+        )
+          ? "PCR Completed"
+          : record.status,
       });
       if (localPcr) {
         const savedPcr = await cloudClient.submitPcrHeader({
@@ -777,17 +1238,27 @@ export default function DispatchRecords() {
           id: localPcr.id || localPcr.pcrId,
           pcrId: localPcr.pcrId || localPcr.id,
           dispatchId: record.dispatchId || record.id || localPcr.dispatchId,
-          dispatchClientId: record.dispatchClientId || record.dispatchId || localPcr.dispatchClientId,
+          dispatchClientId:
+            record.dispatchClientId ||
+            record.dispatchId ||
+            localPcr.dispatchClientId,
           responseId: record.responseId || localPcr.responseId,
-          responseClientId: record.responseClientId || localPcr.responseClientId || record.responseId,
+          responseClientId:
+            record.responseClientId ||
+            localPcr.responseClientId ||
+            record.responseId,
           responseNumber: record.responseNumber || localPcr.responseNumber,
-          respondingTeamId: record.respondingTeamId || localPcr.respondingTeamId,
+          respondingTeamId:
+            record.respondingTeamId || localPcr.respondingTeamId,
           team: record.team || localPcr.team || localPcr.respondingTeam,
           status: "Submitted",
           localStatus: "Submitted on Device",
           source: localPcr.source || record.source || "offline_device",
         });
-        const confirmedPcr = await confirmCloudPcrUpload(savedPcr, { ...record, ...localPcr });
+        const confirmedPcr = await confirmCloudPcrUpload(savedPcr, {
+          ...record,
+          ...localPcr,
+        });
         logPcrSync("Cloud PCR upload confirmed", {
           savedPcrId: savedPcr?.pcrId || savedPcr?.id,
           confirmedPcrId: confirmedPcr?.pcrId || confirmedPcr?.id,
@@ -801,10 +1272,21 @@ export default function DispatchRecords() {
           ...confirmedPcr,
           id: localPcr.id || confirmedPcr.id,
           pcrId: confirmedPcr.pcrId || confirmedPcr.id || localPcr.pcrId,
-          responseId: confirmedPcr.responseId || record.responseId || localPcr.responseId,
-          responseClientId: confirmedPcr.responseClientId || record.responseClientId || localPcr.responseClientId,
-          dispatchId: confirmedPcr.dispatchId || record.dispatchId || record.id || localPcr.dispatchId,
-          dispatchClientId: confirmedPcr.dispatchClientId || record.dispatchClientId || localPcr.dispatchClientId,
+          responseId:
+            confirmedPcr.responseId || record.responseId || localPcr.responseId,
+          responseClientId:
+            confirmedPcr.responseClientId ||
+            record.responseClientId ||
+            localPcr.responseClientId,
+          dispatchId:
+            confirmedPcr.dispatchId ||
+            record.dispatchId ||
+            record.id ||
+            localPcr.dispatchId,
+          dispatchClientId:
+            confirmedPcr.dispatchClientId ||
+            record.dispatchClientId ||
+            localPcr.dispatchClientId,
           localStatus: null,
           syncLabel: "Cloud synced",
           sync_status: "synced",
@@ -814,7 +1296,9 @@ export default function DispatchRecords() {
         });
       }
       await refresh({ silent: true });
-      toast.success("Dispatch and linked PCR header uploaded. Records refreshed.");
+      toast.success(
+        "Dispatch and linked PCR header uploaded. Records refreshed.",
+      );
     } catch (error) {
       console.error(PCR_SYNC_LOG, "Manual cloud upload failed", {
         responseId: record?.responseId,
@@ -832,35 +1316,76 @@ export default function DispatchRecords() {
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-bold"><Radio className="text-blue-500" />Dispatch Form Records</h1>
-          <p className="text-xs text-muted-foreground">Dispatcher incident intake, field handoff, and linked Patient Care Record tracking.</p>
+          <h1 className="flex items-center gap-2 text-xl font-bold">
+            <Radio className="text-blue-500" />
+            Dispatch Form Records
+          </h1>
+          <p className="text-xs text-muted-foreground">
+            Dispatcher incident intake, field handoff, and linked Patient Care
+            Record tracking.
+          </p>
         </div>
         {canCreate && (
-          <button onClick={() => navigate("/admin/dispatch/new")} className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500">
-            <FilePlus2 size={16} />Create Dispatch Form
+          <button
+            onClick={() => navigate("/admin/dispatch/new")}
+            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500"
+          >
+            <FilePlus2 size={16} />
+            Create Dispatch Form
           </button>
         )}
       </div>
 
       <div className="mb-4 grid gap-3 md:grid-cols-3">
-        <div className="rounded-xl border border-slate-500/20 bg-slate-500/10 p-4"><div className="text-xs text-muted-foreground">Draft Dispatches</div><div className="mt-1 text-2xl font-bold text-slate-300">{counts.draft}</div></div>
-        <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-4"><div className="text-xs text-muted-foreground">Sent / In Progress</div><div className="mt-1 text-2xl font-bold text-blue-400">{counts.sent}</div></div>
-        <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4"><div className="text-xs text-muted-foreground">Linked PCRs</div><div className="mt-1 text-2xl font-bold text-green-400">{counts.linked}</div></div>
+        <div className="rounded-xl border border-slate-500/20 bg-slate-500/10 p-4">
+          <div className="text-xs text-muted-foreground">Draft Dispatches</div>
+          <div className="mt-1 text-2xl font-bold text-slate-300">
+            {counts.draft}
+          </div>
+        </div>
+        <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">
+          <div className="text-xs text-muted-foreground">
+            Sent / In Progress
+          </div>
+          <div className="mt-1 text-2xl font-bold text-blue-400">
+            {counts.sent}
+          </div>
+        </div>
+        <div className="rounded-xl border border-green-500/20 bg-green-500/10 p-4">
+          <div className="text-xs text-muted-foreground">Linked PCRs</div>
+          <div className="mt-1 text-2xl font-bold text-green-400">
+            {counts.linked}
+          </div>
+        </div>
       </div>
 
       <div className="mb-4 grid gap-3 rounded-xl border border-border bg-card p-3 md:grid-cols-[1fr_auto_auto]">
         <label className="relative">
-          <Search size={16} className="absolute left-3 top-3 text-muted-foreground" />
-          <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search response no., caller, place, responding team, unit, or patient" className="w-full rounded-lg border border-border bg-input-background py-2.5 pl-9 pr-3 text-sm" />
+          <Search
+            size={16}
+            className="absolute left-3 top-3 text-muted-foreground"
+          />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search response no., caller, place, responding team, unit, or patient"
+            className="w-full rounded-lg border border-border bg-input-background py-2.5 pl-9 pr-3 text-sm"
+          />
         </label>
         <label className="flex items-center gap-2">
           <Filter size={15} />
-          <select value={status} onChange={event => setStatus(event.target.value)} className="rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm">
-            {DISPATCH_FILTER_STATUSES.map(item => <option key={item}>{item}</option>)}
+          <select
+            value={status}
+            onChange={(event) => setStatus(event.target.value)}
+            className="rounded-lg border border-border bg-input-background px-3 py-2.5 text-sm"
+          >
+            {DISPATCH_FILTER_STATUSES.map((item) => (
+              <option key={item}>{item}</option>
+            ))}
           </select>
         </label>
         <div className="flex overflow-hidden rounded-lg border border-border">
-          {["Active", "Archived"].map(item => (
+          {["Active", "Archived"].map((item) => (
             <button
               key={item}
               onClick={() => setArchiveView(item)}
@@ -873,71 +1398,298 @@ export default function DispatchRecords() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {loading ? <div className="py-16 text-center text-sm text-muted-foreground">Loading Dispatch Form Records...</div> : error ? <div className="py-16 text-center text-sm text-red-400">{error}</div> : <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-secondary text-xs uppercase text-muted-foreground">
-                <tr>{["Response No.", "Incident", "Patient", "Location / Barangay", "Responding Team / Unit", "Status", "Linked PCR", "Updated", "Actions"].map(item => <th key={item} className="px-4 py-3 text-left">{item}</th>)}</tr>
-              </thead>
-              <tbody>
-                {visibleRecords.map(record => {
-                  const pcr = linkedPcrFromMap(linkedPCRs, record);
-                  const patient = patientSummary(record, pcr);
-                  return (
-                    <tr key={record.id} onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} className="cursor-pointer border-t border-border hover:bg-secondary/40">
-                      <td className="px-4 py-3 font-mono text-blue-400">{record.responseNumber || "Unnumbered"}</td>
-                      <td className="px-4 py-3"><div className="font-semibold">{[...(record.natureTypes || []), record.otherMedical, record.otherTrauma].filter(Boolean).join(", ") || "Not specified"}</div><div className="text-xs text-muted-foreground">{formatDateAndTime(record.dateOfIncident, record.timeOfIncident)}</div></td>
-                      <td className="max-w-44 px-4 py-3"><div className="truncate font-semibold">{patient.name || "Unnamed patient"}</div><div className="text-xs text-muted-foreground">{patient.detail || "No demographics"}</div></td>
-                      <td className="max-w-56 px-4 py-3"><div className="truncate">{record.placeOfIncident || pcr?.placeOfIncident || pcr?.locationText || record.callerAddress || "-"}</div><div className="text-xs text-muted-foreground">{record.barangay || pcr?.barangay || "No barangay"}</div></td>
-                      <td className="px-4 py-3">{record.team || "-"}<div className="text-xs text-muted-foreground">{record.vehicle || "No unit"}</div></td>
-                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusClass(displayStatus(record, pcr))}`}>{displayStatus(record, pcr)}</span>{record.syncLabel && <div className="mt-1 text-[10px] text-muted-foreground">{record.syncLabel}</div>}</td>
-                      <td className="px-4 py-3 text-xs">{pcr ? <span className="font-semibold text-green-400">{pcr.responseNumber || pcr.id}</span> : <span className="text-muted-foreground">Not created</span>}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{formatDate(record.updatedAt || record.createdAt)}</td>
-                      <td className="px-4 py-3"><div className="flex min-w-max items-center gap-2" onClick={event => event.stopPropagation()}>
-                        <button onClick={() => setSelected(dispatchPreviewRecord(record, pcr))} title="View dispatch" aria-label="View dispatch" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"><Eye size={15} /><span className="hidden xl:inline">View</span></button>
-                        {canCreate && <button onClick={() => edit(record)} title="Edit dispatch" aria-label="Edit dispatch" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"><Edit3 size={15} /><span className="hidden xl:inline">Edit</span></button>}
-                        <button onClick={() => setSelected({ ...dispatchPreviewRecord(record, pcr), __autoDownload: true })} title="Download dispatch PDF" aria-label="Download dispatch PDF" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"><Download size={15} /><span className="hidden xl:inline">PDF</span></button>
-                        {needsCloudUpload(record, pcr) && <button onClick={() => uploadRecordToCloud(record, pcr)} title="Sync this dispatch and linked PCR to cloud" aria-label="Sync this dispatch and linked PCR to cloud" className="grid h-8 w-8 place-items-center rounded text-cyan-400 hover:bg-cyan-500/10"><RefreshCw size={15} /></button>}
-                      </div></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        {loading ? (
+          <div className="py-16 text-center text-sm text-muted-foreground">
+            Loading Dispatch Form Records...
           </div>
-          {!filtered.length && <div className="py-16 text-center"><Radio size={36} className="mx-auto mb-3 text-muted-foreground/30" /><p className="font-semibold">No Dispatch Form Records found</p><p className="mt-1 text-xs text-muted-foreground">Create a dispatch form or adjust the current filters.</p></div>}
-          {filtered.length > 0 && <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted-foreground"><span>Showing {(page - 1) * pageSize + 1}-{Math.min(page * pageSize, filtered.length)} of {filtered.length}</span><div className="flex gap-2"><button disabled={page === 1} onClick={() => setPage(value => value - 1)} className="rounded bg-secondary p-2 disabled:opacity-40"><ChevronLeft size={14} /></button><span className="px-2 py-2">Page {page} of {pageCount}</span><button disabled={page === pageCount} onClick={() => setPage(value => value + 1)} className="rounded bg-secondary p-2 disabled:opacity-40"><ChevronRight size={14} /></button></div></div>}
-        </>}
+        ) : error ? (
+          <div className="py-16 text-center text-sm text-red-400">{error}</div>
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-secondary text-xs uppercase text-muted-foreground">
+                  <tr>
+                    {[
+                      "Response No.",
+                      "Incident",
+                      "Patient",
+                      "Location / Barangay",
+                      "Responding Team / Unit",
+                      "Status",
+                      "Linked PCR",
+                      "Updated",
+                      "Actions",
+                    ].map((item) => (
+                      <th
+                        key={item}
+                        onClick={() =>
+                          item !== "Actions" && handleHeaderClick(item)
+                        }
+                        className={`px-4 py-3 text-left ${
+                          item !== "Actions"
+                            ? "cursor-pointer hover:bg-secondary/50"
+                            : ""
+                        }`}
+                      >
+                        <div className="flex items-center gap-1">
+                          {item}
+                          {sortColumn === item && (
+                            <span className="text-blue-400">
+                              {sortDirection === "asc" ? "↑" : "↓" }
+                            </span>
+                          )}
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRecords.map((record) => {
+                    const pcr = linkedPcrFromMap(linkedPCRs, record);
+                    const patient = patientSummary(record, pcr);
+                    return (
+                      <tr
+                        key={record.id}
+                        onClick={() =>
+                          setSelected(dispatchPreviewRecord(record, pcr))
+                        }
+                        className="cursor-pointer border-t border-border hover:bg-secondary/40"
+                      >
+                        <td className="px-4 py-3 font-mono text-blue-400">
+                          {record.responseNumber || "Unnumbered"}{" "}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-semibold">
+                            {[
+                              ...(record.natureTypes || []),
+                              record.otherMedical,
+                              record.otherTrauma,
+                            ]
+                              .filter(Boolean)
+                              .join(", ") || "Not specified"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatDateAndTime(
+                              record.dateOfIncident,
+                              record.timeOfIncident,
+                            )}
+                          </div>
+                        </td>
+                        <td className="max-w-44 px-4 py-3">
+                          <div className="truncate font-semibold">
+                            {patient.name || "Unnamed patient"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {patient.detail || "No demographics"}
+                          </div>
+                        </td>
+                        <td className="max-w-56 px-4 py-3">
+                          <div className="truncate">
+                            {record.placeOfIncident ||
+                              pcr?.placeOfIncident ||
+                              pcr?.locationText ||
+                              record.callerAddress ||
+                              "-"}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {record.barangay || pcr?.barangay || "No barangay"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          {record.team || "-"}
+                          <div className="text-xs text-muted-foreground">
+                            {record.vehicle || "No unit"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`rounded-full px-2 py-1 text-[11px] font-semibold ${statusClass(displayStatus(record, pcr))}`}
+                          >
+                            {displayStatus(record, pcr)}
+                          </span>
+                          {record.syncLabel && (
+                            <div className="mt-1 text-[10px] text-muted-foreground">
+                              {record.syncLabel}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs">
+                          {pcr ? (
+                            <span className="font-semibold text-green-400">
+                              {pcr.responseNumber || pcr.id}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">
+                              Not created
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-xs text-muted-foreground">
+                          {formatDate(record.updatedAt || record.createdAt)}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div
+                            className="flex min-w-max items-center gap-2"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button
+                              onClick={() =>
+                                setSelected(dispatchPreviewRecord(record, pcr))
+                              }
+                              title="View dispatch"
+                              aria-label="View dispatch"
+                              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 text-xs font-semibold text-blue-300 hover:bg-blue-500/20"
+                            >
+                              <Eye size={15} />
+                              <span className="hidden xl:inline">View</span>
+                            </button>
+                            {canCreate && (
+                              <button
+                                onClick={() => edit(record)}
+                                title="Edit dispatch"
+                                aria-label="Edit dispatch"
+                                className="inline-flex h-8 items-center gap-1.5 rounded-md border border-amber-500/20 bg-amber-500/10 px-2 text-xs font-semibold text-amber-300 hover:bg-amber-500/20"
+                              >
+                                <Edit3 size={15} />
+                                <span className="hidden xl:inline">Edit</span>
+                              </button>
+                            )}
+                            <button
+                              onClick={() =>
+                                setSelected({
+                                  ...dispatchPreviewRecord(record, pcr),
+                                  __autoDownload: true,
+                                })
+                              }
+                              title="Download dispatch PDF"
+                              aria-label="Download dispatch PDF"
+                              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-green-500/20 bg-green-500/10 px-2 text-xs font-semibold text-green-300 hover:bg-green-500/20"
+                            >
+                              <Download size={15} />
+                              <span className="hidden xl:inline">PDF</span>
+                            </button>
+                            {needsCloudUpload(record, pcr) && (
+                              <button
+                                onClick={() => uploadRecordToCloud(record, pcr)}
+                                title="Sync this dispatch and linked PCR to cloud"
+                                aria-label="Sync this dispatch and linked PCR to cloud"
+                                className="grid h-8 w-8 place-items-center rounded text-cyan-400 hover:bg-cyan-500/10"
+                              >
+                                <RefreshCw size={15} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {!filtered.length && (
+              <div className="py-16 text-center">
+                <Radio
+                  size={36}
+                  className="mx-auto mb-3 text-muted-foreground/30"
+                />
+                <p className="font-semibold">No Dispatch Form Records found</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Create a dispatch form or adjust the current filters.
+                </p>
+              </div>
+            )}
+            {filtered.length > 0 && (
+              <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted-foreground">
+                <span>
+                  Showing {(page - 1) * pageSize + 1}-
+                  {Math.min(page * pageSize, filtered.length)} of{" "}
+                  {filtered.length}
+                </span>
+                <div className="flex gap-2">
+                  <button
+                    disabled={page === 1}
+                    onClick={() => setPage((value) => value - 1)}
+                    className="rounded bg-secondary p-2 disabled:opacity-40"
+                  >
+                    <ChevronLeft size={14} />
+                  </button>
+                  <span className="px-2 py-2">
+                    Page {page} of {pageCount}
+                  </span>
+                  <button
+                    disabled={page === pageCount}
+                    onClick={() => setPage((value) => value + 1)}
+                    className="rounded bg-secondary p-2 disabled:opacity-40"
+                  >
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       <DispatchPreviewModal
-      selected={selectedPreview}
-      setSelected={setSelected}
-      canCreate={canCreate}
-      edit={edit}
-      openPCR={openPCR}
-      send={null}
-      findLinkedPCR={record => linkedPcrFromMap(linkedPCRs, record)}
-    />
-      {selectedPcr && createPortal((
-        <div className="fixed inset-0 z-[11000] flex items-start justify-center overflow-y-auto bg-black/70 p-3 md:p-5" role="dialog" aria-modal="true" onMouseDown={() => setSelectedPcr(null)}>
-          <div className="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl" onMouseDown={event => event.stopPropagation()}>
-            <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-card p-3">
-              <div>
-                <h2 className="font-bold">{selectedPcr.responseNumber || "Linked PCR"}</h2>
-                <p className="text-xs text-muted-foreground">{selectedPcr.patientName || "Unnamed patient"}</p>
+        selected={selectedPreview}
+        setSelected={setSelected}
+        canCreate={canCreate}
+        edit={edit}
+        openPCR={openPCR}
+        send={null}
+        findLinkedPCR={(record) => linkedPcrFromMap(linkedPCRs, record)}
+      />
+      {selectedPcr &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-[11000] flex items-start justify-center overflow-y-auto bg-black/70 p-3 md:p-5"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={() => setSelectedPcr(null)}
+          >
+            <div
+              className="flex max-h-[calc(100vh-2rem)] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-card p-3">
+                <div>
+                  <h2 className="font-bold">
+                    {selectedPcr.responseNumber || "Linked PCR"}
+                  </h2>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedPcr.patientName || "Unnamed patient"}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() =>
+                      navigate(
+                        `/admin/pcr/new?edit=${selectedPcr.id || selectedPcr.pcrId}`,
+                      )
+                    }
+                    className="rounded-lg bg-secondary px-3 py-2 text-xs font-semibold"
+                  >
+                    Edit PCR
+                  </button>
+                  <button
+                    onClick={() => setSelectedPcr(null)}
+                    aria-label="Close linked PCR preview"
+                    className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
               </div>
-              <div className="flex gap-2">
-                <button onClick={() => navigate(`/admin/pcr/new?edit=${selectedPcr.id || selectedPcr.pcrId}`)} className="rounded-lg bg-secondary px-3 py-2 text-xs font-semibold">Edit PCR</button>
-                <button onClick={() => setSelectedPcr(null)} aria-label="Close linked PCR preview" className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-secondary text-foreground hover:bg-secondary/80"><X size={18} /></button>
+              <div className="overflow-auto bg-slate-300 p-4">
+                <div className="mx-auto max-w-[210mm] shadow-xl">
+                  <PrintablePCR record={selectedPcr} />
+                </div>
               </div>
             </div>
-            <div className="overflow-auto bg-slate-300 p-4">
-              <div className="mx-auto max-w-[210mm] shadow-xl"><PrintablePCR record={selectedPcr} /></div>
-            </div>
-          </div>
-        </div>
-      ), document.body)}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
