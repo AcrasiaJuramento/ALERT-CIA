@@ -3,7 +3,6 @@ import { NotificationContext } from './notificationContextState';
 import { useAuth } from './AuthContext';
 import { isSupabaseConfigured, markNotificationAsRead, markNotificationsAsRead, listNotifications, supabase } from '../services/supabase';
 import { getDispatchRecord, getDispatchRecordByResponse } from '../services/supabase/dispatchService';
-import { getPCRReport } from '../services/supabase/pcrService';
 import { dedupeNotifications, formatOperationalNotification, notificationSemanticKey } from '../utils/notificationPresentation';
 
 const NOTIFICATION_PREFS_KEY = 'alert-cia-notification-preferences';
@@ -171,8 +170,7 @@ async function getNotificationPCR(pcrId) {
 
 async function enrichNotification(notification) {
   if (notification.pcrId) {
-    const report = await getPCRReport(notification.pcrId).catch(() => null)
-      || await getNotificationPCR(notification.pcrId);
+    const report = await getNotificationPCR(notification.pcrId);
     const action = notification.type === 'pcr_submitted' ? 'Submitted' : 'Updated';
     if (report) return formatOperationalNotification({ ...notification, fallbackAction: action }, report);
   }

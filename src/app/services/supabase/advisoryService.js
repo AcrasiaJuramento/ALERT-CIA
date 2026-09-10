@@ -2,6 +2,7 @@ import { subscribeToPublicAdvisoryChanges } from './publicRealtime';
 import { getSupabaseClient } from "../../lib/supabaseClient";
 import { randomUuid } from "../../utils/uuid";
 import { runSupabaseRequest } from "./errors";
+import { PUBLIC_TTL, readPublicData } from "./publicDataService";
 import {
   loadAdvisories,
   loadPublishedAdvisories,
@@ -198,8 +199,12 @@ async function listLegacyAdvisories({ publishedOnly = false, limit = 100 } = {})
   return attachAdvisoryMedia(sortAdvisories(rows.map(advisoryToApp)));
 }
 
-export async function listPublishedAdvisories(options = {}) {
-  return listAdvisories({ ...options, activeOnly: true, publishedOnly: true });
+export function listPublishedAdvisories({ limit = 100, ttl = PUBLIC_TTL } = {}) {
+  return readPublicData(
+    `published-advisories:${limit}`,
+    () => listAdvisories({ limit, activeOnly: true, publishedOnly: true }),
+    ttl,
+  );
 }
 
 export async function saveAdvisoryRecord(advisory) {

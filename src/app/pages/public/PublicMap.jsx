@@ -285,14 +285,14 @@ function normalizeOsrmRoute(route, provider = 'OSRM road route') {
   };
 }
 
-async function fetchRouteOptions(start, destination, provider = 'OSRM road route') {
+async function fetchRouteOptions(start, destination, provider = 'OSRM road route', { alternatives = true } = {}) {
   const waypoints = (start.waypoints || destination.waypoints || []);
   const coords = [
     `${start.latLng[1]},${start.latLng[0]}`,
     ...waypoints.map(w => `${w[1]},${w[0]}`),
     `${destination.latLng[1]},${destination.latLng[0]}`,
   ].join(';');
-  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true&alternatives=true`;
+  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true&alternatives=${alternatives}`;
   const response = await fetch(url);
   if (!response.ok) throw new Error('Routing service unavailable.');
   const payload = await response.json();
@@ -437,13 +437,43 @@ function hasBacktrackSpur(route, startPoint, destinationPoint) {
   return backtrackCount >= 2;
 }
 
-function isPracticalRoute(route, startPoint, destinationPoint, baseRoute) {
+function isPracticalRoute(route, startPoint, destinationPoint, baseRoute, { allowWaypointBacktrack = false } = {}) {
   const directDistance = distanceKm(startPoint.latLng, destinationPoint.latLng);
   const baseDistance = baseRoute?.distanceKm || directDistance;
   if (routeDirectnessRatio(route, directDistance) > 2.6) return false;
   if (route.distanceKm > Math.max(baseDistance * 1.65, baseDistance + 4)) return false;
-  if (hasBacktrackSpur(route, startPoint, destinationPoint)) return false;
+  if (!allowWaypointBacktrack && hasBacktrackSpur(route, startPoint, destinationPoint)) return false;
   return true;
+}
+
+function incidentsWithinBounds(rows = [], bounds = null) {
+  if (!bounds) return [];
+  const { south, north, west, east } = bounds;
+  if (![south, north, west, east].every(Number.isFinite)) return [];
+
+  return rows.filter(item => {
+    const [latitude, longitude] = getIncidentLatLng(item);
+    if (![latitude, longitude].every(Number.isFinite)) return false;
+    const withinLatitude = latitude >= south && latitude <= north;
+    const withinLongitude = west <= east
+      ? longitude >= west && longitude <= east
+      : longitude >= west || longitude <= east;
+    return withinLatitude && withinLongitude;
+  });
+}
+
+async function mapWithConcurrency(items, mapper, concurrency = 3) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return results;
 }
 
 export default function PublicMap() {
@@ -453,14 +483,12 @@ export default function PublicMap() {
   const boundsRef = useRef(null);
   const markerRequest = useRef(0);
   const panTimer = useRef(null);
+  const incidentsRef = useRef([]);
+  const incidentFeedReadyRef = useRef(false);
   const mountedRef = useRef(true);
   const loadMarkers = useCallback(async () => {
-    if (!boundsRef.current || document.visibilityState !== 'visible') return;
-    const requestId = ++markerRequest.current;
-    try {
-      const rows = await loadPublicAccidentIncidents({ bounds: boundsRef.current });
-      if (mountedRef.current && requestId === markerRequest.current) setVisibleIncidents(rows);
-    } catch (error) { if (mountedRef.current) setError(error.message); }
+    if (!incidentFeedReadyRef.current || !boundsRef.current || document.visibilityState !== 'visible') return;
+    setVisibleIncidents(incidentsWithinBounds(incidentsRef.current, boundsRef.current));
   }, []);
   const onBoundsChange = useCallback(bounds => {
     boundsRef.current = bounds;
@@ -594,8 +622,11 @@ export default function PublicMap() {
         listPublishedAdvisories({ limit: 100 }),
       ]);
       if (!mountedRef.current) return;
-      setIncidents(publicIncidents.filter(hasValidLatLng));
-      await loadMarkers();
+      const validIncidents = publicIncidents.filter(hasValidLatLng);
+      incidentFeedReadyRef.current = true;
+      incidentsRef.current = validIncidents;
+      setIncidents(validIncidents);
+      setVisibleIncidents(incidentsWithinBounds(validIncidents, boundsRef.current));
       setAdvisories(activeAdvisories.filter(item => item.coordinates));
       setHazardZones(zones);
     } catch (requestError) {
@@ -603,7 +634,7 @@ export default function PublicMap() {
     } finally {
       if (mountedRef.current) setLoading(false);
     }
-  }, [loadMarkers]);
+  }, []);
 
   useEffect(() => {
     loadMap();
@@ -613,6 +644,7 @@ export default function PublicMap() {
     const refresh = createInformationalRefresh(loadMap, { invalidate: invalidatePublicData });
     const unsubscribe = subscribeToPublicDataChanges(refresh.markStale);
     const unsubscribeAdvisories = subscribeToPublicAdvisories(() => {
+      invalidatePublicData();
       listPublishedAdvisories({ limit: 100 }).then(rows => {
         if (mountedRef.current) setAdvisories(rows.filter(item => item.coordinates));
       }).catch(() => {});
@@ -1081,11 +1113,13 @@ export default function PublicMap() {
           })))
         .catch(() => []);
 
-      const detourRoutes = await Promise.all(detourCandidates.map(async candidate => {
+      const detourRoutes = await mapWithConcurrency(detourCandidates, async candidate => {
         try {
           const routeOptions = await fetchRouteOptions({ ...routingStart, waypoints: candidate.waypoints }, destination, 'Barangay/local-road detour');
           return routeOptions
-            .filter(route => isPracticalRoute(route, routingStart, destination, routePlan))
+            .filter(route => isPracticalRoute(route, routingStart, destination, routePlan, {
+              allowWaypointBacktrack: Boolean(candidate.waypoints?.length),
+            }))
             .map(route => ({
               ...candidate,
               route,
@@ -1101,7 +1135,7 @@ export default function PublicMap() {
         } catch {
           return [];
         }
-      }));
+      }, 3);
 
       const currentProfile = routeSafetyProfile(routePlan, currentAlerts, routePlan);
       const scoredCandidates = [...baseAlternatives, ...detourRoutes.flat()]
@@ -1109,7 +1143,10 @@ export default function PublicMap() {
           ...candidate,
           profile: routeSafetyProfile(candidate.route, candidate.alerts, routePlan),
         }));
-      const best = scoredCandidates
+      const sourceAlertAvoidedCandidates = scoredCandidates.filter(candidate => (
+        !candidate.alerts.some(alert => `${alert.type}:${alert.id}` === alertId)
+      ));
+      const best = sourceAlertAvoidedCandidates
         .sort((first, second) => compareRouteProfiles(first.profile, second.profile))[0];
 
       if (requestId !== routeRequestSequenceRef.current) return;
@@ -1205,6 +1242,7 @@ export default function PublicMap() {
             showControls
             showHeatmap={false}
             showDangerZones
+            focusSelectedIncident={false}
             clusterMarkers={false}
             autoFit={false}
             compact

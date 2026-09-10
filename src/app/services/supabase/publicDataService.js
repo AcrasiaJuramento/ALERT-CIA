@@ -72,7 +72,7 @@ function normalizeStackedRows(rows = []) {
     ...row,
     female: Number(row.female || 0),
     male: Number(row.male || 0),
-    unspecified: Number(row.unspecified ?? (Number(row.other || 0) + Number(row.unknown || 0)) || 0),
+    unspecified: Number((row.unspecified ?? (Number(row.other || 0) + Number(row.unknown || 0))) || 0),
     total: Number(row.total || 0),
   }));
 }
@@ -85,9 +85,9 @@ function normalizePublicGadAnalytics(payload = {}) {
       mvcPersons: Number(payload.totals?.mvcPersons || 0),
       femaleMvcPersons: Number(payload.totals?.femaleMvcPersons || 0),
       maleMvcPersons: Number(payload.totals?.maleMvcPersons || 0),
-      unspecifiedMvcPersons: Number(payload.totals?.unspecifiedMvcPersons ?? (
+      unspecifiedMvcPersons: Number((payload.totals?.unspecifiedMvcPersons ?? (
         Number(payload.totals?.otherMvcPersons || 0) + Number(payload.totals?.unknownMvcPersons || 0)
-      ) || 0),
+      )) || 0),
     },
     completion: (Array.isArray(payload.completion) ? payload.completion : []).map(row => ({
       ...row,

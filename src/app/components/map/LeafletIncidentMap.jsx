@@ -305,6 +305,7 @@ export function LeafletIncidentMap({
   showHeatmap = true,
   showDangerZones = true,
   showMarkers = true,
+  focusSelectedIncident = true,
   advisoryMarkers = [],
   selectedAdvisoryId,
   onAdvisoryClick,
@@ -434,6 +435,7 @@ export function LeafletIncidentMap({
           onMarkerClick={onMarkerClick}
           enabled={clusterMarkers}
           spreadOverlapping={spreadOverlappingMarkers}
+          focusSelectedIncident={focusSelectedIncident}
         />
         <AdvisoryMarkersLayer
           advisories={effectiveLayers.advisories ? advisoryMarkers : []}

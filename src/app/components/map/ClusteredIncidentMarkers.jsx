@@ -156,6 +156,7 @@ export function ClusteredIncidentMarkers({
   onMarkerClick,
   enabled = true,
   spreadOverlapping = false,
+  focusSelectedIncident = true,
 }) {
   const map = useMap();
 
@@ -221,14 +222,14 @@ export function ClusteredIncidentMarkers({
   }, [enabled, incidents, map, onMarkerClick, spreadOverlapping]);
 
   useEffect(() => {
-    if (!selectedIncidentId) return;
+    if (!focusSelectedIncident || !selectedIncidentId) return;
     const incident = incidents.find((item) => item.id === selectedIncidentId);
     if (!incident) return;
 
     map.flyTo(getIncidentLatLng(incident), Math.max(map.getZoom(), 15), {
       duration: 0.65,
     });
-  }, [incidents, map, selectedIncidentId]);
+  }, [focusSelectedIncident, incidents, map, selectedIncidentId]);
 
   return null;
 }

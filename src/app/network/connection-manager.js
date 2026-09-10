@@ -1,9 +1,9 @@
 import { CONNECTION_MODES } from "../types/hybrid";
 import { checkCloudHealth } from "./health-checks";
 
-const CLOUD_CHECK_INTERVAL_MS = 30000;
-const FALLBACK_CHECK_INTERVAL_MS = 15000;
-const CONNECTION_TICK_MS = 5000;
+const CLOUD_CHECK_INTERVAL_MS = 5 * 60_000;
+const FALLBACK_CHECK_INTERVAL_MS = 60_000;
+const CONNECTION_TICK_MS = 10_000;
 const CLOUD_RETRY_ATTEMPTS = 3;
 const CLOUD_RETRY_DELAY_MS = 700;
 const subscribers = new Set();
@@ -105,11 +105,11 @@ export async function checkConnection({ force = false } = {}) {
 
 export function startConnectionManager() {
   checkConnection({ force: true });
-  const onFocus = () => checkConnection({ force: true });
+  const onFocus = () => checkConnection();
   const onOnline = () => checkConnection({ force: true });
   const onOffline = () => checkConnection({ force: true });
   const onVisibilityChange = () => {
-    if (document.visibilityState === "visible") checkConnection({ force: true });
+    if (document.visibilityState === "visible") checkConnection();
   };
   window.addEventListener("focus", onFocus);
   window.addEventListener("online", onOnline);
