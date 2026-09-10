@@ -504,6 +504,8 @@ export default function MapMonitoring() {
   const [selectedMunicipality, setSelectedMunicipality] = useState('all');
   const [intelTab, setIntelTab] = useState('incidents');
   const [incidentPanelOpen, setIncidentPanelOpen] = useState(() => typeof window === 'undefined' || window.innerWidth >= 1024);
+  const [showAllIncidents, setShowAllIncidents] = useState(false);
+  const [showAllRiskAreas, setShowAllRiskAreas] = useState(false);
   const [scrapeMenuOpen, setScrapeMenuOpen] = useState(false);
   const [layerMenuOpen, setLayerMenuOpen] = useState(false);
   const [selectedAccidentProneAreaId, setSelectedAccidentProneAreaId] = useState(null);
@@ -639,7 +641,7 @@ export default function MapMonitoring() {
   const refreshScraperData = async (mode = 'update') => {
     setScrapeMenuOpen(false);
     try {
-      await startScraperJob(mode, mode === 'update' ? { pageFrom: 1, pageTo: 1 } : {});
+      await startScraperJob(mode, mode === 'update' ? { pageFrom: 1 } : {});
       setReloadKey(key => key + 1);
     } catch {
       // The shared scraper job service owns the visible error state.
@@ -789,8 +791,9 @@ export default function MapMonitoring() {
     }),
     [riskFilters, riskSourceRecords]
   );
+  const allRiskAreas = useMemo(() => [...accidentProneAreas, ...cautionAreas], [accidentProneAreas, cautionAreas]);
   const topAccidentProneAreas = accidentProneAreas.slice(0, 5);
-  const selectedAccidentProneArea = [...accidentProneAreas, ...cautionAreas].find(area => area.area_id === selectedAccidentProneAreaId);
+  const selectedAccidentProneArea = allRiskAreas.find(area => area.area_id === selectedAccidentProneAreaId);
   const focusedRiskArea = useMemo(() => selectedAccidentProneArea ? ({
     latLng: [Number(selectedAccidentProneArea.latitude), Number(selectedAccidentProneArea.longitude)],
   }) : null, [selectedAccidentProneArea]);
@@ -802,9 +805,21 @@ export default function MapMonitoring() {
   const recentIncidents = useMemo(
     () => [...mapIncidents]
       .sort((left, right) => new Date(`${right.date || ''}T${right.time || '00:00'}`) - new Date(`${left.date || ''}T${left.time || '00:00'}`))
-      .slice(0, 8),
-    [mapIncidents]
+      .slice(0, showAllIncidents ? mapIncidents.length : 8),
+    [mapIncidents, showAllIncidents]
   );
+  const displayedRiskAreas = useMemo(
+    () => allRiskAreas.slice(0, showAllRiskAreas ? allRiskAreas.length : 8),
+    [allRiskAreas, showAllRiskAreas]
+  );
+  useEffect(() => {
+    setShowAllIncidents(false);
+    setShowAllRiskAreas(false);
+  }, [activeSource, mapScope, selectedMunicipality]);
+  useEffect(() => {
+    if (intelTab !== 'incidents') setShowAllIncidents(false);
+    if (intelTab !== 'risk') setShowAllRiskAreas(false);
+  }, [intelTab]);
   useEffect(() => {
     if (!requestedRecordId) return;
     const requestedRecord = allMapRecords.find(item => String(item.id) === requestedRecordId || String(item.recordId) === requestedRecordId);
@@ -1040,7 +1055,11 @@ export default function MapMonitoring() {
             {!topAccidentProneAreas.length && <div className="px-2 py-4 text-center text-[11px] text-slate-500">No official high or critical accident-prone areas available.</div>}
           </div>
           <button
-            onClick={() => { setIntelTab('risk'); setIncidentPanelOpen(true); }}
+            onClick={() => {
+              setIntelTab('risk');
+              setShowAllRiskAreas(true);
+              setIncidentPanelOpen(true);
+            }}
             className="flex min-h-10 w-full items-center justify-center gap-1.5 border-t border-slate-800 text-[11px] font-bold text-blue-300 hover:bg-slate-800 hover:text-blue-200"
           >
             View All Areas <ChevronRight className="h-3.5 w-3.5" />
@@ -1303,7 +1322,7 @@ export default function MapMonitoring() {
 
       {/* Right Incidents Panel */}
       <div
-        className={`absolute inset-y-0 right-0 z-[900] min-h-0 shrink-0 overflow-hidden border-l border-slate-800 bg-[#071726] text-slate-100 shadow-2xl transition-all duration-300 lg:relative lg:z-auto ${
+        className={`absolute inset-y-0 right-0 z-[900] flex h-full min-h-0 shrink-0 flex-col overflow-hidden border-l border-slate-800 bg-[#071726] text-slate-100 shadow-2xl transition-all duration-300 lg:relative lg:z-auto ${
           incidentPanelOpen ? 'w-[min(420px,calc(100vw-2rem))] lg:w-[420px]' : 'w-10'
         }`}
       >
@@ -1384,9 +1403,18 @@ export default function MapMonitoring() {
                   <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Accident-Prone Areas</div>
                   <div className="text-[10px] text-slate-500">{highRiskAreas.length} official high or critical / {highCautionAreas.length} news caution</div>
                 </div>
+                {allRiskAreas.length > 8 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllRiskAreas(current => !current)}
+                    className="shrink-0 rounded-md px-2 py-1 text-[10px] font-bold text-blue-300 hover:bg-slate-800 hover:text-blue-200"
+                  >
+                    {showAllRiskAreas ? 'Show Top' : 'View All'}
+                  </button>
+                )}
               </div>
               <div className="space-y-2">
-                {[...accidentProneAreas, ...cautionAreas].slice(0, 8).map(area => (
+                {displayedRiskAreas.map(area => (
                   <div key={area.area_id} className="rounded-lg border border-slate-800 bg-[#0b1d31] p-3">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
@@ -1426,7 +1454,15 @@ export default function MapMonitoring() {
             {intelTab === 'incidents' && <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <div className="flex items-center justify-between px-4 py-3">
                 <div className="text-xs font-bold uppercase tracking-wide text-slate-400">Recent Incidents</div>
-                <button className="text-[10px] font-bold text-blue-300 hover:text-blue-200">View all</button>
+                {mapIncidents.length > 8 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAllIncidents(current => !current)}
+                    className="text-[10px] font-bold text-blue-300 hover:text-blue-200"
+                  >
+                    {showAllIncidents ? 'Show Recent' : 'View all'}
+                  </button>
+                )}
               </div>
               {recentIncidents.map((inc) => {
                 const TypeIcon = typeIcons[inc.type] || AlertTriangle;

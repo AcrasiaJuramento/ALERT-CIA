@@ -16,7 +16,7 @@ export function extractLinks(html, base, source) {
       const url = normalizeUrl(href, base);
       if (url && (!source || isArticleUrl(url, source))) links.add(url);
     } catch {
-      // Ignore malformed href attributes from third-party markup.
+   
     }
   });
 

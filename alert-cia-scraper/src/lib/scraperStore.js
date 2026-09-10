@@ -4,6 +4,7 @@ import { similarityScore } from "./deduplication.js";
 import { getSupabaseAdminClient, isSupabaseEnabled } from "./supabase.js";
 
 const hash = (value = "") => crypto.createHash("sha256").update(value).digest("hex");
+const RETRYABLE_REJECTION_REASONS = new Set(["fetch_failed", "extract_failed", "database_error"]);
 
 function chunks(values, size = 100) {
   const result = [];
@@ -27,6 +28,36 @@ export async function findExistingSourceUrls(urls = []) {
     }
   }
   return found;
+}
+
+export async function findKnownArticleUrls(urls = []) {
+  const normalized = [...new Set(urls)].filter(Boolean);
+  const known = {
+    saved: new Set(),
+    rejected: new Map(),
+    retryableRejected: new Map(),
+  };
+  if (!isSupabaseEnabled() || !normalized.length) return known;
+  const client = getSupabaseAdminClient();
+
+  known.saved = await findExistingSourceUrls(normalized);
+  for (const group of chunks(normalized.filter((url) => !known.saved.has(url)))) {
+    const { data, error } = await client.from("scraper_article_candidates")
+      .select("source_url,rejection_reason,created_at")
+      .in("source_url", group)
+      .order("created_at", { ascending: false });
+    if (error) continue;
+    for (const row of data || []) {
+      if (!row.source_url || known.rejected.has(row.source_url) || known.retryableRejected.has(row.source_url)) continue;
+      if (RETRYABLE_REJECTION_REASONS.has(row.rejection_reason)) {
+        known.retryableRejected.set(row.source_url, row);
+      } else {
+        known.rejected.set(row.source_url, row);
+      }
+    }
+  }
+
+  return known;
 }
 
 export async function getScraperSourceHealthSnapshot(sourceKeys = []) {
@@ -561,8 +592,9 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
   const errors = [];
   try {
     const sourceIds = await syncSources(client);
+    const foundCount = records.length + rejected.length + (scrapeStats.duplicates_skipped || 0) + (scrapeStats.rejected_skipped || 0);
     const runResult = await client.from("scraper_runs").insert({
-      endpoint_type: "all", status: "running", fetched_count: records.length + rejected.length, metadata: { mode, rejected_count: rejected.length, source_health: sourceHealth, ...scrapeStats },
+      endpoint_type: "all", status: "running", fetched_count: foundCount, metadata: { mode, rejected_count: rejected.length, skipped_rejected_count: scrapeStats.rejected_skipped || 0, source_health: sourceHealth, ...scrapeStats },
     }).select("id").single();
     if (runResult.error) throw runResult.error;
     runId = runResult.data.id;
@@ -678,16 +710,17 @@ export async function saveScrapedRecords(records = [], { mode = "update", scrape
         mode,
         ...scrapeStats,
         rejected_count: rejected.length,
+        skipped_rejected_count: scrapeStats.rejected_skipped || 0,
         invalid_record_count: invalidRecords,
         partial_errors: errors.slice(0, 10),
         rejected_saved_count: candidateResult.saved,
         source_health: sourceHealth,
       },
     }).eq("id", runId);
-    return { enabled: true, saved: status === "completed", runId, newIncidents: inserted, mergedIncidents: merged, duplicates, rejected: rejected.length + candidateResult.saved, errors };
+    return { enabled: true, saved: status === "completed", runId, newIncidents: inserted, mergedIncidents: merged, duplicates, rejected: rejected.length + candidateResult.saved, skippedRejected: scrapeStats.rejected_skipped || 0, errors };
   } catch (error) {
     if (runId) await client.from("scraper_runs").update({ status: "failed", finished_at: new Date().toISOString(), error_message: error.message }).eq("id", runId);
-    return { enabled: true, saved: false, newIncidents: inserted, mergedIncidents: merged, duplicates, errors: [...errors, error.message] };
+    return { enabled: true, saved: false, newIncidents: inserted, mergedIncidents: merged, duplicates, skippedRejected: scrapeStats.rejected_skipped || 0, errors: [...errors, error.message] };
   }
 }
 

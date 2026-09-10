@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, ChevronDown, ChevronRight, Copy, Edit2, Eye, EyeOff, Plus, Power, Radio, Save, Search, Shield, Trash2, UserCog, X } from 'lucide-react';
+import AmbulanceUnitManager from '../components/AmbulanceUnitManager';
 import { assignProfileRole, assignProfileToRespondingTeam, createCrewMember, createOfficerAccountByAdmin, createRespondingTeam, deactivateProfile, deleteRespondingTeam, getActiveTeamMembership, listCrewMembers, listProfiles, listRespondingTeams, updateCrewMember, updateProfile } from '../services/supabase';
 
 const roleBadge = {
@@ -625,6 +626,8 @@ export default function UserManagement() {
           </table>
         </div>
       </div>
+
+      <AmbulanceUnitManager respondingTeams={teamOptions} />
 
       {/* User Table */}
       <div className="bg-card border border-border rounded-xl overflow-hidden transition-colors duration-300">

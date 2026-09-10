@@ -1,4 +1,4 @@
--- Public GAD/MVC aggregate analytics.
+-- Public safety, GAD, and MVC aggregate analytics.
 --
 -- This RPC is intentionally aggregate-only. It reads verified/public-safe
 -- response records internally and returns counts for public charts without
@@ -136,16 +136,20 @@ prepared as materialized (
     raw_age
   from person_rows
 ),
-mvc_persons as materialized (
-  select *
-  from prepared
-  where classification = 'mvc'
-),
 sex_labels(ord, name) as (
   values
     (1, 'Female'),
     (2, 'Male'),
     (3, 'Unspecified')
+),
+incident_type_labels(ord, classification, name) as (
+  values
+    (1, 'mvc', 'Motor Vehicle Crash'),
+    (2, 'medical', 'Medical'),
+    (3, 'trauma', 'Trauma'),
+    (4, 'fire', 'Fire'),
+    (5, 'rescue', 'Rescue'),
+    (6, 'other', 'Other')
 ),
 age_labels(ord, name) as (
   values
@@ -154,14 +158,10 @@ age_labels(ord, name) as (
     (3, '60+'),
     (4, 'Unspecified')
 ),
-completion_rows(ord, label, complete, total) as (
-  select 1, 'Sex', count(*) filter (where sex <> 'Unspecified'), count(*) from mvc_persons
-  union all
-  select 2, 'Age', count(*) filter (where raw_age is not null), count(*) from mvc_persons
-  union all
-  select 3, 'Barangay', count(*) filter (where barangay <> 'Unspecified'), count(*) from mvc_persons
-  union all
-  select 4, 'Incident Date', count(*) filter (where incident_date is not null), count(*) from mvc_persons
+mvc_persons as materialized (
+  select *
+  from prepared
+  where classification = 'mvc'
 ),
 month_series as (
   select (
@@ -172,20 +172,56 @@ month_series as (
 select jsonb_build_object(
   'generatedAt', now(),
   'totals', jsonb_build_object(
+    'verifiedIncidents', (select count(*) from eligible_responses),
+    'mvcIncidents', (select count(*) from eligible_responses where classification = 'mvc'),
     'verifiedPersons', (select count(*) from prepared),
     'mvcPersons', (select count(*) from mvc_persons),
     'femaleMvcPersons', (select count(*) from mvc_persons where sex = 'Female'),
     'maleMvcPersons', (select count(*) from mvc_persons where sex = 'Male'),
     'unspecifiedMvcPersons', (select count(*) from mvc_persons where sex = 'Unspecified')
   ),
-  'completion', coalesce((
+  'incidentTypeTotals', coalesce((
     select jsonb_agg(jsonb_build_object(
-      'label', label,
-      'complete', complete,
-      'missing', greatest(total - complete, 0),
-      'percent', case when total > 0 then round(100.0 * complete / total) else 0 end
-    ) order by ord)
-    from completion_rows
+      'name', l.name,
+      'count', coalesce(c.count, 0),
+      'percent', case when t.total > 0 then round(100.0 * coalesce(c.count, 0) / t.total) else 0 end
+    ) order by l.ord)
+    from incident_type_labels l
+    cross join (select count(*) as total from eligible_responses) t
+    left join (
+      select case when classification in ('mvc', 'medical', 'trauma', 'fire', 'rescue') then classification else 'other' end as classification,
+             count(*) as count
+      from eligible_responses
+      group by 1
+    ) c on c.classification = l.classification
+  ), '[]'::jsonb),
+  'gadBySex', coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'name', l.name,
+      'count', coalesce(c.count, 0),
+      'percent', case when t.total > 0 then round(100.0 * coalesce(c.count, 0) / t.total) else 0 end
+    ) order by l.ord)
+    from sex_labels l
+    cross join (select count(*) as total from prepared) t
+    left join (
+      select sex, count(*) as count
+      from prepared
+      group by sex
+    ) c on c.sex = l.name
+  ), '[]'::jsonb),
+  'gadByAgeGroup', coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'name', l.name,
+      'count', coalesce(c.count, 0),
+      'percent', case when t.total > 0 then round(100.0 * coalesce(c.count, 0) / t.total) else 0 end
+    ) order by l.ord)
+    from age_labels l
+    cross join (select count(*) as total from prepared) t
+    left join (
+      select age_group, count(*) as count
+      from prepared
+      group by age_group
+    ) c on c.age_group = l.name
   ), '[]'::jsonb),
   'mvcBySex', coalesce((
     select jsonb_agg(jsonb_build_object(
@@ -215,6 +251,41 @@ select jsonb_build_object(
       group by age_group
     ) c on c.age_group = l.name
   ), '[]'::jsonb),
+  'monthlyIncidentsByType', coalesce((
+    select jsonb_agg(to_jsonb(row_data) order by row_data."monthStart")
+    from (
+      select
+        to_char(m.month_start, 'Mon') as month,
+        m.month_start as "monthStart",
+        count(e.*) filter (where e.classification = 'mvc') as mvc,
+        count(e.*) filter (where e.classification = 'medical') as medical,
+        count(e.*) filter (where e.classification = 'trauma') as trauma,
+        count(e.*) filter (where e.classification = 'fire') as fire,
+        count(e.*) filter (where e.classification = 'rescue') as rescue,
+        count(e.*) filter (where e.classification not in ('mvc', 'medical', 'trauma', 'fire', 'rescue')) as other,
+        count(e.*) as total
+      from month_series m
+      left join eligible_responses e
+        on date_trunc('month', e.incident_date)::date = m.month_start
+      group by m.month_start
+    ) row_data
+  ), '[]'::jsonb),
+  'monthlyPersonsBySex', coalesce((
+    select jsonb_agg(to_jsonb(row_data) order by row_data."monthStart")
+    from (
+      select
+        to_char(m.month_start, 'Mon') as month,
+        m.month_start as "monthStart",
+        count(p.*) filter (where p.sex = 'Female') as female,
+        count(p.*) filter (where p.sex = 'Male') as male,
+        count(p.*) filter (where p.sex = 'Unspecified') as unspecified,
+        count(p.*) as total
+      from month_series m
+      left join prepared p
+        on date_trunc('month', p.incident_date)::date = m.month_start
+      group by m.month_start
+    ) row_data
+  ), '[]'::jsonb),
   'incidentTypeBySex', coalesce((
     select jsonb_agg(to_jsonb(row_data) order by row_data.total desc, row_data.name)
     from (
@@ -233,6 +304,34 @@ select jsonb_build_object(
         count(*) as total
       from prepared
       group by classification
+    ) row_data
+  ), '[]'::jsonb),
+  'barangayIncidentTotals', coalesce((
+    select jsonb_agg(to_jsonb(row_data) order by row_data.total desc, row_data.name)
+    from (
+      select
+        barangay as name,
+        count(*) as count,
+        count(*) as total
+      from eligible_responses
+      group by barangay
+      order by total desc, name
+      limit 8
+    ) row_data
+  ), '[]'::jsonb),
+  'barangayPersonsBySex', coalesce((
+    select jsonb_agg(to_jsonb(row_data) order by row_data.total desc, row_data.name)
+    from (
+      select
+        barangay as name,
+        count(*) filter (where sex = 'Female') as female,
+        count(*) filter (where sex = 'Male') as male,
+        count(*) filter (where sex = 'Unspecified') as unspecified,
+        count(*) as total
+      from prepared
+      group by barangay
+      order by total desc, name
+      limit 8
     ) row_data
   ), '[]'::jsonb),
   'monthlyMvcBySex', coalesce((

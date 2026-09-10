@@ -44,7 +44,7 @@ async function handleRun(request, { allowCron = false } = {}) {
       mode: getMode(request, { cron: true }),
       sourceKey: runOptions.sourceKey,
       pageFrom: 1,
-      pageTo: 1,
+      pageTo: runOptions.pageTo,
     });
     return Response.json(
       { ...result, triggeredBy: "cron" },

@@ -67,7 +67,7 @@ function normalizeDistribution(rows = []) {
   }));
 }
 
-function normalizeStackedRows(rows = []) {
+function normalizeSexStackedRows(rows = []) {
   return (Array.isArray(rows) ? rows : []).map(row => ({
     ...row,
     female: Number(row.female || 0),
@@ -77,10 +77,25 @@ function normalizeStackedRows(rows = []) {
   }));
 }
 
+function normalizeTypeStackedRows(rows = []) {
+  return (Array.isArray(rows) ? rows : []).map(row => ({
+    ...row,
+    mvc: Number(row.mvc || 0),
+    medical: Number(row.medical || 0),
+    trauma: Number(row.trauma || 0),
+    fire: Number(row.fire || 0),
+    rescue: Number(row.rescue || 0),
+    other: Number(row.other || 0),
+    total: Number(row.total || 0),
+  }));
+}
+
 function normalizePublicGadAnalytics(payload = {}) {
   return {
     generatedAt: payload.generatedAt || payload.generated_at || null,
     totals: {
+      verifiedIncidents: Number(payload.totals?.verifiedIncidents || 0),
+      mvcIncidents: Number(payload.totals?.mvcIncidents || 0),
       verifiedPersons: Number(payload.totals?.verifiedPersons || 0),
       mvcPersons: Number(payload.totals?.mvcPersons || 0),
       femaleMvcPersons: Number(payload.totals?.femaleMvcPersons || 0),
@@ -89,17 +104,18 @@ function normalizePublicGadAnalytics(payload = {}) {
         Number(payload.totals?.otherMvcPersons || 0) + Number(payload.totals?.unknownMvcPersons || 0)
       )) || 0),
     },
-    completion: (Array.isArray(payload.completion) ? payload.completion : []).map(row => ({
-      ...row,
-      complete: Number(row.complete || 0),
-      missing: Number(row.missing || 0),
-      percent: Number(row.percent || 0),
-    })),
+    incidentTypeTotals: normalizeDistribution(payload.incidentTypeTotals),
+    gadBySex: normalizeDistribution(payload.gadBySex),
+    gadByAgeGroup: normalizeDistribution(payload.gadByAgeGroup),
     mvcBySex: normalizeDistribution(payload.mvcBySex),
     mvcByAgeGroup: normalizeDistribution(payload.mvcByAgeGroup),
-    incidentTypeBySex: normalizeStackedRows(payload.incidentTypeBySex),
-    monthlyMvcBySex: normalizeStackedRows(payload.monthlyMvcBySex),
-    barangayMvcBySex: normalizeStackedRows(payload.barangayMvcBySex),
+    monthlyIncidentsByType: normalizeTypeStackedRows(payload.monthlyIncidentsByType),
+    monthlyPersonsBySex: normalizeSexStackedRows(payload.monthlyPersonsBySex),
+    incidentTypeBySex: normalizeSexStackedRows(payload.incidentTypeBySex),
+    barangayIncidentTotals: normalizeDistribution(payload.barangayIncidentTotals),
+    barangayPersonsBySex: normalizeSexStackedRows(payload.barangayPersonsBySex),
+    monthlyMvcBySex: normalizeSexStackedRows(payload.monthlyMvcBySex),
+    barangayMvcBySex: normalizeSexStackedRows(payload.barangayMvcBySex),
   };
 }
 

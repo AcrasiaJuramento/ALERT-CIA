@@ -213,6 +213,7 @@ function scraperSourceHealthToApp(row = {}) {
     incidentsDetected: Number(row.incidents_detected || 0),
     rejectedCount: Number(row.rejected_count || 0),
     duplicateCount: Number(row.duplicate_count || 0),
+    skippedRejected: Number(row.metadata?.skipped_rejected || 0),
     failedCount: Number(row.failed_count || 0),
     cacheHits: Number(row.cache_hits || 0),
     retries: Number(row.retries || 0),
@@ -547,6 +548,7 @@ export async function triggerFullScraperRefreshBySource({ type = "vehicular", on
     new_incidents: 0,
     merged_incidents: 0,
     duplicates_skipped: 0,
+    skipped_rejected_articles: 0,
     failed_requests: 0,
     failed_sources: [],
     data: [],
@@ -568,6 +570,7 @@ export async function triggerFullScraperRefreshBySource({ type = "vehicular", on
         totals.new_incidents += result.new_incidents || 0;
         totals.merged_incidents += result.merged_incidents || 0;
         totals.duplicates_skipped += result.duplicates_skipped || 0;
+        totals.skipped_rejected_articles += result.skipped_rejected_articles || result.skippedRejected || 0;
         totals.failed_requests += result.failed_requests || 0;
         if (Array.isArray(result.data)) totals.data.push(...result.data);
       } catch (error) {
@@ -680,11 +683,43 @@ export async function listScraperRecords({ status, category, sourceId, municipal
   return asRows(rows).map(scraperRecordToApp);
 }
 
-export async function listRejectedScraperCandidates({ reason, sourceId, municipality, confidence, dateFrom, dateTo, limit = 100, from = 0 } = {}) {
+function buildRejectedCandidateQuery(client, tableName, { reason, sourceId, municipality, confidence, dateFrom, dateTo, limit, from }) {
+  let query = client
+    .from(tableName)
+    .select("*")
+    .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
+    .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
+    .order("created_at", { ascending: false })
+    .range(from, from + limit - 1);
+  if (reason) query = query.eq("rejection_reason", reason);
+  if (sourceId) query = query.eq("source_id", sourceId);
+  if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
+  if (confidence) query = query.eq("classification_confidence", confidence);
+  if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
+  if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
+  return query;
+}
+
+export async function listRejectedScraperCandidates(filters = {}) {
+  const options = { limit: 100, from: 0, ...filters };
+  let rows;
+  try {
+    rows = await runSupabaseRequest(client =>
+      buildRejectedCandidateQuery(client, "scraper_latest_article_candidates", options),
+    "Unable to load rejected scraper candidates.");
+  } catch {
+    rows = await runSupabaseRequest(client =>
+      buildRejectedCandidateQuery(client, "scraper_article_candidates", options),
+    "Unable to load rejected scraper candidates.");
+  }
+  return asRows(rows).map(scraperCandidateToApp);
+}
+
+export async function listRejectedScraperCandidateHistory({ reason, sourceId, municipality, confidence, dateFrom, dateTo, limit = 100, from = 0 } = {}) {
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("scraper_article_candidates")
-      .select("*, source:scraper_sources(id, name, source_key)")
+      .select("*")
       .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
       .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .order("created_at", { ascending: false })

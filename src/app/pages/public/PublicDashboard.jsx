@@ -63,7 +63,16 @@ const sexSeries = [
   { key: 'unspecified', label: 'Unspecified', color: '#64748b' },
 ];
 
-const chartColors = ['#dc2626', '#2563eb', '#64748b', '#14b8a6', '#eab308'];
+const incidentTypeSeries = [
+  { key: 'mvc', label: 'MVC', color: '#dc2626' },
+  { key: 'medical', label: 'Medical', color: '#2563eb' },
+  { key: 'trauma', label: 'Trauma', color: '#f97316' },
+  { key: 'fire', label: 'Fire', color: '#ea580c' },
+  { key: 'rescue', label: 'Rescue', color: '#14b8a6' },
+  { key: 'other', label: 'Other', color: '#64748b' },
+];
+
+const chartColors = ['#dc2626', '#2563eb', '#14b8a6', '#f97316', '#64748b', '#eab308'];
 
 function isPublicAnnouncementAdvisory(advisory = {}) {
   return !['accident_prone_area', 'accident_hotspot'].includes(String(advisory.advisoryType || advisory.category || '').toLowerCase());
@@ -418,21 +427,30 @@ export default function PublicDashboard() {
 function PublicGadAnalyticsSection({ analytics, loading, error }) {
   const totals = analytics?.totals || {};
   const mvcTotal = totals.mvcPersons || 0;
-  const completionRows = analytics?.completion || [];
+  const incidentTotal = totals.verifiedIncidents || 0;
+  const personTotal = totals.verifiedPersons || 0;
+  const incidentTypeRows = analytics?.incidentTypeTotals || [];
+  const gadBySex = analytics?.gadBySex || [];
+  const gadAgeRows = analytics?.gadByAgeGroup || [];
+  const monthlyIncidentRows = analytics?.monthlyIncidentsByType || [];
+  const monthlyPersonRows = analytics?.monthlyPersonsBySex || [];
   const mvcBySex = analytics?.mvcBySex || [];
   const monthlyRows = analytics?.monthlyMvcBySex || [];
   const typeRows = analytics?.incidentTypeBySex || [];
+  const barangayIncidentRows = analytics?.barangayIncidentTotals || [];
+  const barangayPersonRows = analytics?.barangayPersonsBySex || [];
   const barangayRows = analytics?.barangayMvcBySex || [];
+  const hasAnalytics = incidentTotal > 0 || personTotal > 0;
   const hasMvcData = mvcTotal > 0;
 
   return (
     <section className="space-y-5">
       <div className="border-l-2 border-blue-500 pl-4">
         <h2 className="text-xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
-          GAD/MVC Safety Analytics
+          Public Safety Analytics
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          Public aggregate counts for verified motor vehicle crash records by sex, age group, month, and barangay.
+          Aggregate trends from verified public-safe incident records, with a GAD lens and MVC safety focus.
         </p>
       </div>
 
@@ -444,17 +462,71 @@ function PublicGadAnalyticsSection({ analytics, loading, error }) {
 
       {loading && (
         <div className="rounded-lg border border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
-          Loading GAD analytics...
+          Loading public analytics...
         </div>
       )}
 
       {!loading && !error && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {completionRows.map(row => <CompletionTile key={row.label} row={row} />)}
-          </div>
-
           <div className="grid gap-5 xl:grid-cols-2">
+            <AnalyticsMetricCards totals={totals} />
+
+            <PublicDistributionCard
+              title="Incident Categories"
+              subtitle={`${incidentTotal} verified public incident${incidentTotal === 1 ? '' : 's'}`}
+              data={incidentTypeRows}
+              type="bar"
+            />
+            <PublicDistributionCard
+              title="GAD Affected Persons by Sex"
+              subtitle={`${personTotal} verified affected person${personTotal === 1 ? '' : 's'}`}
+              data={gadBySex}
+              type="bar"
+            />
+            <PublicDistributionCard
+              title="GAD Age Groups"
+              subtitle="Age brackets across verified public-safe patient records"
+              data={gadAgeRows}
+              type="pie"
+            />
+            <StackedChartCard
+              title="Monthly Incident Trend"
+              subtitle="Verified public incidents over the last 12 calendar months"
+              data={monthlyIncidentRows}
+              series={incidentTypeSeries}
+            />
+            <StackedChartCard
+              title="Incident Type by Sex"
+              subtitle="Affected persons grouped by incident category"
+              data={typeRows.slice(0, 6)}
+              categoryKey="name"
+            />
+            <StackedChartCard
+              title="Monthly GAD Trend"
+              subtitle="Affected persons by sex over the last 12 calendar months"
+              data={monthlyPersonRows}
+            />
+            <RankedBarCard
+              title="Top Barangays by Incidents"
+              subtitle="Verified public incident count by barangay"
+              data={barangayIncidentRows}
+            />
+            <StackedChartCard
+              title="Affected Persons by Barangay"
+              subtitle="Top barangays grouped by sex"
+              data={barangayPersonRows}
+              layout="vertical"
+            />
+
+            <div className="xl:col-span-2 border-l-2 border-red-500 pl-4 pt-2">
+              <h3 className="text-base font-bold text-foreground" style={{ fontFamily: 'Space Grotesk, sans-serif' }}>
+                MVC Safety Focus
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Motor vehicle crash details for affected persons, age groups, monthly movement, and barangay concentration.
+              </p>
+            </div>
+
             <PublicDistributionCard
               title="MVC Patients by Sex"
               subtitle={`${mvcTotal} verified MVC affected person${mvcTotal === 1 ? '' : 's'}`}
@@ -472,12 +544,6 @@ function PublicGadAnalyticsSection({ analytics, loading, error }) {
               subtitle="Last 12 calendar months"
               data={monthlyRows}
             />
-            <StackedChartCard
-              title="Incident Type by Sex"
-              subtitle={`${totals.verifiedPersons || 0} verified public-safe affected person${totals.verifiedPersons === 1 ? '' : 's'}`}
-              data={typeRows.slice(0, 6)}
-              categoryKey="name"
-            />
             <div className="xl:col-span-2">
               <StackedChartCard
                 title="MVC Affected Persons by Barangay"
@@ -493,23 +559,36 @@ function PublicGadAnalyticsSection({ analytics, loading, error }) {
               No verified MVC GAD records are available for public analytics yet.
             </div>
           )}
+          {!hasAnalytics && (
+            <div className="rounded-lg border border-border bg-secondary/30 px-4 py-5 text-center text-sm text-muted-foreground">
+              No verified public analytics records are available yet.
+            </div>
+          )}
         </>
       )}
     </section>
   );
 }
 
-function CompletionTile({ row }) {
+function AnalyticsMetricCards({ totals }) {
+  const cards = [
+    { label: 'Verified Incidents', value: totals.verifiedIncidents || 0, icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10' },
+    { label: 'Affected Persons', value: totals.verifiedPersons || 0, icon: Activity, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10' },
+    { label: 'MVC Incidents', value: totals.mvcIncidents || 0, icon: Car, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10' },
+    { label: 'MVC Affected Persons', value: totals.mvcPersons || 0, icon: Shield, color: 'text-teal-600 dark:text-teal-400', bg: 'bg-teal-50 dark:bg-teal-500/10' },
+  ];
+
   return (
-    <div className="rounded-lg border border-border bg-card p-3 shadow-sm">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="font-semibold text-foreground">{row.label}</span>
-        <span className="font-bold text-blue-500">{row.percent}%</span>
-      </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-secondary">
-        <div className="h-full rounded-full bg-blue-500" style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }} />
-      </div>
-      <div className="mt-2 text-[10px] text-muted-foreground">{row.complete} complete / {row.missing} missing</div>
+    <div className="grid gap-3 sm:grid-cols-2 xl:col-span-2 xl:grid-cols-4">
+      {cards.map(({ label, value, icon, color, bg }) => (
+        <div key={label} className="rounded-lg border border-border bg-card p-4 shadow-sm">
+          <div className={`mb-3 grid h-9 w-9 place-items-center rounded-lg ${bg}`}>
+            {createElement(icon, { className: `h-5 w-5 ${color}` })}
+          </div>
+          <div className={`text-2xl font-bold ${color}`}>{value}</div>
+          <div className="mt-0.5 text-xs text-muted-foreground">{label}</div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -565,7 +644,7 @@ function PublicDistributionCard({ title, subtitle, data, type = 'bar' }) {
   );
 }
 
-function StackedChartCard({ title, subtitle, data, layout = 'horizontal', categoryKey = 'month' }) {
+function StackedChartCard({ title, subtitle, data, layout = 'horizontal', categoryKey = 'month', series = sexSeries }) {
   const total = data.reduce((sum, item) => sum + item.total, 0);
   const hasData = data.some(item => item.total > 0);
   const vertical = layout === 'vertical';
@@ -594,11 +673,41 @@ function StackedChartCard({ title, subtitle, data, layout = 'horizontal', catego
             )}
             <Tooltip content={<PublicChartTooltip />} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            {sexSeries.map(series => (
-              <Bar key={series.key} dataKey={series.key} name={series.label} stackId="sex" fill={series.color} radius={[3, 3, 0, 0]} />
+            {series.map(item => (
+              <Bar key={item.key} dataKey={item.key} name={item.label} stackId="analytics" fill={item.color} radius={[3, 3, 0, 0]} />
             ))}
           </BarChart>
         </ResponsiveContainer>
+      )}
+    </div>
+  );
+}
+
+function RankedBarCard({ title, subtitle, data }) {
+  const total = data.reduce((sum, item) => sum + item.count, 0);
+  const max = Math.max(...data.map(item => item.count), 0);
+  const hasData = data.some(item => item.count > 0);
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <ChartHeader title={title} subtitle={subtitle} total={total} />
+      {!hasData ? <EmptyChart /> : (
+        <div className="space-y-3">
+          {data.map((item, index) => {
+            const width = max > 0 ? Math.round((item.count / max) * 100) : 0;
+            return (
+              <div key={item.name}>
+                <div className="mb-1 flex justify-between gap-3 text-xs">
+                  <span className="truncate text-muted-foreground">{index + 1}. {item.name}</span>
+                  <span className="font-semibold text-foreground">{item.count}</span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-secondary">
+                  <div className="h-full rounded-full" style={{ width: `${width}%`, backgroundColor: chartColors[index % chartColors.length] }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

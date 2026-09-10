@@ -40,7 +40,7 @@ function buildLocalProgress(mode, sourcesTotal = DEFAULT_SCRAPER_SOURCE_COUNT, o
     sources_total: sourcesTotal,
     page: pageFrom,
     page_to: pageTo,
-    max_pages: mode === 'full' ? 'all' : pageTo || 1,
+    max_pages: mode === 'full' ? 'all' : pageTo || 'source default',
     article: 0,
     articles_total: 0,
   };
@@ -50,10 +50,11 @@ function resultMessage(mode, result = {}) {
   const inserted = result.new_incidents ?? result.totals?.inserted ?? 0;
   const merged = result.merged_incidents ?? result.totals?.matched ?? 0;
   const duplicates = result.duplicates_skipped ?? result.totals?.duplicates ?? 0;
+  const skippedRejected = result.skipped_rejected_articles ?? result.skippedRejected ?? 0;
   const rejected = result.rejected_articles ?? 0;
   const failedRequests = result.failed_requests ?? 0;
   const failedSources = result.failed_sources?.length || 0;
-  return `${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped, ${rejected} rejected${failedRequests ? `, ${failedRequests} failed request${failedRequests === 1 ? '' : 's'}` : ''}${failedSources ? `, ${failedSources} source${failedSources === 1 ? '' : 's'} failed` : ''}.`;
+  return `${mode === 'full' ? 'Full accident scrape' : 'Accident update'} completed: ${inserted} new, ${merged} merged, ${duplicates} duplicate${duplicates === 1 ? '' : 's'} skipped, ${skippedRejected} previously rejected skipped, ${rejected} newly rejected${failedRequests ? `, ${failedRequests} failed request${failedRequests === 1 ? '' : 's'}` : ''}${failedSources ? `, ${failedSources} source${failedSources === 1 ? '' : 's'} failed` : ''}.`;
 }
 
 export function subscribeScraperJob(listener) {
@@ -100,6 +101,9 @@ export async function startScraperJob(mode = 'update', options = {}) {
             ...(state.progress || buildLocalProgress(mode, sourceTotal, options)),
             sources_total: sourceTotal,
             source_name: mode === 'full' ? 'Full scrape running' : 'Update scrape running',
+            max_pages: mode === 'full'
+              ? 'all'
+              : options.pageTo || activeSources[0]?.metadata?.max_pages_update || 'source default',
           },
         });
       })
@@ -124,11 +128,11 @@ export async function startScraperJob(mode = 'update', options = {}) {
             });
           },
         })
-      : await triggerScraperRefresh({
+        : await triggerScraperRefresh({
           type: 'vehicular',
           mode,
           pageFrom: options.pageFrom ?? 1,
-          pageTo: options.pageTo ?? 1,
+          pageTo: options.pageTo ?? null,
           signal: controller.signal,
         });
 

@@ -49,7 +49,7 @@ function locationTextForSource(sourceUrl, combined) {
     const host = new URL(sourceUrl).hostname;
     if (host === "cauayan.bomboradyo.com" && hasIsabelaPlace(combined)) return `${combined}\nIsabela`;
   } catch {
-    // Pasted text without a URL has no trusted source hint.
+   
   }
   return combined;
 }

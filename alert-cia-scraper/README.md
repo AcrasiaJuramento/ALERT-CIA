@@ -25,6 +25,7 @@ Current enabled source:
 - Supabase persistence for review in the main app.
 - CORS handling for use by the ALERT-CIA frontend.
 - User-authorized manual runs and secret-authorized cron update runs.
+- Update runs skip previously rejected non-retryable URLs so the same rejected articles are not downloaded every run.
 
 ## Tech Stack
 
@@ -108,7 +109,7 @@ Supported query parameters:
 - `mode=update|full`
 - `source=bombo`
 - `pageFrom=1`
-- `pageTo=3`
+- `pageTo=3` optional; when omitted, update mode uses the source's configured update depth
 
 Other routes:
 

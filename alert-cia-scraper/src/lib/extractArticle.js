@@ -17,7 +17,7 @@ function jsonLdDates($) {
         if (node?.datePublished) dates.push(node.datePublished);
       });
     } catch {
-      // Ignore malformed JSON-LD blocks; metadata and time elements remain available.
+    
     }
   });
   return dates[0] || null;

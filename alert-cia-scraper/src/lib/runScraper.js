@@ -52,6 +52,7 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     saved: database.newIncidents || 0,
     merged: database.mergedIncidents || 0,
     duplicates: scraped.stats.duplicates_skipped + (database.duplicates || 0),
+    skippedRejected: scraped.stats.rejected_skipped || 0,
     failed: failedRequests,
   });
   const resultSummary = {
@@ -66,6 +67,7 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     new_incidents: database.newIncidents || 0,
     merged_incidents: database.mergedIncidents || 0,
     duplicates_skipped: scraped.stats.duplicates_skipped + (database.duplicates || 0),
+    skipped_rejected_articles: scraped.stats.rejected_skipped || 0,
     rejected_articles: rejected.length,
     failed_requests: failedRequests,
   };
@@ -89,6 +91,7 @@ export async function runScraper({ mode = "update", endpointType = "all", source
     new_incidents: database.newIncidents || 0,
     merged_incidents: database.mergedIncidents || 0,
     duplicates_skipped: scraped.stats.duplicates_skipped + (database.duplicates || 0),
+    skipped_rejected_articles: scraped.stats.rejected_skipped || 0,
     rejected_articles: rejected.length,
     source_health: scraped.sourceHealth || [],
     failed_requests: failedRequests,
