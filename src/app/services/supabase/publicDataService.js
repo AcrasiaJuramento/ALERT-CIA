@@ -128,3 +128,13 @@ export function getPublicGadAnalytics({ start = null, end = null } = {}) {
     return normalizePublicGadAnalytics(payload || {});
   }, ANALYSIS_TTL);
 }
+
+export function getPublicRespondingFieldOfficerCount() {
+  return readPublicData('responding-field-officer-count', async () => {
+    const count = await runSupabaseRequest(
+      client => client.rpc('get_public_responding_field_officer_count'),
+      'Unable to load public responding-account count.',
+    );
+    return Number(count || 0);
+  });
+}

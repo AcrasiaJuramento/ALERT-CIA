@@ -1,6 +1,6 @@
 import { subscribeToPublicDataChanges } from '../../services/supabase/publicRealtime';
 import { createInformationalRefresh } from '../../utils/informationalRefresh';
-import { getPublicGadAnalytics, invalidatePublicData } from '../../services/supabase/publicDataService';
+import { getPublicGadAnalytics, getPublicRespondingFieldOfficerCount, invalidatePublicData } from '../../services/supabase/publicDataService';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,6 +13,7 @@ import {
 import { formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
 import { isIncidentCompleted } from '../../utils/incidentStatus';
 import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
+import { calculateOfficialAccidentProneAreas } from '../../utils/accidentProneAreas';
 import { listPublishedAdvisories, subscribeToPublicAdvisories } from '../../services/supabase';
 import { formatDateAndTime } from '../../utils/dateFormat';
 
@@ -78,21 +79,47 @@ function isPublicAnnouncementAdvisory(advisory = {}) {
   return !['accident_prone_area', 'accident_hotspot'].includes(String(advisory.advisoryType || advisory.category || '').toLowerCase());
 }
 
+function isToday(value) {
+  if (!value) return false;
+  const date = new Date(value);
+  const now = new Date();
+  return !Number.isNaN(date.getTime())
+    && date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+}
+
+function wasCompletedToday(incident) {
+  if (!isIncidentCompleted(incident.status)) return false;
+  return isToday(
+    incident.completedAt
+      || incident.completed_at
+      || incident.resolvedAt
+      || incident.resolved_at
+      || incident.updatedAt
+      || incident.updated_at
+      || incident.date,
+  );
+}
+
 export default function PublicDashboard() {
   const navigate = useNavigate();
   const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories().filter(isPublicAnnouncementAdvisory));
   const [dismissedAdvisoryId, setDismissedAdvisoryId] = useState('');
   const [incidents, setIncidents] = useState([]);
   const [gadAnalytics, setGadAnalytics] = useState(null);
+  const [respondingFieldOfficerCount, setRespondingFieldOfficerCount] = useState(null);
   const [gadLoading, setGadLoading] = useState(true);
   const [gadError, setGadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
-  const resolvedToday = incidents.filter(i => isIncidentCompleted(i.status)).length;
-  const criticalCount = activeIncidents.filter(
-    incident => String(incident.severity || incident.priority || '').trim().toLowerCase() === 'critical',
-  ).length;
+  const resolvedToday = incidents.filter(wasCompletedToday).length;
+  const criticalRiskAreas = useMemo(() => calculateOfficialAccidentProneAreas(incidents, {
+    publicOnly: true,
+    publicMinimumOfficialRiskLevel: 'High',
+  }).filter(area => area.risk_level === 'Critical'), [incidents]);
+  const criticalCount = criticalRiskAreas.length;
   const topAdvisory = useMemo(() => publicAdvisories[0] || null, [publicAdvisories]);
   const showAdvisoryPopup = topAdvisory && topAdvisory.id !== dismissedAdvisoryId;
 
@@ -144,6 +171,15 @@ export default function PublicDashboard() {
       }
     }
 
+    async function loadRespondingFieldOfficerCount() {
+      try {
+        const count = await getPublicRespondingFieldOfficerCount();
+        if (mounted) setRespondingFieldOfficerCount(count);
+      } catch {
+        if (mounted) setRespondingFieldOfficerCount(null);
+      }
+    }
+
     const refresh = createInformationalRefresh(() => {
       loadIncidents({ silent: true });
       loadGadAnalytics({ silent: true });
@@ -151,6 +187,7 @@ export default function PublicDashboard() {
     const queueIncidentRefresh = refresh.markStale;
     loadIncidents();
     loadGadAnalytics();
+    loadRespondingFieldOfficerCount();
     loadAdvisoriesFromDatabase();
     const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
     const refreshTimer = window.setInterval(() => { if (document.visibilityState === 'visible') loadAdvisoriesFromDatabase(); }, 60000);
@@ -234,8 +271,8 @@ export default function PublicDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
             { label: 'Active Incidents', value: activeIncidents.length, icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10', border: 'border-red-100 dark:border-red-500/20' },
-            { label: 'Critical Alerts', value: criticalCount, icon: Activity, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10', border: 'border-orange-100 dark:border-orange-500/20' },
-            { label: 'Teams Responding', value: new Set(activeIncidents.map(item => item.assignedTeam).filter(Boolean)).size, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
+            { label: 'Critical Accident Areas', value: criticalCount, icon: Activity, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10', border: 'border-orange-100 dark:border-orange-500/20' },
+            { label: 'Field Officers Responding', value: respondingFieldOfficerCount ?? new Set(activeIncidents.map(item => item.assignedTeam).filter(Boolean)).size, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
             { label: 'Completed Today', value: resolvedToday, icon: CheckCircle2, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-100 dark:border-green-500/20' },
           ].map(({ label, value, icon, color, bg, border }) => (
             <div key={label} className={`p-4 rounded-2xl border ${bg} ${border} transition-colors duration-300`}>
