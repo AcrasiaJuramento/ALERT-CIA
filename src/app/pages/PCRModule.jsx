@@ -44,6 +44,20 @@ const timelineLabels = [
 
 function Field({ label, children, wide = false }) { return <label className={wide ? "md:col-span-2" : ""}><span className="block text-xs font-medium text-muted-foreground mb-1">{label}</span>{children}</label>; }
 function Section({ title, children }) { return <section className="relative overflow-visible rounded-xl border border-border"><h3 className="rounded-t-[inherit] px-4 py-2.5 bg-secondary text-sm font-bold text-foreground uppercase tracking-wide">{title}</h3><div className="p-4">{children}</div></section>; }
+function IncidentDataPanel({ title, open, recommended, onToggle, children }) {
+  return <div className="overflow-hidden rounded-xl border border-border bg-secondary/10">
+    <button type="button" onClick={onToggle} className="flex w-full items-center justify-between gap-3 bg-card px-3 py-2.5 text-left">
+      <span className="min-w-0">
+        <span className="block text-xs font-bold uppercase tracking-wide text-foreground">{title}</span>
+        {recommended && <span className="mt-0.5 block text-[10px] font-semibold text-blue-400">Recommended for selected incident type</span>}
+      </span>
+      <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted-foreground" aria-label={open ? `Minimize ${title}` : `Show ${title}`}>
+        {open ? <Minus size={15}/> : <Plus size={15}/>}
+      </span>
+    </button>
+    {open && <div className="p-3">{children}</div>}
+  </div>;
+}
 function TimelineSummary({ timeline }) {
   return <div className="grid md:grid-cols-5 gap-2">{timelineLabels.map(([label, key]) => <div className="rounded-lg border border-border bg-secondary/40 p-3" key={key}><div className="text-[10px] uppercase text-muted-foreground">{label}</div><div className="mt-1 text-sm font-semibold text-foreground">{key === "dateOfIncident" ? formatLongDate(timeline[key], "Pending") : timeline[key] || "Pending"}</div></div>)}</div>;
 }
@@ -516,6 +530,7 @@ function DetailedPCRReview({ record, onClose }) {
 export default function PCRModule() {
   const navigate = useNavigate(); const [params] = useSearchParams(); const [step, setStep] = useState(0); const dispatchId = normalizeRecordIdentifier(params.get("dispatch")); const responseId = normalizeRecordIdentifier(params.get("response")); const editId = normalizeRecordIdentifier(params.get("edit") || (!dispatchId ? sessionStorage.getItem(PCR_EDIT_KEY) : null)); const [form, setForm] = useState(() => synchronizePCR(createPCR())); const [linkedDispatch, setLinkedDispatch] = useState(null); const [loading, setLoading] = useState(Boolean(editId || dispatchId)); const [bodyOpen, setBodyOpen] = useState(false); const [reviewOpen, setReviewOpen] = useState(false); const [message, setMessage] = useState(""); const [savingStatus, setSavingStatus] = useState("");
   const [draftReady, setDraftReady] = useState(false);
+  const [incidentPanelOverrides, setIncidentPanelOverrides] = useState({ obstetric: null, crash: null });
   const draftKey = useMemo(() => pcrFormDraftKey({ editId, dispatchId }), [dispatchId, editId]);
   const [teamOptions, setTeamOptions] = useState(() => readPcrReferenceCache().teams);
   const [vehicleOptions, setVehicleOptions] = useState(() => readPcrReferenceCache().vehicles);
@@ -806,6 +821,14 @@ export default function PCRModule() {
   const hospitalTravel = travelDuration(form.departureScene, form.arrivalHospital);
   const returnTravel = travelDuration(form.departureHospital, form.backToBase);
   const needsHospital = form.hospitalization?.status === "Yes";
+  const hasObstetricIncident = (form.emergencyTypes || []).includes("Obstetrical");
+  const hasCrashIncident = (form.traumaTypes || []).includes("Motor Vehicle Crash");
+  const showObstetricPanel = incidentPanelOverrides.obstetric ?? hasObstetricIncident;
+  const showCrashPanel = incidentPanelOverrides.crash ?? hasCrashIncident;
+  const toggleIncidentPanel = (key, defaultOpen) => setIncidentPanelOverrides(current => ({ ...current, [key]: !(current[key] ?? defaultOpen) }));
+  useEffect(() => {
+    setIncidentPanelOverrides({ obstetric: null, crash: null });
+  }, [hasObstetricIncident, hasCrashIncident]);
   const activeTimelinePrompt = useMemo(() => {
     const timeline = form.timeline || {};
     const valueFor = key => timeline[key] || form[key] || "";
@@ -1012,23 +1035,27 @@ export default function PCRModule() {
             </div>
           </div>
         </Section>
-        <Section title="Obstetric and Motor Vehicle Data">
-          <div className="grid lg:grid-cols-[1fr_1.4fr] gap-4">
-            <div className="grid grid-cols-3 gap-2">{Object.keys(form.obstetric).map(k=><Field key={k} label={k.toUpperCase()}>{k === 'bow' ? <select className={input} value={form.obstetric.bow} onChange={e=>nested("obstetric","bow",e.target.value)} required><option value="">Select</option><option value="Positive">+</option><option value="Negative">-</option></select> : <input className={input} value={form.obstetric[k]} onChange={e=>nested("obstetric",k,e.target.value)}/>}</Field>)}</div>
-            <div className="border border-border rounded-xl overflow-hidden">
-              <div className="grid grid-cols-2 border-b border-border">
-                <label className="p-2 text-xs font-bold flex items-center gap-2 border-r border-border"><input type="checkbox" checked={form.crash.selfAccident} onChange={e=>nested("crash","selfAccident",e.target.checked)} className="accent-blue-600"/>SELF-ACCIDENT</label>
-                <label className="p-2 text-xs font-bold flex items-center gap-2"><input type="checkbox" checked={form.crash.collision} onChange={e=>nested("crash","collision",e.target.checked)} className="accent-blue-600"/>COLLISION</label>
+        <Section title="Incident-Specific Data">
+          <div className="space-y-3">
+            <IncidentDataPanel title="Obstetric Data" open={showObstetricPanel} recommended={hasObstetricIncident} onToggle={()=>toggleIncidentPanel("obstetric", hasObstetricIncident)}>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-3">{Object.keys(form.obstetric).map(k=><Field key={k} label={k.toUpperCase()}>{k === 'bow' ? <select className={input} value={form.obstetric.bow} onChange={e=>nested("obstetric","bow",e.target.value)} required><option value="">Select</option><option value="Positive">+</option><option value="Negative">-</option></select> : <input className={input} value={form.obstetric[k]} onChange={e=>nested("obstetric",k,e.target.value)}/>}</Field>)}</div>
+            </IncidentDataPanel>
+            <IncidentDataPanel title="Motor Vehicle Data" open={showCrashPanel} recommended={hasCrashIncident} onToggle={()=>toggleIncidentPanel("crash", hasCrashIncident)}>
+              <div className="border border-border rounded-xl overflow-hidden">
+                <div className="grid grid-cols-2 border-b border-border">
+                  <label className="p-2 text-xs font-bold flex items-center gap-2 border-r border-border"><input type="checkbox" checked={form.crash.selfAccident} onChange={e=>nested("crash","selfAccident",e.target.checked)} className="accent-blue-600"/>SELF-ACCIDENT</label>
+                  <label className="p-2 text-xs font-bold flex items-center gap-2"><input type="checkbox" checked={form.crash.collision} onChange={e=>nested("crash","collision",e.target.checked)} className="accent-blue-600"/>COLLISION</label>
+                </div>
+                <div className="grid md:grid-cols-[1fr_1fr_.8fr] gap-2 p-3">
+                  <Field label="Vehicle Involved"><input className={input} value={form.crash.vehicle} onChange={e=>nested("crash","vehicle",e.target.value)}/></Field>
+                  <Field label="Driver / Passenger / Pedestrian"><input className={input} value={form.crash.role} onChange={e=>nested("crash","role",e.target.value)}/></Field>
+                  <Field label="Plate #"><input className={input} value={form.crash.plate} onChange={e=>nested("crash","plate",e.target.value)}/></Field>
+                  <Field label="Alcohol Breath"><select className={input} value={form.crash.alcohol} onChange={e=>nested("crash","alcohol",e.target.value)}><option/><option>Positive</option><option>Negative</option></select></Field>
+                  <Field label="Helmet"><select className={input} value={form.crash.helmet} onChange={e=>nested("crash","helmet",e.target.value)}><option/><option>Positive</option><option>Negative</option><option>N/A</option></select></Field>
+                  <Field label="Driver's License"><select className={input} value={form.crash.license} onChange={e=>nested("crash","license",e.target.value)}><option/><option>Positive</option><option>Negative</option><option>Not Applicable</option></select></Field>
+                </div>
               </div>
-              <div className="grid md:grid-cols-[1fr_1fr_.8fr] gap-2 p-3">
-                <Field label="Vehicle Involved"><input className={input} value={form.crash.vehicle} onChange={e=>nested("crash","vehicle",e.target.value)}/></Field>
-                <Field label="Driver / Passenger / Pedestrian"><input className={input} value={form.crash.role} onChange={e=>nested("crash","role",e.target.value)}/></Field>
-                <Field label="Plate #"><input className={input} value={form.crash.plate} onChange={e=>nested("crash","plate",e.target.value)}/></Field>
-                <Field label="Alcohol Breath"><select className={input} value={form.crash.alcohol} onChange={e=>nested("crash","alcohol",e.target.value)}><option/><option>Positive</option><option>Negative</option></select></Field>
-                <Field label="Helmet"><select className={input} value={form.crash.helmet} onChange={e=>nested("crash","helmet",e.target.value)}><option/><option>Positive</option><option>Negative</option><option>N/A</option></select></Field>
-                <Field label="Driver's License"><select className={input} value={form.crash.license} onChange={e=>nested("crash","license",e.target.value)}><option/><option>Positive</option><option>Negative</option><option>Not Applicable</option></select></Field>
-              </div>
-            </div>
+            </IncidentDataPanel>
           </div>
         </Section>
         <Section title="Chief Complaint, Vital Signs and Body Map"><Field label="Chief Complaint / Initial Assessment"><textarea rows="3" className={input} value={form.chiefComplaint} onChange={e=>update("chiefComplaint",e.target.value)}/></Field><div className="grid lg:grid-cols-[1.35fr_.65fr] gap-4 mt-4"><div className="overflow-x-auto"><table className="w-full text-xs border-collapse"><thead><tr>{["Time","Blood Pressure","Pulse Rate","Respiratory Rate","Temperature °C","Oxygen Saturation %",""] .map(x=><th className="border border-border p-2" key={x}>{x}</th>)}</tr></thead><tbody>{form.vitals.map(v=><tr key={v.id}>{["time","bp","pulse","respiratory","temperature","oxygen"].map(k=><td className="border border-border p-1" key={k}><input type={k==="time"?"time":"text"} className={`${input} min-w-24`} value={v[k]} onChange={e=>setVital(v.id,k,e.target.value)}/></td>)}<td className="border border-border p-1"><button onClick={()=>form.vitals.length>1&&update("vitals",form.vitals.filter(x=>x.id!==v.id))} className="text-red-500"><Trash2 size={15}/></button></td></tr>)}</tbody></table><button onClick={()=>update("vitals",[...form.vitals,newVital()])} className="mt-2 px-3 py-2 bg-blue-600 text-white rounded-lg text-xs flex gap-1 items-center"><Plus size={14}/>Add vital-sign time row</button></div><button type="button" onClick={()=>setBodyOpen(true)} className="border-2 border-dashed border-blue-400 rounded-xl bg-white overflow-hidden hover:ring-4 ring-blue-500/20"><AnatomyFigure marks={form.bodyMap.marks} className="w-full"/><span className="block text-xs text-blue-600 font-semibold pb-2">Click to open body mapping editor</span></button></div></Section>
