@@ -59,7 +59,6 @@ const PCR_LIGHT_SELECT = `
   endorsed_to,
   received_by,
   transfer_reason,
-  notes,
   back_to_base_time,
   completed_at,
   submitted_at,
@@ -92,7 +91,6 @@ const PCR_LIST_SELECT = `
   endorsed_to,
   received_by,
   transfer_reason,
-  notes,
   back_to_base_time,
   completed_at,
   submitted_at,
@@ -133,6 +131,33 @@ const PCR_LIST_SELECT = `
     arrival_hospital_time,
     departure_hospital_time,
     arrival_office_time
+  )
+`;
+
+const PCR_MAP_SELECT = `
+  id,
+  response_id,
+  status,
+  triage,
+  chief_complaint,
+  incident_nature,
+  completed_at,
+  submitted_at,
+  created_at,
+  updated_at,
+  response:responses(
+    id,
+    response_number,
+    date_of_incident,
+    time_of_incident,
+    place_of_incident,
+    location_text,
+    latitude,
+    longitude,
+    initial_assessment,
+    type_of_incident,
+    barangay:barangays(id, name, normalized_name, municipality, province, centroid),
+    responding_team:responding_teams!responses_responding_team_id_fkey(id, name)
   )
 `;
 
@@ -400,7 +425,7 @@ export async function listPCRMapIncidents({ publicOnly = false, verifiedOnly = f
   const rows = await runSupabaseRequest(client => {
     let query = client
       .from("pcr_reports")
-      .select(PCR_SELECT)
+      .select(PCR_MAP_SELECT)
       .is("deleted_at", null)
       .in("status", verifiedOnly ? ["verified"] : publicOnly ? PUBLIC_PCR_MAP_STATUSES : ADMIN_PCR_MAP_STATUSES)
       .order("created_at", { ascending: false })

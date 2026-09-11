@@ -66,7 +66,13 @@ const SOURCE_RANK = {
   cloud: 2,
 };
 const CLOUD_REFRESH_MS = 30000;
+const LIVE_REFRESH_DEBOUNCE_MS = 750;
 const PCR_SYNC_LOG = "[ALERT-CIA PCR Sync]";
+const PCR_SUBMISSION_REFRESH_STATUSES = new Set([
+  "submitted",
+  "pending_dispatcher_review",
+  "pending_admin_verification",
+]);
 const DISPATCH_FILTER_STATUSES = [
   "All",
   "Draft",
@@ -86,6 +92,87 @@ const DISPATCH_FILTER_STATUSES = [
 
 function compactIdSet(values = []) {
   return new Set(values.filter(Boolean).map((value) => String(value)));
+}
+
+function normalizeLiveStatus(value = "") {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function liveEventRows(event = {}) {
+  const detail = event.detail || {};
+  return {
+    next: detail.new || {},
+    previous: detail.old || {},
+  };
+}
+
+function liveEventStatusChanged(event = {}) {
+  const { next, previous } = liveEventRows(event);
+  const nextStatus = normalizeLiveStatus(next.status);
+  const previousStatus = normalizeLiveStatus(previous.status);
+  return Boolean(nextStatus || previousStatus) && nextStatus !== previousStatus;
+}
+
+function liveEventEnteredStatus(event = {}, statuses = new Set()) {
+  const { next, previous } = liveEventRows(event);
+  const nextStatus = normalizeLiveStatus(next.status);
+  const previousStatus = normalizeLiveStatus(previous.status);
+  return statuses.has(nextStatus) && nextStatus !== previousStatus;
+}
+
+function liveEventParentIds(event = {}) {
+  const { next, previous } = liveEventRows(event);
+  return compactIdSet([
+    next.id,
+    previous.id,
+    next.response_id,
+    previous.response_id,
+    next.dispatch_form_id,
+    previous.dispatch_form_id,
+  ]);
+}
+
+function recordsIncludeLiveEventParent(records = [], event = {}) {
+  const eventIds = liveEventParentIds(event);
+  if (!eventIds.size) return false;
+  return records.some((record) => {
+    const recordIds = compactIdSet([
+      record.id,
+      record.dispatchId,
+      record.dispatch_id,
+      record.dispatchClientId,
+      record.dispatch_client_id,
+      record.responseId,
+      record.response_id,
+      record.responseClientId,
+      record.response_client_id,
+      record.linkedPcrId,
+      record.sourcePcrId,
+      record.pcrId,
+    ]);
+    return [...recordIds].some((id) => eventIds.has(id));
+  });
+}
+
+function shouldRefreshForLiveDispatchEvent(event = {}, records = []) {
+  if (event.type === "dispatch_changed") return true;
+  if (event.type === "response_changed") {
+    return (
+      liveEventStatusChanged(event) &&
+      recordsIncludeLiveEventParent(records, event)
+    );
+  }
+  if (event.type === "pcr_changed") {
+    return (
+      liveEventEnteredStatus(event, PCR_SUBMISSION_REFRESH_STATUSES) &&
+      recordsIncludeLiveEventParent(records, event)
+    );
+  }
+  return false;
 }
 
 function linkedPcrKey(record = {}) {
@@ -712,6 +799,7 @@ export default function DispatchRecords() {
   const refreshQueuedTimerRef = useRef(null);
   const intervalEffectStartedRef = useRef(false);
   const mountedRef = useRef(false);
+  const recordsRef = useRef([]);
   const pageSize = 10;
   const canCreate = can(PERMISSIONS.CREATE_DISPATCH);
 
@@ -755,6 +843,7 @@ export default function DispatchRecords() {
         ...cloudRows.map((record) => ({ ...record, recordSource: "cloud" })),
       ]);
       if (!mountedRef.current) return;
+      recordsRef.current = rows;
       setRecords(rows);
       const cloudPcrByResponse = new Map();
       if (mode === "cloud") {
@@ -884,7 +973,7 @@ export default function DispatchRecords() {
         window.clearTimeout(refreshQueuedTimerRef.current);
         refreshQueuedTimerRef.current = window.setTimeout(
           () => refresh({ silent: true }),
-          150,
+          LIVE_REFRESH_DEBOUNCE_MS,
         );
       }
     }
@@ -968,16 +1057,18 @@ export default function DispatchRecords() {
   useEffect(() => subscribeConnection(setConnection), []);
 
   useEffect(() => {
+    recordsRef.current = records;
+  }, [records]);
+
+  useEffect(() => {
     let timer;
     const unsubscribe = subscribeLiveSyncEvents((event) => {
-      if (
-        !["dispatch_changed", "pcr_changed", "response_changed"].includes(
-          event.type,
-        )
-      )
-        return;
+      if (!shouldRefreshForLiveDispatchEvent(event, recordsRef.current)) return;
       clearTimeout(timer);
-      timer = window.setTimeout(() => refresh({ silent: true }), 250);
+      timer = window.setTimeout(
+        () => refresh({ silent: true }),
+        LIVE_REFRESH_DEBOUNCE_MS,
+      );
     });
     return () => {
       clearTimeout(timer);

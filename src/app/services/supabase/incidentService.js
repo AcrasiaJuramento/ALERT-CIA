@@ -180,7 +180,7 @@ async function pcrMetadataByResponse(responseIds = []) {
     const rows = await runSupabaseRequest(client =>
       client
         .from("pcr_reports")
-        .select("response_id, status, triage, emergency_types, trauma_types, incident_nature, notes, updated_at, created_at")
+        .select("response_id, status, triage, emergency_types, trauma_types, incident_nature, updated_at, created_at")
         .in("response_id", ids)
         .is("deleted_at", null),
     "Unable to load PCR incident metadata.");
@@ -188,7 +188,6 @@ async function pcrMetadataByResponse(responseIds = []) {
     const byResponse = new Map();
     asRows(rows).forEach(row => {
       if (!row.response_id) return;
-      const notes = parseDescription(row.notes);
       const current = byResponse.get(row.response_id) || {
         triage: "",
         emergencyTypes: [],
@@ -207,15 +206,13 @@ async function pcrMetadataByResponse(responseIds = []) {
         emergencyTypes: [...new Set([
           ...current.emergencyTypes,
           ...asRows(row.emergency_types),
-          ...asRows(notes.extended.emergencyTypes),
         ])],
         traumaTypes: [...new Set([
           ...current.traumaTypes,
           ...asRows(row.trauma_types),
-          ...asRows(notes.extended.traumaTypes),
         ])],
-        natureOfCall: isLatest ? notes.extended.natureOfCall || current.natureOfCall : current.natureOfCall,
-        incidentNature: isLatest ? row.incident_nature || notes.extended.incidentNature || current.incidentNature : current.incidentNature,
+        natureOfCall: current.natureOfCall,
+        incidentNature: isLatest ? row.incident_nature || current.incidentNature : current.incidentNature,
         statuses: [...new Set([...current.statuses, row.status].filter(Boolean))],
         updatedAt: Math.max(current.updatedAt, nextUpdated),
       });

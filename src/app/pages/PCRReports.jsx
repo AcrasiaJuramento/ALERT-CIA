@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   Archive, ArchiveRestore, CheckCircle2, ChevronLeft, ChevronRight, Download, Edit3, Eye,
@@ -13,7 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { getConnectionState, subscribeConnection } from '../network/connection-manager';
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
-import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, listPCRReports, listPCRWorkflowHistory, reviewNormalPCRAsAdmin, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, supabase, unarchivePCRReport } from '../services/supabase';
+import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, getPCRReport, listPCRReports, listPCRWorkflowHistory, reviewNormalPCRAsAdmin, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, supabase, unarchivePCRReport } from '../services/supabase';
 
 const formatDate = value => {
   if (!value) return '-';
@@ -82,6 +82,14 @@ function mergePCRRecords(localDeviceRecords, cloudRecords) {
     byRecord.set(key, mergePreservingExisting(byRecord.get(key) || {}, record));
   });
   return [...byRecord.values()].sort((a, b) => String(b.updatedAt || b.updated_at || b.createdAt || '').localeCompare(String(a.updatedAt || a.updated_at || a.createdAt || '')));
+}
+
+function mergeFullPCRRecord(summary = {}, full = {}) {
+  return mergePreservingExisting(full || {}, {
+    recordSource: summary.recordSource,
+    syncLabel: summary.syncLabel,
+    synced_to_cloud: summary.synced_to_cloud,
+  });
 }
 
 export default function PCRReports() {
@@ -189,14 +197,14 @@ export default function PCRReports() {
   const hydrateFullRecord = useCallback(async record => {
     if (!isCloudBacked(record) || !record?.id) return record;
     const cached = fullRecordCacheRef.current.get(record.id);
-    if (cached) return mergePreservingExisting(record, cached);
+    if (cached) return mergeFullPCRRecord(record, cached);
 
     const fullRecord = await getPCRReport(record.id);
-    const hydrated = mergePreservingExisting(record, fullRecord || {});
+    const hydrated = mergeFullPCRRecord(record, fullRecord || {});
     fullRecordCacheRef.current.set(record.id, hydrated);
     setRecords(current => current.map(item =>
       logicalRecordKey(item) === logicalRecordKey(hydrated)
-        ? mergePreservingExisting(item, hydrated)
+        ? mergeFullPCRRecord(item, hydrated)
         : item
     ));
     return hydrated;
@@ -304,7 +312,7 @@ export default function PCRReports() {
     setExportingRecord(record);
     try {
       const hydrated = await hydrateFullRecord(record);
-      setExportingRecord(hydrated);
+      flushSync(() => setExportingRecord(hydrated));
       await exportPCRToPdf(hydrated);
       toast.success('Patient Care Report PDF downloaded.');
     } catch {
