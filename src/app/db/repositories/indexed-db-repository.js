@@ -402,6 +402,10 @@ export const indexedDbRepository = {
     const completedLocally = payload.status !== "Draft";
     const parentedPayload = await ensureManualPcrParent(payload);
     const existing = await getRecord("local_pcr_reports", parentedPayload.pcrId || parentedPayload.id);
+    if (["submitted", "submitted on device", "pending dispatcher review", "pending admin verification"]
+      .includes(String(existing?.status || existing?.localStatus || "").trim().toLowerCase())) {
+      throw new Error("This record already has a pending request/submission.");
+    }
     const record = withLocalFields({
       ...mergePreservingExisting(existing, parentedPayload),
       status: completedLocally ? "Submitted" : "Submitted",

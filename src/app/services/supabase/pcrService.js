@@ -814,13 +814,17 @@ export async function upsertPCRReport(record, { submit = false } = {}) {
 }
 
 export async function submitPCRReport(pcrId) {
-  return runSupabaseRequest(client =>
-    client
+  return runSupabaseRequest(async client => {
+    const result = await client
       .from("pcr_reports")
       .update({ status: "submitted", submitted_at: new Date().toISOString() })
       .eq("id", pcrId)
+      .in("status", ["draft", "in_progress", "returned_to_field_officer", "returned_for_correction"])
       .select(PCR_SELECT)
-      .single(),
+      .maybeSingle();
+    if (!result.error && !result.data) throw new Error("This record already has a pending request/submission.");
+    return result;
+  },
   "Unable to submit PCR report.").then(row => { clearSupabaseRequestCache("analytics:"); notifyDataInvalidated(); return pcrToApp(row); });
 }
 

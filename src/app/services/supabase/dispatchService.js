@@ -64,6 +64,7 @@ const DISPATCH_LIST_SELECT = `
     assistant_aider_name,
     responding_team_id,
     assigned_unit_id,
+    accepted_at,
     resolved_at,
     status,
     barangay:barangays(id, name, normalized_name),
@@ -257,12 +258,15 @@ export async function sendDispatchToRespondingTeam(dispatchId) {
   return runSupabaseRequest(async client => {
     const { data: currentDispatch, error: currentError } = await client
       .from("dispatch_forms")
-      .select("response:responses(responding_team_id)")
+      .select("status, response:responses(responding_team_id)")
       .eq("id", dispatchId)
       .single();
     if (currentError) return { data: null, error: currentError };
     if (!currentDispatch?.response?.responding_team_id) {
       return { data: null, error: new Error("A responding team is required before sending this dispatch.") };
+    }
+    if (currentDispatch.status !== "draft" && currentDispatch.status !== "dispatched") {
+      throw new Error("This record already has a pending request/submission.");
     }
 
     const sentAt = new Date().toISOString();
@@ -270,9 +274,11 @@ export async function sendDispatchToRespondingTeam(dispatchId) {
       .from("dispatch_forms")
       .update({ status: "sent_to_responding_team", sent_at: sentAt })
       .eq("id", dispatchId)
+      .in("status", ["draft", "dispatched"])
       .select("response_id")
-      .single();
+      .maybeSingle();
     if (dispatchError) return { data: null, error: dispatchError };
+    if (!dispatch) throw new Error("This record already has a pending request/submission.");
 
     const { error: responseError } = await client
       .from("responses")

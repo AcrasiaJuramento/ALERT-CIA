@@ -97,6 +97,7 @@ export default function PCRReports() {
   const [rejectingRecord, setRejectingRecord] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
   const [workflowHistory, setWorkflowHistory] = useState([]);
+  const [creatingManual, setCreatingManual] = useState(false);
   const [page, setPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [statusCounts, setStatusCounts] = useState({ pendingAdminReview: 0, verified: 0, returnedRejected: 0 });
@@ -323,6 +324,8 @@ export default function PCRReports() {
     }
   };
   const createManual = async () => {
+    if (creatingManual) return;
+    setCreatingManual(true);
     try {
       if (!getConnectionState().cloudOnline) {
         sessionStorage.removeItem(PCR_EDIT_KEY);
@@ -333,7 +336,8 @@ export default function PCRReports() {
       const pcrId = await createStandalonePCRShell({ dateOfIncident: new Date().toISOString().slice(0, 10) });
       sessionStorage.setItem(PCR_EDIT_KEY, pcrId);
       navigate(`/admin/pcr/new?edit=${pcrId}`);
-    } catch (error) { toast.error(error.message || 'Unable to create standalone PCR.'); }
+    } catch (error) { toast.error(error.code === '23505' || /already has a pending|duplicate/i.test(error.message || '') ? 'This record already has a pending request/submission.' : error.message || 'Unable to create standalone PCR.'); }
+    finally { setCreatingManual(false); }
   };
   const dispatcherDecision = (record, decision, remarks = '') => refreshAfter(
     () => reviewStandalonePCR(record.id, decision, remarks),
@@ -367,7 +371,7 @@ export default function PCRReports() {
           <p className="text-xs text-muted-foreground">Unified records, review, verification, exports, and archival for Patient Care Reports.</p>
         </div>
         {canCreate && <div className="flex flex-wrap gap-2">
-          <button onClick={createManual} className="px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Standalone / Manual PCR</button>
+          <button onClick={createManual} disabled={creatingManual} className="px-4 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center disabled:cursor-not-allowed disabled:opacity-60"><FilePlus2 size={16} />{creatingManual ? 'Creating...' : 'Standalone / Manual PCR'}</button>
           <button onClick={() => navigate('/admin/dispatch/received')} className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-semibold flex gap-2 items-center"><FilePlus2 size={16} />Accept Dispatch for PCR</button>
         </div>}
       </div>

@@ -12,7 +12,7 @@ import { filterIncidentsByRange, getBarangayStats, summarizeBy } from '../data/a
 import { PERMISSIONS } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
-import { computeAverageResponseMinutes, formatResponseDuration } from '../utils/responseTime';
+import { computeAverageWholeResponseMinutes, formatResponseDuration } from '../utils/responseTime';
 import { formatLongDateTime } from '../utils/dateFormat';
 import {
   getAmbulanceStatus,
@@ -148,7 +148,7 @@ export default function Dashboard() {
   };
 
   const refreshDispatches = async () => {
-    const rows = await listDispatchRecords({ limit: 50 });
+    const rows = await listDispatchRecords({ limit: 1000 });
     setDispatches(rows);
     return rows;
   };
@@ -159,7 +159,7 @@ export default function Dashboard() {
     try {
       const [incidentResult, dispatchResult, notificationResult, ambulanceResult, fieldTeamResult] = await Promise.allSettled([
         listIncidents({ limit: 100 }),
-        listDispatchRecords({ limit: 50 }),
+        listDispatchRecords({ limit: 1000 }),
         listNotifications({ limit: 20 }),
         listAmbulanceUnits({ activeOnly: false }),
         listActiveFieldOfficerTeamAssignments(),
@@ -237,7 +237,7 @@ export default function Dashboard() {
   const availableAmbulances = ambulanceUnits.filter(unit => getAmbulanceStatus(unit) === 'available').length;
   const ambulanceTotal = ambulanceUnits.length;
   const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status)).slice(0, 6);
-  const avgResponseMinutes = useMemo(() => computeAverageResponseMinutes(dispatches), [dispatches]);
+  const avgResponseMinutes = useMemo(() => computeAverageWholeResponseMinutes(dispatches), [dispatches]);
   const analyticsIncidents = useMemo(() => incidents.map(incident => ({
     ...incident,
     barangay: incident.barangay,
@@ -309,7 +309,7 @@ export default function Dashboard() {
     {
       label: 'Avg Response Time',
       value: avgResponseMinutes == null ? '-' : formatResponseDuration(avgResponseMinutes),
-      change: avgResponseMinutes == null ? 'Awaiting dispatch timing data' : 'Based on dispatch and arrival times',
+      change: avgResponseMinutes == null ? 'Awaiting complete response timing data' : 'Based on complete response workflows',
       icon: Clock,
       color: 'text-purple-400',
       bg: 'bg-purple-500/10',

@@ -12,10 +12,11 @@ import {
   filterIncidentsByRange, filterOptions, formatBarangayAnalyticsLabel, getBarangayStats, summarizeBy,
 } from '../data/analyticsModule';
 import { ECHAGUE_BARANGAYS, matchBarangayName } from '../data/gisConfig';
-import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRAnalyticsReports, listPCRReports, listReceivedDispatchRecords } from '../services/supabase';
+import { getStaffAllRecordsAnalytics, listDispatchRecords, listIncidents, listPCRAnalyticsReports, listPCRReports, listReceivedDispatchRecords, supabase } from '../services/supabase';
 import { ROLES } from '../access/rbac';
 import { useAuth } from '../contexts/AuthContext';
 import { calculateAccidentProneAreas } from '../utils/accidentProneAreas';
+import { createInformationalRefresh } from '../utils/informationalRefresh';
 
 const colors = ['#2563eb', '#dc2626', '#f97316', '#eab308', '#22c55e', '#14b8a6', '#8b5cf6', '#64748b'];
 
@@ -65,6 +66,7 @@ const analyticsTabs = [
   ['mvc', 'MVC Safety'],
   ['pcr', 'PCR'],
   ['comparative', 'Comparative Analysis'],
+  ['response-segments', 'Response Time Segmentation'],
 ];
 
 const locationScopeOptions = [
@@ -1413,6 +1415,182 @@ function ComparativeAnalysisSection({ incidents, dispatches, pcrReports }) {
   </section>;
 }
 
+function validStoredDateTime(date, value) {
+  if (!date || !value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const text = String(value).trim();
+  if (!text) return null;
+  if (/^\d{1,2}:\d{2}/.test(text)) return dateTimeFrom(String(date).slice(0, 10), text);
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function orderedDurationMinutes(points) {
+  if (points.some(point => !(point instanceof Date) || Number.isNaN(point.getTime()))) return null;
+  for (let index = 1; index < points.length; index += 1) {
+    if (points[index].getTime() < points[index - 1].getTime()) return null;
+  }
+  return minutesBetween(points[0], points[points.length - 1]);
+}
+
+function wholeResponseAverage(dispatches, pcrReports) {
+  const pcrByResponse = new Map(pcrReports.filter(report => report.responseId).map(report => [report.responseId, report]));
+  const pcrByDispatch = new Map(pcrReports.filter(report => report.dispatchId).map(report => [report.dispatchId, report]));
+  const durations = dispatches.map(dispatch => {
+    const date = dispatch.date || dispatch.dateOfIncident || String(dispatch.createdAt || '').slice(0, 10);
+    const linkedPcr = pcrByDispatch.get(dispatch.dispatchId || dispatch.id) || pcrByResponse.get(dispatch.responseId);
+    const incident = validStoredDateTime(date, dispatch.timeOfIncident);
+    const dispatched = validStoredDateTime(date, dispatch.dispatchedTime || dispatch.dispatchTime);
+    const accepted = validStoredDateTime(date, dispatch.acceptedAt);
+    const sceneArrival = validStoredDateTime(date, dispatch.arrivalScene || dispatch.arrivalAtScene);
+    const sceneDeparture = validStoredDateTime(date, dispatch.departureScene || dispatch.departureAtScene);
+    const hospitalArrival = validStoredDateTime(date, dispatch.arrivalHospital || dispatch.arrivalAtHospital);
+    const hospitalDeparture = validStoredDateTime(date, dispatch.departureHospital || dispatch.departureAtHospital);
+    const backToBase = validStoredDateTime(date, dispatch.backToBase || dispatch.arrivalOffice || dispatch.arrivalAtOffice);
+    const isRefusal = Boolean(linkedPcr?.waiverAccepted);
+    const hasAnyHospitalTime = Boolean(hospitalArrival || hospitalDeparture);
+    const hospitalTransport = !isRefusal && Boolean(hospitalArrival && hospitalDeparture);
+    if (hospitalTransport) {
+      return orderedDurationMinutes([incident, dispatched, accepted, sceneArrival, sceneDeparture, hospitalArrival, hospitalDeparture, backToBase]);
+    }
+    if (isRefusal || !hasAnyHospitalTime) {
+      return orderedDurationMinutes([incident, dispatched, accepted, sceneArrival, sceneDeparture, backToBase]);
+    }
+    return null;
+  });
+  return average(durations);
+}
+
+function ResponseTimeSegmentationSection({ dispatches, pcrReports }) {
+  const [selectedRecordId, setSelectedRecordId] = useState('');
+  const [recordSearch, setRecordSearch] = useState('');
+  const segmentation = useMemo(() => {
+    const pcrByResponse = new Map();
+    const pcrByDispatch = new Map();
+    pcrReports.forEach(report => {
+      if (report.responseId) pcrByResponse.set(report.responseId, report);
+      if (report.dispatchId) pcrByDispatch.set(report.dispatchId, report);
+    });
+    const values = {
+      callerDispatcher: [],
+      dispatcherAcceptance: [],
+      acceptanceScene: [],
+      sceneHospital: [],
+      hospitalBase: [],
+      sceneBase: [],
+      wholeResponse: [],
+    };
+    const records = [];
+
+    dispatches.forEach(dispatch => {
+      const date = dispatch.date || dispatch.dateOfIncident || String(dispatch.createdAt || '').slice(0, 10);
+      const linkedPcr = pcrByDispatch.get(dispatch.dispatchId || dispatch.id) || pcrByResponse.get(dispatch.responseId);
+      const isReverseWorkflow = Boolean(dispatch.sourcePcrId) || linkedPcr?.workflowOrigin === 'reverse';
+      const isRefusal = Boolean(linkedPcr?.waiverAccepted);
+      const incident = validStoredDateTime(date, dispatch.timeOfIncident);
+      const dispatched = validStoredDateTime(date, dispatch.dispatchedTime || dispatch.dispatchTime);
+      const accepted = validStoredDateTime(date, dispatch.acceptedAt);
+      const sceneArrival = validStoredDateTime(date, dispatch.arrivalScene || dispatch.arrivalAtScene);
+      const sceneDeparture = validStoredDateTime(date, dispatch.departureScene || dispatch.departureAtScene);
+      const hospitalArrival = validStoredDateTime(date, dispatch.arrivalHospital || dispatch.arrivalAtHospital);
+      const hospitalDeparture = validStoredDateTime(date, dispatch.departureHospital || dispatch.departureAtHospital);
+      const backToBase = validStoredDateTime(date, dispatch.backToBase || dispatch.arrivalOffice || dispatch.arrivalAtOffice);
+      const hasAnyHospitalTime = Boolean(hospitalArrival || hospitalDeparture);
+      const hospitalTransport = !isRefusal && Boolean(hospitalArrival && hospitalDeparture);
+      const noHospitalTransport = isRefusal || !hasAnyHospitalTime;
+      const segmentDurations = {};
+      const add = (key, points) => {
+        const duration = orderedDurationMinutes(points);
+        segmentDurations[key] = duration;
+        if (duration !== null) values[key].push(duration);
+      };
+
+      if (!isReverseWorkflow) add('callerDispatcher', [incident, dispatched]);
+      add('dispatcherAcceptance', [dispatched, accepted]);
+      add('acceptanceScene', [accepted, sceneArrival]);
+      if (hospitalTransport) {
+        add('sceneHospital', [sceneDeparture, hospitalArrival]);
+        add('hospitalBase', [hospitalDeparture, backToBase]);
+        add('wholeResponse', [incident, dispatched, accepted, sceneArrival, sceneDeparture, hospitalArrival, hospitalDeparture, backToBase]);
+      } else if (noHospitalTransport) {
+        add('sceneBase', [sceneDeparture, backToBase]);
+        add('wholeResponse', [incident, dispatched, accepted, sceneArrival, sceneDeparture, backToBase]);
+      }
+      records.push({
+        id: String(dispatch.dispatchId || dispatch.id),
+        label: dispatch.responseNumber || `Dispatch ${String(dispatch.dispatchId || dispatch.id).slice(0, 8)}`,
+        patientNames: [dispatch.patientName, ...(dispatch.patients || []).map(patient => patient.name)]
+          .map(name => String(name || '').trim()).filter(Boolean).filter((name, index, names) => names.indexOf(name) === index),
+        date,
+        team: dispatch.team || dispatch.respondingTeam || '',
+        segmentDurations,
+      });
+    });
+
+    const metrics = [
+      { key: 'callerDispatcher', label: 'Caller → Dispatcher', description: 'Incident/caller time until dispatch; reverse and manual PCR workflows excluded.', values: values.callerDispatcher, icon: Radio },
+      { key: 'dispatcherAcceptance', label: 'Dispatcher → Field Officer Acceptance', description: 'Dispatch time until the assigned Field Officer accepts.', values: values.dispatcherAcceptance, icon: CheckCircle2 },
+      { key: 'acceptanceScene', label: 'Field Officer Acceptance → Scene Arrival', description: 'Accepted dispatch until arrival at the incident scene.', values: values.acceptanceScene, icon: MapPinned },
+      { key: 'sceneHospital', label: 'Scene → Hospital', description: 'Departure from scene until hospital arrival for transported patients.', values: values.sceneHospital, icon: Building2 },
+      { key: 'hospitalBase', label: 'Hospital → Back to Base', description: 'Departure from hospital until return to base for transported patients.', values: values.hospitalBase, icon: Building2 },
+      { key: 'sceneBase', label: 'Scene → Back to Base', description: 'Departure from scene until return to base when there is no hospital transport.', values: values.sceneBase, icon: MapPinned },
+      { key: 'wholeResponse', label: 'Whole Response Time', description: 'Complete valid response workflow from incident/caller time through return to base.', values: values.wholeResponse, icon: Clock, featured: true },
+    ].map(metric => ({ ...metric, average: average(metric.values), count: metric.values.length }));
+    return { metrics, records };
+  }, [dispatches, pcrReports]);
+  const selectedRecord = segmentation.records.find(record => record.id === selectedRecordId) || null;
+  const normalizedRecordSearch = recordSearch.trim().toLowerCase();
+  const visibleRecords = normalizedRecordSearch
+    ? segmentation.records.filter(record => record.patientNames.some(name => name.toLowerCase().includes(normalizedRecordSearch)))
+    : segmentation.records;
+
+  return <section className="space-y-5">
+    <SectionHeader title="Segmentation of Average Response Time" subtitle="Average duration of each completed response stage using existing workflow timestamps" />
+    <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+      <label htmlFor="response-segmentation-record" className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">View a specific response record</label>
+      <div className="mt-2 grid gap-2 lg:grid-cols-2">
+        <input type="search" value={recordSearch} onChange={event => { setRecordSearch(event.target.value); setSelectedRecordId(''); }} placeholder="Search by patient name" aria-label="Search response records by patient name" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+        <select id="response-segmentation-record" value={selectedRecordId} onChange={event => setSelectedRecordId(event.target.value)} className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground">
+          <option value="">Or browse all response records</option>
+          {segmentation.records.map(record => <option key={record.id} value={record.id}>{record.label}{record.patientNames.length ? ` | ${record.patientNames.join(', ')}` : ''}{record.date ? ` | ${record.date}` : ''}{record.team ? ` | ${record.team}` : ''}</option>)}
+        </select>
+      </div>
+      {normalizedRecordSearch && !selectedRecord && visibleRecords.length > 0 && <div className="mt-2 max-h-52 overflow-y-auto rounded-md border border-border bg-background p-1" role="listbox" aria-label="Matching patient response records">
+        {visibleRecords.map(record => <button key={`search-${record.id}`} type="button" onClick={() => { setSelectedRecordId(record.id); setRecordSearch(record.patientNames.join(', ')); }} className="flex w-full flex-col rounded px-3 py-2 text-left hover:bg-secondary/70 focus:bg-secondary/70 focus:outline-none">
+          <span className="text-sm font-semibold text-foreground">{record.patientNames.join(', ')}</span>
+          <span className="mt-0.5 text-xs text-muted-foreground">{record.label}{record.date ? ` | ${record.date}` : ''}{record.team ? ` | ${record.team}` : ''}</span>
+        </button>)}
+      </div>}
+      {normalizedRecordSearch && !selectedRecord && visibleRecords.length === 0 && <p className="mt-2 rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">No response record found for that patient name.</p>}
+      {selectedRecord && <div className="mt-2 text-xs text-muted-foreground">Showing individual durations for <span className="font-semibold text-foreground">{selectedRecord.label}</span>{selectedRecord.patientNames.length ? ` — ${selectedRecord.patientNames.join(', ')}` : ''}.</div>}
+    </div>
+    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {segmentation.metrics.map(metric => {
+        const Icon = metric.icon;
+        const selectedDuration = selectedRecord?.segmentDurations?.[metric.key];
+        return <article key={metric.label} className={`flex h-full flex-col rounded-lg border border-border bg-card p-4 shadow-sm ${metric.featured ? 'md:col-span-2 xl:col-span-3' : ''}`}>
+          <div className="flex min-h-[76px] items-start justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-foreground">{metric.label}</h3>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{metric.description}</p>
+            </div>
+            <div className="shrink-0 rounded-md border border-blue-500/20 bg-blue-500/10 p-2 text-blue-400"><Icon className="h-4 w-4" /></div>
+          </div>
+          <div className="mt-auto flex min-h-[92px] items-end justify-between gap-3 border-t border-border/70 pt-4">
+            <div><div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Average duration</div><div className="mt-1 text-2xl font-bold text-foreground">{formatMinutes(metric.average)}</div></div>
+            <div className="text-right text-[10px] text-muted-foreground">{metric.count} valid {metric.count === 1 ? 'record' : 'records'}</div>
+          </div>
+          {selectedRecord && <div className="mt-3 min-h-[78px] rounded-md border border-blue-500/20 bg-blue-500/10 px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-blue-300">Selected record</div>
+            <div className="mt-1 text-lg font-bold text-foreground">{selectedDuration === null || selectedDuration === undefined ? 'Not available' : formatMinutes(selectedDuration)}</div>
+          </div>}
+        </article>;
+      })}
+    </div>
+    <p className="text-xs text-muted-foreground">Only records with every required timestamp in a valid chronological order are included. Missing or invalid timestamps are omitted from the affected segment.</p>
+  </section>;
+}
+
 function ReportChartCard({ title, subtitle, data, kind = 'bar' }) {
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -1480,6 +1658,7 @@ export default function Analytics() {
   const [drilldown, setDrilldown] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [analyticsRevision, setAnalyticsRevision] = useState(0);
   const roleTabs = useMemo(() => analyticsTabsForRole(user?.role), [user?.role]);
   const headerCopy = useMemo(() => analyticsHeaderForRole(user?.role), [user?.role]);
   const isFullAnalytics = user?.role === ROLES.ADMINISTRATOR;
@@ -1508,13 +1687,16 @@ export default function Analytics() {
           sourceError = error;
           return null;
         });
-        const detailedPcrReports = allRecords
-          ? await loadAllRows(listPCRReports, { archive: 'all' }).catch(() => allRecords.pcrReports)
-          : null;
+        const [detailedDispatches, detailedPcrReports] = allRecords
+          ? await Promise.all([
+            loadAllRows(listDispatchRecords).catch(() => allRecords.dispatches),
+            loadAllRows(listPCRReports, { archive: 'all' }).catch(() => allRecords.pcrReports),
+          ])
+          : [null, null];
         if (mounted) {
           if (allRecords) {
             setIncidents(allRecords.incidents);
-            setDispatches(allRecords.dispatches);
+            setDispatches(detailedDispatches);
             setPcrReports(detailedPcrReports);
           } else {
             const [incidentResult, dispatchResult, pcrResult] = await Promise.allSettled([
@@ -1546,7 +1728,26 @@ export default function Analytics() {
     return () => {
       mounted = false;
     };
-  }, [isFullAnalytics, user]);
+  }, [analyticsRevision, isFullAnalytics, user]);
+
+  useEffect(() => {
+    if (!isFullAnalytics || !supabase?.channel) return undefined;
+    const scheduler = createInformationalRefresh(
+      () => setAnalyticsRevision(revision => revision + 1),
+      { delay: 1000 },
+    );
+    const refresh = scheduler.markStale;
+    const channel = supabase
+      .channel('analytics-response-segmentation-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'dispatch_forms' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pcr_reports' }, refresh)
+      .subscribe();
+    return () => {
+      scheduler.dispose();
+      supabase.removeChannel(channel);
+    };
+  }, [isFullAnalytics]);
 
   const officialVerifiedPcrReports = useMemo(() => pcrReports.filter(isVerifiedWorkflowRecord), [pcrReports]);
   const verifiedPcrResponseIds = useMemo(() => new Set(
@@ -1693,6 +1894,10 @@ export default function Analytics() {
     dateTimeFrom(dispatch.date, dispatch.arrivalScene),
     dateTimeFrom(dispatch.date, dispatch.departureScene),
   ))), [filteredDispatches]);
+  const adminWholeResponseMinutes = useMemo(
+    () => wholeResponseAverage(filteredDispatches, filteredPcrReports),
+    [filteredDispatches, filteredPcrReports],
+  );
   const monthlyTotals = useMemo(() => months.map((month, index) => ({
     month: month.slice(0, 3),
     incidents: analyticsIncidents.filter(item => item.month === index).length,
@@ -1927,7 +2132,7 @@ export default function Analytics() {
           summary={spatioSummary}
           range={range}
           customRange={customRange}
-          avgResponseMinutes={avgResponseMinutes}
+          avgResponseMinutes={adminWholeResponseMinutes}
           avgSceneMinutes={avgSceneMinutes}
           submittedPcrCount={submittedPcrCount}
           medicalCount={medicalCount}
@@ -2035,6 +2240,12 @@ export default function Analytics() {
           incidents={analyticsIncidents}
           dispatches={analyticsDispatches}
           pcrReports={analyticsPcrReports}
+        />
+      )}
+      {isFullAnalytics && activeTab === 'response-segments' && (
+        <ResponseTimeSegmentationSection
+          dispatches={filteredDispatches}
+          pcrReports={filteredPcrReports}
         />
       )}
       <DrilldownDrawer drilldown={drilldown} onClose={() => setDrilldown(null)} />
