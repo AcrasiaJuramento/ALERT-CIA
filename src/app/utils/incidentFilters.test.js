@@ -7,6 +7,7 @@ import {
 } from './incidentFilters.js';
 
 test('normalizes stored priority and triage names to red, yellow, and green', () => {
+  assert.equal(normalizeIncidentSeverity('black'), 'black');
   assert.equal(normalizeIncidentSeverity('critical'), 'red');
   assert.equal(normalizeIncidentSeverity('Moderate'), 'yellow');
   assert.equal(normalizeIncidentSeverity('low'), 'green');
@@ -33,4 +34,10 @@ test('combines severity, type, and workflow status filters', () => {
     status: 'pending_admin_verification',
   }), true);
   assert.equal(matchesIncidentFilters(incident, { severity: 'green' }), false);
+});
+
+test('matches black triage incidents with the black severity filter', () => {
+  assert.equal(matchesIncidentFilters({ severity: 'black' }, { severity: 'black' }), true);
+  assert.equal(matchesIncidentFilters({ triage: 'Black' }, { severity: 'black' }), true);
+  assert.equal(matchesIncidentFilters({ severity: 'black' }, { severity: 'yellow' }), false);
 });

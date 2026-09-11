@@ -12,6 +12,7 @@ import { formatLongDate } from '../utils/dateFormat';
 import { matchesIncidentFilters } from '../utils/incidentFilters';
 
 const severityBadge = {
+  black: 'bg-slate-950 text-slate-100 border border-slate-500/60',
   red: 'bg-red-600/20 text-red-400 border border-red-500/30',
   yellow: 'bg-yellow-600/20 text-yellow-400 border border-yellow-500/30',
   green: 'bg-green-600/20 text-green-400 border border-green-500/30',
@@ -64,6 +65,7 @@ const incidentSummary = incident => {
 
 const SEVERITY_FILTERS = [
   { value: 'all', label: 'All Severity' },
+  { value: 'black', label: 'Black' },
   { value: 'red', label: 'Red' },
   { value: 'yellow', label: 'Yellow' },
   { value: 'green', label: 'Green' },
@@ -191,7 +193,7 @@ export default function IncidentList() {
 
   const stats = {
     total: totalCount,
-    critical: summaryIncidents.filter(i => i.severity === 'red').length,
+    critical: summaryIncidents.filter(i => ['black', 'red'].includes(i.severity)).length,
     active: summaryIncidents.filter(i => !isIncidentCompleted(i.workflowStatus || i.status)).length,
     resolved: summaryIncidents.filter(i => isIncidentCompleted(i.workflowStatus || i.status)).length,
   };
@@ -355,8 +357,8 @@ export default function IncidentList() {
                       <div className="truncate">{incident.location}</div>
                     </td>
                     <td className="px-3 py-3.5">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${severityBadge[incident.severity] || severityBadge.yellow}`}>
-                        {(incident.severity || 'yellow').toUpperCase()}
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${severityBadge[incident.severity] || severityBadge.moderate}`}>
+                        {(incident.severity || 'moderate').toUpperCase()}
                       </span>
                     </td>
                     <td className="px-3 py-3.5">
