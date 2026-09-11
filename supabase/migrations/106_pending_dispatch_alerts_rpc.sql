@@ -1,10 +1,11 @@
 -- Compact, server-filtered dispatch alarm reads.
 -- Validate the plan in Supabase SQL editor after deployment with:
 -- explain (analyze, buffers)
--- select * from public.get_pending_dispatch_alerts(null::uuid[], null::uuid[]);
+-- select * from public.get_pending_dispatch_alerts(null::uuid[], null::uuid);
 
 begin;
 
+drop function if exists public.get_pending_dispatch_alerts(uuid[], uuid);
 drop function if exists public.get_pending_dispatch_alerts(uuid[], uuid[]);
 
 create or replace function public.get_pending_dispatch_alerts(
@@ -85,8 +86,8 @@ as $$
   order by coalesce(d.sent_at, d.created_at), d.id;
 $$;
 
-revoke execute on function public.get_pending_dispatch_alerts(uuid[], uuid[]) from public, anon;
-grant execute on function public.get_pending_dispatch_alerts(uuid[], uuid[]) to authenticated;
+revoke execute on function public.get_pending_dispatch_alerts(uuid[], uuid) from public, anon;
+grant execute on function public.get_pending_dispatch_alerts(uuid[], uuid) to authenticated;
 
 commit;
 
@@ -107,5 +108,5 @@ notify pgrst, 'reload schema';
 --   and p.proname = 'get_pending_dispatch_alerts';
 
 -- If the application still returns PGRST202, run this separately in SQL Editor:
--- select to_regprocedure('public.get_pending_dispatch_alerts(uuid[],uuid[])');
--- It must return public.get_pending_dispatch_alerts(uuid[],uuid[]).
+-- select to_regprocedure('public.get_pending_dispatch_alerts(uuid[],uuid)');
+-- It must return public.get_pending_dispatch_alerts(uuid[],uuid).
