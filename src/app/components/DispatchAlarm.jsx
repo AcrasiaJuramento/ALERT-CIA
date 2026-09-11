@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { acceptDispatchByResponse, listReceivedDispatchRecords } from '../services/supabase/dispatchService';
-import { supabase } from '../services/supabase';
+import { acceptDispatchByResponse, getPendingDispatchAlert, listPendingDispatchAlerts } from '../services/supabase/dispatchService';
+import { getCurrentProfileTeamMemberships } from '../services/supabase/userService';
 import { subscribeLiveSyncEvents } from '../network/live-sync-events';
 import { dispatchAlertDetails, isPendingDispatch } from '../utils/pendingDispatch';
+
+const FALLBACK_REFRESH_MS = 5 * 60_000;
+const REFRESH_DEBOUNCE_MS = 750;
+const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000];
 
 // Mounted for the authenticated officer, independently of the current page.
 export default function DispatchAlarm() {
@@ -22,33 +26,152 @@ export default function DispatchAlarm() {
   useEffect(() => {
     let live = true;
     let loading = false;
-    const refresh = async () => {
+    let fallbackTimer;
+    let retryTimer;
+    let debounceTimer;
+    let retryAttempt = 0;
+    let lastErrorLogAt = 0;
+    const teamIds = [];
+    const changedResponseIds = new Set();
+    let teamIdsLoaded = false;
+
+    const logRefreshError = error => {
+      const now = Date.now();
+      if (now - lastErrorLogAt < 60_000) return;
+      lastErrorLogAt = now;
+      console.error('[dispatch-alarm] refresh failed:', error);
+    };
+
+    const scheduleFallback = () => {
+      window.clearTimeout(fallbackTimer);
+      fallbackTimer = window.setTimeout(() => {
+        if (document.visibilityState === 'visible') refreshAll();
+      }, FALLBACK_REFRESH_MS);
+    };
+
+    const scheduleRetry = () => {
+      window.clearTimeout(fallbackTimer);
+      window.clearTimeout(retryTimer);
+      const delay = RETRY_DELAYS_MS[Math.min(retryAttempt, RETRY_DELAYS_MS.length - 1)];
+      retryAttempt += 1;
+      retryTimer = window.setTimeout(() => {
+        if (document.visibilityState === 'visible') {
+          if (teamIdsLoaded) refreshAll();
+          else initialize();
+        }
+      }, delay);
+    };
+
+    const applyRows = rows => {
+      const next = rows.filter(item => isPendingDispatch(item) && !accepted.current.has(item.responseId));
+      setPending(next.sort((a, b) => String(a.sentAt || a.createdAt).localeCompare(String(b.sentAt || b.createdAt))));
+    };
+
+    async function refreshAll() {
       if (loading) return;
       loading = true;
       try {
-        const rows = await listReceivedDispatchRecords({ limit: 1000 });
-        if (live) setPending(rows.filter(item => isPendingDispatch(item) && !accepted.current.has(item.responseId))
-          .sort((a, b) => String(a.sentAt || a.createdAt).localeCompare(String(b.sentAt || b.createdAt))));
-      } catch {
-        // A failed refresh must never dismiss an outstanding dispatch.
-      } finally { loading = false; }
+        if (!teamIds.length) {
+          if (live) setPending([]);
+          retryAttempt = 0;
+          scheduleFallback();
+          return;
+        }
+        const rows = await listPendingDispatchAlerts(teamIds);
+        if (live) {
+          applyRows(rows);
+          retryAttempt = 0;
+          window.clearTimeout(retryTimer);
+          scheduleFallback();
+        }
+      } catch (error) {
+        logRefreshError(error);
+        if (live) scheduleRetry();
+      } finally {
+        loading = false;
+      }
+    }
+
+    async function refreshChangedRows(responseIds) {
+      if (loading || !responseIds.length || !teamIds.length) return;
+      loading = true;
+      try {
+        const changedRows = await Promise.all(responseIds.map(async responseId => ({
+          responseId,
+          row: await getPendingDispatchAlert(responseId, teamIds),
+        })));
+        if (live) {
+          setPending(items => {
+            const next = new Map(items.map(item => [item.responseId, item]));
+            changedRows.forEach(({ responseId, row }) => {
+              next.delete(responseId);
+              if (row && isPendingDispatch(row) && !accepted.current.has(row.responseId)) next.set(row.responseId, row);
+            });
+            return [...next.values()].sort((a, b) => String(a.sentAt || a.createdAt).localeCompare(String(b.sentAt || b.createdAt)));
+          });
+          retryAttempt = 0;
+          window.clearTimeout(retryTimer);
+          scheduleFallback();
+        }
+      } catch (error) {
+        logRefreshError(error);
+        if (live) scheduleRetry();
+      } finally {
+        loading = false;
+      }
+    }
+
+    async function initialize() {
+      try {
+        const memberships = await getCurrentProfileTeamMemberships();
+        teamIds.splice(0, teamIds.length, ...memberships.map(membership => membership.team_id).filter(Boolean));
+        teamIdsLoaded = true;
+        await refreshAll();
+      } catch (error) {
+        logRefreshError(error);
+        if (live) scheduleRetry();
+      }
+    }
+
+    const queueEventRefresh = event => {
+      const detail = event.detail || {};
+      const currentRow = detail.new || {};
+      const previousRow = detail.old || {};
+      const row = event.type === 'response_changed' ? currentRow : (currentRow.id ? currentRow : previousRow);
+      const responseId = event.type === 'response_changed' ? row.id : (row.response_id || previousRow.response_id);
+      const touchedTeamIds = [currentRow.responding_team_id, previousRow.responding_team_id].filter(Boolean);
+      if (touchedTeamIds.length && !touchedTeamIds.some(teamId => teamIds.includes(teamId))) return;
+      if (!responseId) {
+        refreshAll();
+        return;
+      }
+      changedResponseIds.add(responseId);
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        const ids = [...changedResponseIds];
+        changedResponseIds.clear();
+        refreshChangedRows(ids);
+      }, REFRESH_DEBOUNCE_MS);
     };
-    refresh();
-    const interval = window.setInterval(refresh, 5000);
+
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') refreshAll();
+    };
+
+    initialize();
     const unsubscribe = subscribeLiveSyncEvents(event => {
-      if (['dispatch_changed', 'response_changed'].includes(event.type)) refresh();
+      if (['dispatch_changed', 'response_changed'].includes(event.type)) queueEventRefresh(event);
     });
-    const channel = supabase?.channel('field-dispatch-alarm')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'dispatch_forms' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'responses' }, refresh)
-      .subscribe();
-    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    window.addEventListener('focus', refreshWhenVisible);
     return () => {
       live = false;
-      window.clearInterval(interval);
+      window.clearTimeout(fallbackTimer);
+      window.clearTimeout(retryTimer);
+      window.clearTimeout(debounceTimer);
       unsubscribe();
-      window.removeEventListener('focus', refresh);
-      if (channel) supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+      window.removeEventListener('focus', refreshWhenVisible);
     };
   }, []);
 

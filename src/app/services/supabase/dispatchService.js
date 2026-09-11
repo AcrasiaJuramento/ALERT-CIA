@@ -146,6 +146,56 @@ export async function listDispatchRecords({ status, teamId, limit = 100, from = 
   return teamId ? mappedRows.filter(row => row.respondingTeamId === teamId) : mappedRows;
 }
 
+function pendingDispatchAlertToApp(row = {}) {
+  return dispatchToApp({
+    id: row.dispatch_id,
+    client_generated_id: row.dispatch_client_generated_id,
+    response_id: row.response_id,
+    status: row.dispatch_status,
+    sent_at: row.sent_at,
+    created_at: row.dispatch_created_at,
+    updated_at: row.dispatch_updated_at,
+    notes: row.notes,
+    assistance_needed: row.assistance_needed || [],
+    number_of_patients: row.number_of_patients,
+    response: {
+      id: row.response_id,
+      response_number: row.response_number,
+      date_of_incident: row.incident_date,
+      time_of_incident: row.incident_time,
+      place_of_incident: row.place_of_incident,
+      type_of_incident: row.type_of_incident,
+      caller_name: row.caller_name,
+      caller_contact: row.caller_contact,
+      caller_address: row.caller_address,
+      initial_assessment: row.initial_assessment,
+      responding_team_id: row.responding_team_id,
+      accepted_at: row.accepted_at,
+      resolved_at: row.resolved_at,
+      status: row.response_status,
+      barangay: row.barangay_name ? { name: row.barangay_name } : null,
+      responding_team: row.responding_team_name ? { name: row.responding_team_name } : null,
+    },
+  });
+}
+
+async function readPendingDispatchAlerts({ teamIds = null, responseId = null } = {}) {
+  const rows = await runSupabaseRequest(client => client.rpc("get_pending_dispatch_alerts", {
+    target_team_ids: teamIds?.length ? teamIds : null,
+    target_response_id: responseId || null,
+  }), "Unable to load pending dispatch alerts.");
+  return (rows || []).map(pendingDispatchAlertToApp);
+}
+
+export function listPendingDispatchAlerts(teamIds = []) {
+  return readPendingDispatchAlerts({ teamIds });
+}
+
+export async function getPendingDispatchAlert(responseId, teamIds = []) {
+  const rows = await readPendingDispatchAlerts({ teamIds, responseId });
+  return rows[0] || null;
+}
+
 export async function listReceivedDispatchRecords({ limit = 100, from = 0 } = {}) {
   const memberships = await getCurrentProfileTeamMemberships();
   const teamIds = memberships.map(membership => membership.team_id).filter(Boolean);
