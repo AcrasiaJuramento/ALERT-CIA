@@ -614,6 +614,45 @@ export async function listScraperRuns({ limit = 50 } = {}) {
   "Unable to load scraper runs.");
 }
 
+export async function listScraperRunDetails(runId) {
+  if (!runId) return [];
+  const [records, candidates] = await Promise.all([
+    runSupabaseRequest(client => client
+      .from("scraper_records")
+      .select("id, run_id, source_site, source_url, title, scraped_at, status, error_message")
+      .eq("run_id", runId)
+      .order("scraped_at", { ascending: false }), "Unable to load added scraper records."),
+    runSupabaseRequest(client => client
+      .from("scraper_article_candidates")
+      .select("id, run_id, source_site, source_url, title, created_at, rejection_reason, rejection_details")
+      .eq("run_id", runId)
+      .order("created_at", { ascending: false }), "Unable to load skipped scraper records."),
+  ]);
+  const added = asRows(records).map(row => ({
+    id: `record-${row.id}`,
+    source: row.source_site || "Unknown source",
+    sourceUrl: row.source_url,
+    title: row.title || "Untitled article",
+    processedAt: row.scraped_at,
+    result: row.error_message ? "Failed" : "Added",
+    details: row.error_message || "Saved as a scraper record.",
+  }));
+  const reviewed = asRows(candidates).map(row => {
+    const reason = String(row.rejection_reason || "").toLowerCase();
+    const result = reason === "duplicate" ? "Duplicate" : ["fetch_failed", "extract_failed", "location_unknown"].includes(reason) ? "Failed" : "Skipped";
+    return {
+      id: `candidate-${row.id}`,
+      source: row.source_site || "Unknown source",
+      sourceUrl: row.source_url,
+      title: row.title || "Untitled article",
+      processedAt: row.created_at,
+      result,
+      details: row.rejection_details || row.rejection_reason || "Not added.",
+    };
+  });
+  return [...added, ...reviewed].sort((left, right) => new Date(right.processedAt || 0) - new Date(left.processedAt || 0));
+}
+
 export async function analyzeScraperArticle({ url = "", title = "", snippet = "", body = "" } = {}, { signal } = {}) {
   if (!isSupabaseConfigured || !supabase) {
     throw new Error("Supabase authentication is required to analyze scraper articles.");

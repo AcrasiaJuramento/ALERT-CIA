@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, Clock, Database, ExternalLink, Filter,
+  AlertTriangle, CheckCircle2, ChevronDown, Clock, Database, ExternalLink, Filter, History,
   GitMerge, MapPin, RefreshCw, Search, ShieldCheck, SlidersHorizontal, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,6 +14,7 @@ import {
   listBarangays,
   listLandmarks,
   listScraperRecords,
+  listScraperRunDetails,
   listScraperRuns,
   listScraperSourceHealth,
   listScraperSources,
@@ -91,6 +92,61 @@ function timeLabel(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Not checked yet";
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function scraperRunMetrics(run = {}) {
+  const metadata = run.metadata || {};
+  const sourceHealth = Array.isArray(metadata.source_health) ? metadata.source_health : [];
+  const failedSources = sourceHealth.filter(item => ["failed", "warning"].includes(item.status)).length;
+  const failed = Number(run.failed_count || 0) + Number(metadata.invalid_record_count || 0);
+  const duplicates = Number(run.ignored_count || 0) + Number(metadata.duplicates_skipped || 0) + Number(metadata.skipped_rejected_count || 0);
+  const rawStatus = String(run.status || "").toLowerCase();
+  const status = rawStatus === "failed" ? "Failed" : (failed > 0 || failedSources > 0 ? "Partial" : "Completed");
+  const sources = [...new Set([
+    run.source?.name,
+    ...sourceHealth.map(item => item.source_name || item.sourceName),
+  ].filter(Boolean))];
+  return { scraped: Number(run.fetched_count || 0), added: Number(run.inserted_count || 0), duplicates, failed, status, sources };
+}
+
+function resultClass(result) {
+  if (result === "Added" || result === "Completed") return "border-green-500/30 bg-green-500/10 text-green-300";
+  if (result === "Partial" || result === "Skipped" || result === "Duplicate") return "border-amber-500/30 bg-amber-500/10 text-amber-300";
+  return "border-red-500/30 bg-red-500/10 text-red-300";
+}
+
+function ScraperHistoryModal({ runs, onClose }) {
+  const [filters, setFilters] = useState({ date: "", status: "", source: "" });
+  const [selected, setSelected] = useState(null);
+  const [details, setDetails] = useState([]);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const sourceOptions = useMemo(() => [...new Set(runs.flatMap(run => scraperRunMetrics(run).sources))].sort(), [runs]);
+  const visibleRuns = useMemo(() => runs.filter(run => {
+    const metrics = scraperRunMetrics(run);
+    const date = new Date(run.finished_at || run.started_at);
+    const runDate = Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
+    return (!filters.date || runDate === filters.date) && (!filters.status || metrics.status === filters.status) && (!filters.source || metrics.sources.includes(filters.source));
+  }), [filters, runs]);
+  const today = new Date().toDateString();
+  const todayRuns = runs.filter(run => new Date(run.finished_at || run.started_at).toDateString() === today);
+  const todayMetrics = todayRuns.reduce((total, run) => { const item = scraperRunMetrics(run); return { scraped: total.scraped + item.scraped, added: total.added + item.added, duplicates: total.duplicates + item.duplicates, failed: total.failed + item.failed }; }, { scraped: 0, added: 0, duplicates: 0, failed: 0 });
+  const openRun = async run => {
+    setSelected(run); setDetails([]); setDetailsLoading(true);
+    try { setDetails(await listScraperRunDetails(run.id)); }
+    catch (error) { toast.error(error.message || "Unable to load scraper session details."); }
+    finally { setDetailsLoading(false); }
+  };
+  return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-3" role="dialog" aria-modal="true">
+    <div className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+      <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-lg font-bold text-foreground">Scraper History</h2><p className="text-xs text-muted-foreground">Read-only history of news scraper sessions and processed articles.</p></div><button onClick={onClose} className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground"><XCircle className="h-5 w-5"/></button></div>
+      <div className="overflow-y-auto p-4">
+        <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/30 md:grid-cols-5 md:divide-y-0"><StatItem label="Total Scraped Today" value={todayMetrics.scraped}/><StatItem label="New Records Today" value={todayMetrics.added}/><StatItem label="Duplicates Skipped" value={todayMetrics.duplicates}/><StatItem label="Failed" value={todayMetrics.failed}/><StatItem label="Last Scrape" value={runs[0] ? fmt(runs[0].finished_at || runs[0].started_at) : "-"}/></div>
+        <div className="my-4 grid gap-2 sm:grid-cols-3"><input type="date" value={filters.date} onChange={event => setFilters(current => ({ ...current, date: event.target.value }))} className="h-10 rounded-lg border border-border bg-input-background px-3 text-xs"/><Select value={filters.status} onChange={status => setFilters(current => ({ ...current, status }))}><option value="">All statuses</option><option>Completed</option><option>Partial</option><option>Failed</option></Select><Select value={filters.source} onChange={source => setFilters(current => ({ ...current, source }))}><option value="">All sources</option>{sourceOptions.map(source => <option key={source}>{source}</option>)}</Select></div>
+        <div className="overflow-x-auto rounded-lg border border-border"><table className="w-full min-w-[850px] text-xs"><thead className="bg-secondary text-muted-foreground"><tr>{["Date & Time","Scraped","New","Duplicates","Failed","Status","Source"].map(label => <th key={label} className="px-3 py-3 text-left font-semibold">{label}</th>)}</tr></thead><tbody>{visibleRuns.map(run => { const metrics = scraperRunMetrics(run); return <tr key={run.id} onClick={() => openRun(run)} className={`cursor-pointer border-t border-border hover:bg-secondary/60 ${selected?.id === run.id ? "bg-blue-500/10" : ""}`}><td className="px-3 py-3 font-semibold text-foreground">{fmt(run.finished_at || run.started_at)}</td><td className="px-3 py-3">{metrics.scraped}</td><td className="px-3 py-3 text-green-300">{metrics.added}</td><td className="px-3 py-3 text-amber-300">{metrics.duplicates}</td><td className="px-3 py-3 text-red-300">{metrics.failed}</td><td className="px-3 py-3"><span className={`rounded-md border px-2 py-1 text-[10px] font-bold ${resultClass(metrics.status)}`}>{metrics.status}</span></td><td className="px-3 py-3">{metrics.sources.join(", ") || "All configured sources"}</td></tr>; })}</tbody></table>{!visibleRuns.length && <div className="p-8 text-center text-xs text-muted-foreground">No scraper sessions match the filters.</div>}</div>
+        {selected && <div className="mt-4 rounded-lg border border-border"><div className="border-b border-border px-4 py-3"><h3 className="text-sm font-bold text-foreground">Session details · {fmt(selected.finished_at || selected.started_at)}</h3><p className="text-xs text-muted-foreground">Articles found during this scraping session.</p></div>{detailsLoading ? <div className="p-6 text-center text-xs text-muted-foreground">Loading session details…</div> : <div className="divide-y divide-border">{details.map(item => <div key={item.id} className="grid gap-2 p-3 text-xs md:grid-cols-[110px_1fr_160px]"><div><span className={`rounded-md border px-2 py-1 text-[10px] font-bold ${resultClass(item.result)}`}>{item.result}</span></div><div><div className="font-semibold text-foreground">{item.title}</div><div className="mt-1 text-muted-foreground">{item.details}</div>{item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="mt-1 inline-flex items-center gap-1 text-blue-400">Open source <ExternalLink className="h-3 w-3"/></a>}</div><div className="text-muted-foreground">{item.source}<br/>{fmt(item.processedAt)}</div></div>)}{!details.length && <div className="p-6 text-center text-xs text-muted-foreground">No item-level records were stored for this session.</div>}</div>}</div>}
+      </div>
+    </div>
+  </div>;
 }
 
 function settledValue(result, fallback) {
@@ -600,8 +656,9 @@ function SourceHealthPanel({ healthRows }) {
   );
 }
 
-function NewsSourceCheck({ runs, healthRows, running, onCheck }) {
+function NewsSourceCheck({ runs, healthRows, running, onCheck, onHistory }) {
   const latest = runs[0];
+  const latestMetrics = scraperRunMetrics(latest);
   const metadata = latest?.metadata || {};
   const metadataHealth = Array.isArray(metadata.source_health) ? metadata.source_health : [];
   const health = metadataHealth.length ? metadataHealth : healthRows;
@@ -619,16 +676,16 @@ function NewsSourceCheck({ runs, healthRows, running, onCheck }) {
           </div>
           <p className="mt-1 text-xs text-muted-foreground">Operational summary from the latest news source check.</p>
         </div>
-        <button onClick={onCheck} disabled={running} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
+        <div className="flex flex-wrap gap-2"><button onClick={onHistory} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-border bg-secondary px-4 text-xs font-semibold text-foreground hover:bg-secondary/80"><History className="h-4 w-4"/>Scraper History</button><button onClick={onCheck} disabled={running} className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">
           <RefreshCw className={`h-4 w-4 ${running ? "animate-spin" : ""}`} />{running ? "Checking..." : latest ? "Check Again" : "Check News Sources"}
-        </button>
+        </button></div>
       </div>
       <div className="mt-4 grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/30 sm:grid-cols-5 sm:divide-y-0">
-        <StatItem label="Articles Found" value={latest?.fetched_count ?? "-"} />
-        <StatItem label="Matched" value={latest?.matched_count ?? "-"} />
-        <StatItem label="Newly Rejected" value={metadata.rejected_count ?? "-"} />
-        <StatItem label="Skipped Rejected" value={metadata.skipped_rejected_count ?? "-"} />
-        <StatItem label="Last Checked" value={timeLabel(latest?.completed_at || latest?.started_at)} />
+        <StatItem label="Articles Found" value={latest ? latestMetrics.scraped : "-"} />
+        <StatItem label="New Records" value={latest ? latestMetrics.added : "-"} />
+        <StatItem label="Duplicates Skipped" value={latest ? latestMetrics.duplicates : "-"} />
+        <StatItem label="Failed" value={latest ? latestMetrics.failed : "-"} />
+        <StatItem label="Last Checked" value={timeLabel(latest?.finished_at || latest?.started_at)} />
       </div>
       {(failedSources > 0 || warningSources > 0) && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">{failedSources + warningSources} news source{failedSources + warningSources === 1 ? "" : "s"} could not be fully checked. Open details below for technical information.</div>}
       {showRunError && <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-300">{latest.error_message}</div>}
@@ -731,6 +788,7 @@ export default function ScraperReview() {
   const [sources, setSources] = useState([]);
   const [runs, setRuns] = useState([]);
   const [sourceHealth, setSourceHealth] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [scraperJob, setScraperJob] = useState(getScraperJobState());
   const [filters, setFilters] = useState({
@@ -774,7 +832,7 @@ export default function ScraperReview() {
           limit: 500,
         }),
         listScraperSources(),
-        listScraperRuns({ limit: 10 }),
+        listScraperRuns({ limit: 100 }),
         listScraperSourceHealth(),
       ]);
       const recordRows = settledValue(recordResult, []);
@@ -861,7 +919,8 @@ export default function ScraperReview() {
         <StatItem label="Last Checked" value={timeLabel(latestRun?.completed_at || latestRun?.started_at)} />
       </div>
 
-      <NewsSourceCheck runs={runs} healthRows={sourceHealth} running={scraperJob.running} onCheck={checkNewsSources} />
+      <NewsSourceCheck runs={runs} healthRows={sourceHealth} running={scraperJob.running} onCheck={checkNewsSources} onHistory={() => setHistoryOpen(true)} />
+      {historyOpen && <ScraperHistoryModal runs={runs} onClose={() => setHistoryOpen(false)} />}
       <AnalyzerPanel />
 
       <div className="mb-5 rounded-lg border border-border bg-card p-4">

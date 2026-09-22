@@ -29,6 +29,7 @@ export const PCR_CORRECTION_TARGETS = [
   { key: "trauma_assessment", label: "Trauma Assessment", step: 1 },
   { key: "chief_complaint", label: "Chief Complaint", step: 1 },
   { key: "vital_signs", label: "Vital Signs", step: 1 },
+  { key: "vital_sign_time", label: "Vital Signs – Time", step: 1, find: ["Vital Sign Time"] },
   { key: "blood_pressure", label: "Vital Signs – Blood Pressure", step: 1, find: ["Blood Pressure", "BP"] },
   { key: "pulse_rate", label: "Vital Signs – Pulse Rate", step: 1, find: ["Pulse"] },
   { key: "respiratory_rate", label: "Vital Signs – Respiratory Rate", step: 1, find: ["Respiratory"] },
