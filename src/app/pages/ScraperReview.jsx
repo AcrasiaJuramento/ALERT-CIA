@@ -136,8 +136,8 @@ function ScraperHistoryModal({ runs, onClose }) {
     catch (error) { toast.error(error.message || "Unable to load scraper session details."); }
     finally { setDetailsLoading(false); }
   };
-  return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-3" role="dialog" aria-modal="true">
-    <div className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+  return <div className="fixed inset-x-0 bottom-0 top-[76px] z-[120] flex items-start justify-center bg-black/70 p-3" role="dialog" aria-modal="true">
+    <div className="flex max-h-full w-full max-w-7xl flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
       <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="text-lg font-bold text-foreground">Scraper History</h2><p className="text-xs text-muted-foreground">Read-only history of news scraper sessions and processed articles.</p></div><button onClick={onClose} className="rounded-lg border border-border p-2 text-muted-foreground hover:text-foreground"><XCircle className="h-5 w-5"/></button></div>
       <div className="overflow-y-auto p-4">
         <div className="grid grid-cols-2 divide-x divide-y divide-border overflow-hidden rounded-lg border border-border bg-background/30 md:grid-cols-5 md:divide-y-0"><StatItem label="Total Scraped Today" value={todayMetrics.scraped}/><StatItem label="New Records Today" value={todayMetrics.added}/><StatItem label="Duplicates Skipped" value={todayMetrics.duplicates}/><StatItem label="Failed" value={todayMetrics.failed}/><StatItem label="Last Scrape" value={runs[0] ? fmt(runs[0].finished_at || runs[0].started_at) : "-"}/></div>
