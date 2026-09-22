@@ -14,6 +14,7 @@ import { getConnectionState, subscribeConnection } from '../network/connection-m
 import { exportPCRToPdf, PCR_EDIT_KEY } from '../utils/pcrStorage';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
 import { archivePCRReport, createStandalonePCRShell, getPCRDashboardCounts, getPCRReport, listPCRReports, listPCRWorkflowHistory, reviewNormalPCRAsAdmin, reviewReverseWorkflowAsAdmin, reviewStandalonePCR, supabase, unarchivePCRReport } from '../services/supabase';
+import { PCR_CORRECTION_TARGETS } from '../utils/pcrCorrectionTargets';
 
 const formatDate = value => {
   if (!value) return '-';
@@ -104,6 +105,7 @@ export default function PCRReports() {
   const [exportingRecord, setExportingRecord] = useState(null);
   const [rejectingRecord, setRejectingRecord] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionTargets, setRejectionTargets] = useState([]);
   const [workflowHistory, setWorkflowHistory] = useState([]);
   const [creatingManual, setCreatingManual] = useState(false);
   const [page, setPage] = useState(1);
@@ -348,18 +350,19 @@ export default function PCRReports() {
     finally { setCreatingManual(false); }
   };
   const dispatcherDecision = (record, decision, remarks = '') => refreshAfter(
-    () => reviewStandalonePCR(record.id, decision, remarks),
+    () => reviewStandalonePCR(record.id, decision, remarks, rejectionTargets),
     decision === 'accept' ? 'PCR accepted. Create its connected Dispatch Form next.' : 'PCR returned to the Field Officer.',
   );
   const adminDecision = (record, decision, remarks = '') => refreshAfter(
-    () => reviewReverseWorkflowAsAdmin(record.id, decision, remarks),
+    () => reviewReverseWorkflowAsAdmin(record.id, decision, remarks, rejectionTargets),
     decision === 'approve' ? 'PCR and Dispatch Form verified.' : 'Records returned for correction.',
   );
   const normalDecision = (record, decision, remarks = '') => refreshAfter(
-    () => reviewNormalPCRAsAdmin(record.id, decision, remarks),
+    () => reviewNormalPCRAsAdmin(record.id, decision, remarks, rejectionTargets),
     decision === 'approve' ? 'Patient Care Record verified.' : 'Patient Care Record returned for correction.',
   );
   const rejectRecord = () => {
+    if (!rejectionTargets.length) { toast.error('Select at least one field or section that needs correction.'); return; }
     if (!rejectionReason.trim()) {
       toast.error('Please provide a reason for rejection.');
       return;
@@ -370,6 +373,7 @@ export default function PCRReports() {
     } else normalDecision(rejectingRecord, 'return', rejectionReason.trim());
     setRejectingRecord(null);
     setRejectionReason('');
+    setRejectionTargets([]);
   };
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto text-foreground">
@@ -476,10 +480,14 @@ export default function PCRReports() {
               <h2 className="text-base font-bold text-foreground">{isReverseWorkflowRecord(rejectingRecord) ? 'Return PCR to Field Officer' : 'Reject Patient Care Record'}</h2>
               <p className="mt-1 text-xs text-muted-foreground">{rejectingRecord.responseNumber}</p>
             </div>
-            <label className="mb-2 block text-xs font-semibold text-muted-foreground">{isReverseWorkflowRecord(rejectingRecord) ? 'Corrections required' : 'Reason for rejection'}</label>
-            <textarea value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} rows={4} className="w-full resize-none rounded-lg border border-border bg-input-background p-3 text-sm text-foreground outline-none focus:border-red-500" placeholder="Explain what needs correction..." />
+            <label className="mb-2 block text-xs font-semibold text-muted-foreground">Fields or sections requiring correction</label>
+            <div className="mb-4 grid max-h-52 grid-cols-1 gap-2 overflow-y-auto sm:grid-cols-2">
+              {PCR_CORRECTION_TARGETS.map(target => { const checked = rejectionTargets.includes(target.key); return <button type="button" key={target.key} onClick={() => setRejectionTargets(current => checked ? current.filter(key => key !== target.key) : [...current, target.key])} className={`rounded-lg border px-3 py-2 text-left text-xs font-semibold ${checked ? 'border-red-500 bg-red-500/15 text-red-300' : 'border-border bg-secondary text-muted-foreground'}`}>{checked ? '✓ ' : ''}{target.label}</button>; })}
+            </div>
+            <label className="mb-2 block text-xs font-semibold text-muted-foreground">Correction reason</label>
+            <textarea value={rejectionReason} onChange={event => setRejectionReason(event.target.value)} rows={4} className="w-full resize-none rounded-lg border border-border bg-input-background p-3 text-sm text-foreground outline-none focus:border-red-500" placeholder="Explain exactly what needs correction..." />
             <div className="mt-4 flex gap-2">
-              <button onClick={() => { setRejectingRecord(null); setRejectionReason(''); }} className="flex-1 rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-foreground">Cancel</button>
+              <button onClick={() => { setRejectingRecord(null); setRejectionReason(''); setRejectionTargets([]); }} className="flex-1 rounded-lg bg-secondary px-4 py-2.5 text-sm font-semibold text-foreground">Cancel</button>
               <button onClick={rejectRecord} className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white">{isReverseWorkflowRecord(rejectingRecord) ? 'Return to Field Officer' : 'Confirm Reject'}</button>
             </div>
           </div>

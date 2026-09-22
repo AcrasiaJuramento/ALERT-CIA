@@ -437,6 +437,8 @@ export function pcrToApp(row = {}) {
     dispatcherReviewedAt: row.dispatcher_reviewed_at || "",
     adminReviewedAt: row.admin_reviewed_at || "",
     returnRemarks: row.return_remarks || "",
+    correctionTargets: Array.isArray(row.correction_targets) ? row.correction_targets : [],
+    correctionReason: row.correction_reason || row.return_remarks || row.rejection_reason || "",
     status: fromDbPCRStatus(row.status),
     dispatchTime,
     dispatchedTime: dispatchTime,

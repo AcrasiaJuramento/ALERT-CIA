@@ -14,12 +14,8 @@ export function submitStandalonePCR(pcrId) {
   return transition('submit_standalone_pcr', { target_pcr_id: pcrId }, 'Unable to submit standalone PCR.');
 }
 
-export function reviewStandalonePCR(pcrId, decision, remarks = '') {
-  return transition('review_standalone_pcr', {
-    target_pcr_id: pcrId,
-    decision,
-    remarks: remarks || null,
-  }, 'Unable to review standalone PCR.');
+export function reviewStandalonePCR(pcrId, decision, remarks = '', correctionTargets = []) {
+  return transition('review_pcr_with_corrections', { target_pcr_id: pcrId, review_kind: 'dispatcher', decision, remarks: remarks || null, correction_targets: correctionTargets }, 'Unable to review standalone PCR.');
 }
 
 export function createDispatchFromPCR(pcrId, dispatch = {}) {
@@ -29,12 +25,10 @@ export function createDispatchFromPCR(pcrId, dispatch = {}) {
   }, 'Unable to create a Dispatch Form from this PCR.');
 }
 
-export async function reviewReverseWorkflowAsAdmin(pcrId, decision, remarks = '') {
+export async function reviewReverseWorkflowAsAdmin(pcrId, decision, remarks = '', correctionTargets = []) {
   try {
-    return await transition('review_reverse_workflow_admin', {
-      target_pcr_id: pcrId,
-      decision,
-      remarks: remarks || null,
+    return await transition('review_pcr_with_corrections', {
+      target_pcr_id: pcrId, review_kind: 'reverse_admin', decision, remarks: remarks || null, correction_targets: correctionTargets,
     }, 'Unable to complete final verification.');
   } catch (error) {
     if (error?.code !== 'PGRST116') throw error;
@@ -61,12 +55,8 @@ export function returnNormalPCRToFieldOfficer(pcrId, remarks) {
   }, 'Unable to return the PCR to the Field Officer.');
 }
 
-export function reviewNormalPCRAsAdmin(pcrId, decision, remarks = '') {
-  return transition('review_normal_pcr_admin', {
-    target_pcr_id: pcrId,
-    decision,
-    remarks: remarks || null,
-  }, 'Unable to review Patient Care Record.');
+export function reviewNormalPCRAsAdmin(pcrId, decision, remarks = '', correctionTargets = []) {
+  return transition('review_pcr_with_corrections', { target_pcr_id: pcrId, review_kind: 'normal_admin', decision, remarks: remarks || null, correction_targets: correctionTargets }, 'Unable to review Patient Care Record.');
 }
 
 export async function listPCRWorkflowHistory(pcrId) {
@@ -81,6 +71,7 @@ export async function listPCRWorkflowHistory(pcrId) {
     previousStatus: row.previous_status,
     newStatus: row.new_status,
     remarks: row.remarks,
+    correctionTargets: Array.isArray(row.correction_targets) ? row.correction_targets : [],
     timestamp: row.created_at,
     actor: row.actor?.display_name || row.actor?.email || 'System',
   }));
