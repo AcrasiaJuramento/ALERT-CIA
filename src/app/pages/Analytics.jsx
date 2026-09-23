@@ -27,6 +27,16 @@ const priorityColors = {
   Low: '#22c55e',
 };
 
+const triageColors = {
+  Red: '#dc2626',
+  Yellow: '#eab308',
+  Green: '#22c55e',
+  Black: '#000000',
+  'No Triage Recorded': '#2563eb',
+};
+
+const colorForTriage = (name, index) => triageColors[name] || colors[index % colors.length];
+
 const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
 const settledValue = (result, fallback) => (result.status === 'fulfilled' ? result.value : fallback);
@@ -1036,10 +1046,11 @@ function DispatcherWorkflowCard({ dispatches, onRecords, onCreate }) {
   );
 }
 
-function DistributionCard({ title, subtitle, data, type = 'bar' }) {
+function DistributionCard({ title, subtitle, data, type = 'bar', getColor }) {
   const hasData = data.some(item => item.count > 0);
   const total = data.reduce((sum, item) => sum + item.count, 0);
   const visibleData = data.slice(0, 8);
+  const colorAt = (name, index) => (getColor ? getColor(name, index) : colors[index % colors.length]);
 
   return (
     <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
@@ -1063,7 +1074,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar' }) {
           {type === 'pie' ? (
             <PieChart>
               <Pie data={visibleData} dataKey="count" nameKey="name" innerRadius={55} outerRadius={86} paddingAngle={2}>
-                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colorAt(entry.name, index)} />)}
               </Pie>
               <Tooltip content={<ChartTooltip />} />
             </PieChart>
@@ -1074,7 +1085,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar' }) {
               <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
               <Tooltip content={<ChartTooltip />} />
               <Bar dataKey="count" name="Count" radius={[4, 4, 0, 0]}>
-                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colors[index % colors.length]} />)}
+                {visibleData.map((entry, index) => <Cell key={entry.name} fill={colorAt(entry.name, index)} />)}
               </Bar>
             </BarChart>
           )}
@@ -1087,7 +1098,7 @@ function DistributionCard({ title, subtitle, data, type = 'bar' }) {
                 <span className="font-semibold text-foreground">{item.count} / {item.percent}%</span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-secondary">
-                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colors[index % colors.length] }} />
+                <div className="h-full rounded-full" style={{ width: `${item.percent}%`, backgroundColor: colorAt(item.name, index) }} />
               </div>
             </div>
           ))}
@@ -2215,7 +2226,7 @@ export default function Analytics() {
         <div className="grid gap-5 xl:grid-cols-2">
           <DistributionCard title="PCR Status Mix" subtitle="Submitted, verified, completed, and in-progress reports" data={pcrStatusStats} type="pie" />
           <DistributionCard title="Incident Category Comparison" subtitle="Classification of filtered official incident records" data={categoryComparison} />
-          <DistributionCard title="PCR Triage Distribution" subtitle="Clinical triage levels recorded in patient care reports" data={pcrTriageStats} />
+          <DistributionCard title="PCR Triage Distribution" subtitle="Clinical triage levels recorded in patient care reports" data={pcrTriageStats} getColor={colorForTriage} />
           <DistributionCard title="Receiving Facility Load" subtitle="Hospital or receiving facility recorded in PCR reports" data={hospitalStats} />
           <div className="xl:col-span-2">
             <OperationalBreakdownCard
