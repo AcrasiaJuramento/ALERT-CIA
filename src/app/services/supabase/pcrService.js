@@ -59,7 +59,6 @@ const PCR_LIGHT_SELECT = `
   endorsed_to,
   received_by,
   transfer_reason,
-  notes,
   back_to_base_time,
   completed_at,
   submitted_at,
@@ -92,7 +91,6 @@ const PCR_LIST_SELECT = `
   endorsed_to,
   received_by,
   transfer_reason,
-  notes,
   back_to_base_time,
   completed_at,
   submitted_at,
@@ -253,7 +251,7 @@ export async function listPCRAnalyticsReports({ fieldOfficerId, responseIds = []
   const uniqueResponseIds = [...new Set(responseIds.filter(id => id && id !== "undefined"))];
   const rows = await runSupabaseRequest(client => {
     let query = client
-      .from("pcr_reports")
+      .from("pcr_analytics_reports")
       .select(PCR_ANALYTICS_SELECT)
       .is("deleted_at", null)
       .is("archived_at", null)

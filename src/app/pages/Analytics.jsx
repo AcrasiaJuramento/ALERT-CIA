@@ -1701,7 +1701,7 @@ export default function Analytics() {
         const [detailedDispatches, detailedPcrReports] = allRecords
           ? await Promise.all([
             loadAllRows(listDispatchRecords).catch(() => allRecords.dispatches),
-            loadAllRows(listPCRReports, { archive: 'all' }).catch(() => allRecords.pcrReports),
+            loadAllRows(listPCRAnalyticsReports, { archive: 'all' }).catch(() => allRecords.pcrReports),
           ])
           : [null, null];
         if (mounted) {
