@@ -60,7 +60,6 @@ function incidentTypeText(incident = {}) {
     incident.incident_type,
     incident.category,
     incident.title,
-    incident.description,
     incident.natureOfCall,
     incident.typeOfIncident,
     incident.incidentNature,

@@ -3,7 +3,7 @@ import { createReadThroughCache } from '../../utils/readThroughCache.js';
 import { onDataInvalidated } from '../../utils/dataInvalidation.js';
 
 const cache = createReadThroughCache();
-const STORAGE_PREFIX = 'alert-cia:public-projection:v1:';
+const STORAGE_PREFIX = 'alert-cia:public-projection:v2:';
 const INVALIDATION_KEY = 'alert-cia:public-projection-invalidated';
 let generation = 0;
 export const PUBLIC_TTL = 10 * 60_000;
@@ -134,6 +134,26 @@ export function getPublicRespondingFieldOfficerCount() {
     const count = await runSupabaseRequest(
       client => client.rpc('get_public_responding_field_officer_count'),
       'Unable to load public responding-account count.',
+    );
+    return Number(count || 0);
+  });
+}
+
+export function getPublicActiveIncidentCount() {
+  return readPublicData('active-incident-count', async () => {
+    const count = await runSupabaseRequest(
+      client => client.rpc('get_public_active_incident_count'),
+      'Unable to load the active-incident count.',
+    );
+    return Number(count || 0);
+  });
+}
+
+export function getPublicCompletedTodayCount() {
+  return readPublicData('completed-today-count', async () => {
+    const count = await runSupabaseRequest(
+      client => client.rpc('get_public_completed_today_count'),
+      'Unable to load today\'s completed-response count.',
     );
     return Number(count || 0);
   });

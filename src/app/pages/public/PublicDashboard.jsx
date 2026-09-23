@@ -1,6 +1,6 @@
 import { subscribeToPublicDataChanges } from '../../services/supabase/publicRealtime';
 import { createInformationalRefresh } from '../../utils/informationalRefresh';
-import { getPublicGadAnalytics, getPublicRespondingFieldOfficerCount, invalidatePublicData } from '../../services/supabase/publicDataService';
+import { getPublicActiveIncidentCount, getPublicCompletedTodayCount, getPublicGadAnalytics, getPublicRespondingFieldOfficerCount, invalidatePublicData } from '../../services/supabase/publicDataService';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -11,8 +11,8 @@ import {
   Flame, Droplets, Car, Heart, PhoneCall, Shield, Volume2, X
 } from 'lucide-react';
 import { formatAdvisoryTime, loadPublishedAdvisories } from '../../utils/advisoryStorage';
-import { isIncidentCompleted } from '../../utils/incidentStatus';
-import { loadPublicAccidentIncidents } from '../../utils/publicIncidentFeed';
+import { isAmbulanceAssigned, isIncidentCompleted } from '../../utils/incidentStatus';
+import { loadPublicAccidentIncidents, loadPublicIncidentLogRecords } from '../../utils/publicIncidentFeed';
 import { calculateOfficialAccidentProneAreas } from '../../utils/accidentProneAreas';
 import { listPublishedAdvisories, subscribeToPublicAdvisories } from '../../services/supabase';
 import { formatDateAndTime } from '../../utils/dateFormat';
@@ -75,10 +75,6 @@ const incidentTypeSeries = [
 
 const chartColors = ['#dc2626', '#2563eb', '#14b8a6', '#f97316', '#64748b', '#eab308'];
 
-function isPublicAnnouncementAdvisory(advisory = {}) {
-  return !['accident_prone_area', 'accident_hotspot'].includes(String(advisory.advisoryType || advisory.category || '').toLowerCase());
-}
-
 function isToday(value) {
   if (!value) return false;
   const date = new Date(value);
@@ -104,17 +100,24 @@ function wasCompletedToday(incident) {
 
 export default function PublicDashboard() {
   const navigate = useNavigate();
-  const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories().filter(isPublicAnnouncementAdvisory));
+  const [publicAdvisories, setPublicAdvisories] = useState(() => loadPublishedAdvisories());
   const [dismissedAdvisoryId, setDismissedAdvisoryId] = useState('');
   const [incidents, setIncidents] = useState([]);
+  const [workflowIncidents, setWorkflowIncidents] = useState([]);
   const [gadAnalytics, setGadAnalytics] = useState(null);
   const [respondingFieldOfficerCount, setRespondingFieldOfficerCount] = useState(null);
+  const [activeIncidentCount, setActiveIncidentCount] = useState(null);
+  const [completedTodayCount, setCompletedTodayCount] = useState(null);
   const [gadLoading, setGadLoading] = useState(true);
   const [gadError, setGadError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const activeIncidents = incidents.filter(i => !isIncidentCompleted(i.status));
-  const resolvedToday = incidents.filter(wasCompletedToday).length;
+  const activeIncidents = workflowIncidents.filter(i => (
+    !String(i.sourceKind || '').toLowerCase().includes('scraped')
+    && String(i.status || '').toLowerCase() !== 'scraped'
+    && isAmbulanceAssigned(i.status)
+  ));
+  const resolvedToday = completedTodayCount ?? incidents.filter(wasCompletedToday).length;
   const criticalRiskAreas = useMemo(() => calculateOfficialAccidentProneAreas(incidents, {
     publicOnly: true,
     publicMinimumOfficialRiskLevel: 'High',
@@ -130,9 +133,9 @@ export default function PublicDashboard() {
     async function loadAdvisoriesFromDatabase() {
       try {
         const advisories = await listPublishedAdvisories({ limit: 50 });
-        if (mounted) setPublicAdvisories(advisories.filter(isPublicAnnouncementAdvisory));
+        if (mounted) setPublicAdvisories(advisories);
       } catch {
-        if (mounted) setPublicAdvisories(loadPublishedAdvisories().filter(isPublicAnnouncementAdvisory));
+        if (mounted) setPublicAdvisories(loadPublishedAdvisories());
       }
     }
 
@@ -142,9 +145,13 @@ export default function PublicDashboard() {
       if (!silent) setLoading(true);
       if (!silent) setError('');
       try {
-        const publicIncidents = await loadPublicAccidentIncidents();
+        const [publicIncidents, publicWorkflowIncidents] = await Promise.all([
+          loadPublicAccidentIncidents(),
+          loadPublicIncidentLogRecords(),
+        ]);
         if (mounted) {
           setIncidents(publicIncidents);
+          setWorkflowIncidents(publicWorkflowIncidents);
           setError('');
         }
       } catch (requestError) {
@@ -180,14 +187,37 @@ export default function PublicDashboard() {
       }
     }
 
+    async function loadActiveIncidentCount() {
+      try {
+        const count = await getPublicActiveIncidentCount();
+        if (mounted) setActiveIncidentCount(count);
+      } catch {
+        if (mounted) setActiveIncidentCount(null);
+      }
+    }
+
+    async function loadCompletedTodayCount() {
+      try {
+        const count = await getPublicCompletedTodayCount();
+        if (mounted) setCompletedTodayCount(count);
+      } catch {
+        if (mounted) setCompletedTodayCount(null);
+      }
+    }
+
     const refresh = createInformationalRefresh(() => {
       loadIncidents({ silent: true });
       loadGadAnalytics({ silent: true });
+      loadRespondingFieldOfficerCount();
+      loadActiveIncidentCount();
+      loadCompletedTodayCount();
     }, { invalidate: invalidatePublicData });
     const queueIncidentRefresh = refresh.markStale;
     loadIncidents();
     loadGadAnalytics();
     loadRespondingFieldOfficerCount();
+    loadActiveIncidentCount();
+    loadCompletedTodayCount();
     loadAdvisoriesFromDatabase();
     const unsubscribe = subscribeToPublicAdvisories(loadAdvisoriesFromDatabase);
     const refreshTimer = window.setInterval(() => { if (document.visibilityState === 'visible') loadAdvisoriesFromDatabase(); }, 60000);
@@ -270,7 +300,7 @@ export default function PublicDashboard() {
         {/* Quick Stats */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'Active Incidents', value: activeIncidents.length, icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10', border: 'border-red-100 dark:border-red-500/20' },
+            { label: 'Active Incidents', value: activeIncidentCount ?? '—', icon: AlertTriangle, color: 'text-red-600 dark:text-red-400', bg: 'bg-red-50 dark:bg-red-500/10', border: 'border-red-100 dark:border-red-500/20' },
             { label: 'Critical Accident Areas', value: criticalCount, icon: Activity, color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-500/10', border: 'border-orange-100 dark:border-orange-500/20' },
             { label: 'Field Officers Responding', value: respondingFieldOfficerCount ?? new Set(activeIncidents.map(item => item.assignedTeam).filter(Boolean)).size, icon: Shield, color: 'text-blue-600 dark:text-blue-400', bg: 'bg-blue-50 dark:bg-blue-500/10', border: 'border-blue-100 dark:border-blue-500/20' },
             { label: 'Completed Today', value: resolvedToday, icon: CheckCircle2, color: 'text-green-600 dark:text-green-400', bg: 'bg-green-50 dark:bg-green-500/10', border: 'border-green-100 dark:border-green-500/20' },
