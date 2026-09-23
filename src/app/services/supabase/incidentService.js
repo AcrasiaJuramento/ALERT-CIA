@@ -133,6 +133,7 @@ function incidentToApp(row = {}) {
     latitude: lat,
     longitude: lng,
     assignedTeam: team || "Unassigned",
+    respondingTeamId: response.responding_team_id || response.responding_team?.id || response.responding_teams?.id || null,
     responders: team ? 1 : 0,
     casualties: Number(row.casualties || 0),
     publicVisible: row.public_visible,

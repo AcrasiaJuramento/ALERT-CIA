@@ -5,8 +5,10 @@ import {
   Search, Filter, Plus, Eye, Edit2, Users,
   AlertTriangle, Flame, Droplets, Car, Heart, Download, FileText, ChevronDown, Check
 } from 'lucide-react';
-import { getPCRReportByResponse, listIncidents } from '../services/supabase';
+import { getCurrentProfileTeamMemberships, getPCRReportByResponse, listIncidents } from '../services/supabase';
 import { PCRPreviewModal } from '../components/PCRPreviewModal';
+import { useAuth } from '../contexts/AuthContext';
+import { ROLES } from '../access/rbac';
 import { getIncidentStatusLabel, isIncidentCompleted } from '../utils/incidentStatus';
 import { formatLongDate } from '../utils/dateFormat';
 import { matchesIncidentFilters } from '../utils/incidentFilters';
@@ -126,6 +128,7 @@ function IncidentFilterSelect({ ariaLabel, value, onValueChange, options }) {
 
 export default function IncidentList() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [search, setSearch] = useState('');
   const [filterSeverity, setFilterSeverity] = useState('all');
   const [filterType, setFilterType] = useState('all');
@@ -146,14 +149,27 @@ export default function IncidentList() {
       setLoading(true);
       setError('');
       try {
-        const summaryRows = await listIncidents({
-          limit: 500,
-          from: 0,
-        });
+        const fieldOfficerView = user?.role === ROLES.FIELD_OFFICER;
+        const [summaryRows, memberships] = await Promise.all([
+          listIncidents({
+            limit: 500,
+            from: 0,
+            completedWorkflowOnly: true,
+          }),
+          fieldOfficerView ? getCurrentProfileTeamMemberships() : Promise.resolve([]),
+        ]);
+        const membershipTeamIds = new Set((memberships || []).map(item => item.team_id || item.team?.id).filter(Boolean));
+        const membershipTeamNames = new Set((memberships || []).map(item => String(item.team?.name || '').trim().toLowerCase()).filter(Boolean));
+        const scopedRows = fieldOfficerView
+          ? (summaryRows || []).filter(row => (
+            membershipTeamIds.has(row.respondingTeamId)
+            || membershipTeamNames.has(String(row.assignedTeam || '').trim().toLowerCase())
+          ))
+          : summaryRows;
         if (mounted) {
-          setIncidents(Array.isArray(summaryRows) ? summaryRows : []);
-          setSummaryIncidents(Array.isArray(summaryRows) ? summaryRows : []);
-          setTotalCount(summaryRows.totalCount ?? summaryRows.length);
+          setIncidents(Array.isArray(scopedRows) ? scopedRows : []);
+          setSummaryIncidents(Array.isArray(scopedRows) ? scopedRows : []);
+          setTotalCount(fieldOfficerView ? scopedRows.length : summaryRows.totalCount ?? summaryRows.length);
         }
       } catch (requestError) {
         if (mounted) setError(requestError.message || 'Unable to load incidents.');
@@ -165,7 +181,7 @@ export default function IncidentList() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [user?.id, user?.role]);
 
   const filtered = useMemo(() => incidents.filter(inc => {
     const searchText = [
@@ -193,9 +209,9 @@ export default function IncidentList() {
 
   const stats = {
     total: totalCount,
-    critical: summaryIncidents.filter(i => ['black', 'red'].includes(i.severity)).length,
-    active: summaryIncidents.filter(i => !isIncidentCompleted(i.workflowStatus || i.status)).length,
-    resolved: summaryIncidents.filter(i => isIncidentCompleted(i.workflowStatus || i.status)).length,
+    critical: summaryIncidents.filter(i => String(i.priority || '').toLowerCase() === 'critical').length,
+    active: summaryIncidents.filter(i => !isIncidentCompleted(i.status)).length,
+    resolved: summaryIncidents.filter(i => isIncidentCompleted(i.status)).length,
   };
 
   const exportCsv = () => {
