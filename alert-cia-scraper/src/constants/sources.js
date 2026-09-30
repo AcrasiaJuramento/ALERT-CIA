@@ -55,11 +55,11 @@ export const SOURCES = [
     maxRuntimeMs: 45_000,
     noNewArticleLimit: 3,
   }),
-   source("brigda", "Brigada News Cauayan" ,"https://www.brigadanews.ph/isabela", {
+   source("brigda", "Brigada News Cauayan" ,"https://www.brigadanews.ph/", {
     paginationType: "wordpress_search",
-    pageUrl: wpSearch("https://www.brigadanews.ph/isabela", "accidents"),
+    pageUrl: wpSearch("https://www.brigadanews.ph/", "accidents"),
     searchTerms: ["accidents", "aksidente", "banggan", "salpukan", "super typhoon", "bagyo", "malakas na ulan", "malakas na hangin", "malakas na pag-ulan"],
-    searchUrl: (term, page) => wpSearch( "https://www.brigadanews.ph/isabela", term)(page),
+    searchUrl: (term, page) => wpSearch( "https://www.brigadanews.ph/", term)(page),
     articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
     maxArticles: 160,
     maxRuntimeMs: 45_000,
