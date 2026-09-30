@@ -58,9 +58,9 @@ export const SOURCES = [
     maxRuntimeMs: 45_000,
     noNewArticleLimit: 3,
   }),
-  source("brigada", "Brigada News", "https://www.brigadanews.ph", "https://www.brigadanews.ph/category/local-news/luzon/isabela/", {
+  source("gma", "GMA Isabela", "https://www.gmanetwork.com", "https://www.gmanetwork.com/news/tracking/isabela/", {
     paginationType: "wordpress_category",
-    pageUrl: wpCategory("https://www.brigadanews.ph/category/local-news/luzon/isabela/"),
+    pageUrl: wpCategory("https://www.gmanetwork.com/news/tracking/isabela/"),
     articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
     maxPagesFull: 50,
   }),
