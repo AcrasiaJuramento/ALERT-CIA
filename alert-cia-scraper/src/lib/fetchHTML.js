@@ -26,7 +26,8 @@ export async function fetchHTML(url, options = {}) {
     return cached.html;
   }
 
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
+  let retryLimit = retries;
+  for (let attempt = 0; attempt <= retryLimit; attempt += 1) {
     try {
       await waitForDomain(url, domainDelayMs);
       metrics.requests += 1;
@@ -50,7 +51,10 @@ export async function fetchHTML(url, options = {}) {
       return html;
     } catch (error) {
       fetchErrors.set(url, error instanceof Error ? error.message : String(error));
-      if (attempt < retries) {
+      if (error instanceof Error && error.message === "HTTP 403") {
+        retryLimit = Math.max(retryLimit, retries + 3);
+      }
+      if (attempt < retryLimit) {
         metrics.retries += 1;
         await sleep(400 * (2 ** attempt) + Math.floor(Math.random() * 150));
       }
