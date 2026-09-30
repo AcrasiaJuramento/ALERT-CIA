@@ -1,7 +1,7 @@
 import { classifyIncident, incidentTypeLabel, resolveNewsReviewConfidence } from "./classify.js";
 import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey, inferAccidentSeverity } from "./deduplication.js";
 import { extractArticle } from "./extractArticle.js";
-import { fetchHTML } from "./fetchHTML.js";
+import { fetchHTML, getFetchError } from "./fetchHTML.js";
 import { isAccidentRelevant } from "./filters.js";
 import { geocode } from "./geocode.js";
 import { extractIncidentDateTime } from "./incidentTime.js";
@@ -65,7 +65,7 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
       article = extractArticle(html, sourceUrl);
       sourceUrl = normalizeUrl(article.canonical_url || sourceUrl);
     } else {
-      fetchError = "Article HTML could not be downloaded.";
+      fetchError = `Article HTML could not be downloaded: ${getFetchError(sourceUrl) || "unknown fetch error"}`;
     }
   }
 

@@ -1,5 +1,6 @@
 const responseCache = new Map();
 const domainReadyAt = new Map();
+const fetchErrors = new Map();
 const metrics = { requests: 0, cacheHits: 0, failures: 0, retries: 0 };
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -45,8 +46,10 @@ export async function fetchHTML(url, options = {}) {
       const html = await response.text();
       if (!html.trim()) throw new Error("Empty response");
       responseCache.set(url, { at: Date.now(), html });
+      fetchErrors.delete(url);
       return html;
-    } catch {
+    } catch (error) {
+      fetchErrors.set(url, error instanceof Error ? error.message : String(error));
       if (attempt < retries) {
         metrics.retries += 1;
         await sleep(400 * (2 ** attempt) + Math.floor(Math.random() * 150));
@@ -84,4 +87,8 @@ export function diffFetchMetrics(before = {}, after = metrics) {
 
 export function resetFetchMetrics() {
   Object.keys(metrics).forEach((key) => { metrics[key] = 0; });
+}
+
+export function getFetchError(url) {
+  return fetchErrors.get(url) || null;
 }

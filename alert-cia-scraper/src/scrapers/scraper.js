@@ -3,7 +3,7 @@ import { classifyIncident, incidentTypeLabel, resolveNewsReviewConfidence } from
 import { contentHash, extractStructuredAccidentDetails, extractVictimCount, incidentKey, inferAccidentSeverity } from "../lib/deduplication.js";
 import { discoverArticleLinks } from "../lib/discoverLinks.js";
 import { extractArticle } from "../lib/extractArticle.js";
-import { diffFetchMetrics, fetchHTMLBatch, getFetchMetrics } from "../lib/fetchHTML.js";
+import { diffFetchMetrics, fetchHTMLBatch, getFetchError, getFetchMetrics } from "../lib/fetchHTML.js";
 import { isAccidentRelevant } from "../lib/filters.js";
 import { geocode } from "../lib/geocode.js";
 import { extractIncidentDateTime } from "../lib/incidentTime.js";
@@ -128,7 +128,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
         source_site: source.key,
         source_name: source.name,
         rejection_reason: "fetch_failed",
-        rejection_details: "Article HTML could not be downloaded.",
+        rejection_details: `Article HTML could not be downloaded: ${getFetchError(url) || "unknown fetch error"}`,
       });
       continue;
     }
