@@ -1,6 +1,9 @@
 const wpSearch = (base, query = "isabela") => (page) =>
   page === 1 ? `${base}/?s=${encodeURIComponent(query)}` : `${base}/page/${page}/?s=${encodeURIComponent(query)}`;
 
+const wpCategory = (base) => (page) =>
+  page === 1 ? base : `${base.replace(/\/$/, "")}/page/${page}/`;
+
 const queryPage = (url, parameter = "page") => (page) => {
   const target = new URL(url);
   if (page > 1) target.searchParams.set(parameter, String(page));
@@ -55,15 +58,11 @@ export const SOURCES = [
     maxRuntimeMs: 45_000,
     noNewArticleLimit: 3,
   }),
-   source("brigda", "Brigada News Cauayan" ,"https://www.brigadanews.ph/?", "https://www.brigadanews.ph", {
-    paginationType: "wordpress_search",
-    pageUrl: wpSearch("https://www.brigadanews.ph", "accidents"),
-    searchTerms: [],
-    searchUrl: (term, page) => wpSearch( "https://www.brigadanews.ph", term)(page),
+  source("brigada", "Brigada News", "https://www.brigadanews.ph", "https://www.brigadanews.ph/category/local-news/luzon/isabela/", {
+    paginationType: "wordpress_category",
+    pageUrl: wpCategory("https://www.brigadanews.ph/category/local-news/luzon/isabela/"),
     articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
-    maxArticles: 160,
-    maxRuntimeMs: 45_000,
-    noNewArticleLimit: 3,
+    maxPagesFull: 50,
   }),
 ];
 

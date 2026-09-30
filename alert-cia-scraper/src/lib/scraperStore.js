@@ -129,7 +129,7 @@ export async function getScrapedIncidentSnapshot({ limit = 1000 } = {}) {
 }
 
 async function syncSources(client) {
-  const removedSourceKeys = ["sunstar", "pna", "pilipino_star"];
+  const removedSourceKeys = ["sunstar", "pna", "pilipino_star", "brigda"];
   const removal = await client.from("scraper_sources").delete().in("source_key", removedSourceKeys);
   if (removal.error) throw removal.error;
 
