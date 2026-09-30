@@ -81,9 +81,35 @@ async function discoverApi(source, mode, stats, sourceHealth) {
   const links = new Set();
   const pages = [];
   let noNew = 0;
+  let firstPage = 1;
 
-  for (let page = 1; page <= limits.maxScrolls; page += 1) {
+  if (source.apiBootstrapUrl) {
+    const text = await fetchHTML(source.apiBootstrapUrl, { cacheTtlMs: mode === "full" ? 60 * 60 * 1000 : 15 * 60 * 1000 });
+    stats.pages_checked += 1;
+    sourceHealth.pages_checked += 1;
+    pages.push(source.apiBootstrapUrl);
+    if (!text) {
+      sourceHealth.failed_count += 1;
+      sourceHealth.last_error = `Unable to download API bootstrap ${source.apiBootstrapUrl}: ${getFetchError(source.apiBootstrapUrl) || "unknown fetch error"}`;
+      return { links: [], pages };
+    }
+    try {
+      const bootstrap = JSON.parse(text);
+      firstPage = Number(getPath(bootstrap, source.apiBootstrapPagePath));
+    } catch {
+      firstPage = NaN;
+    }
+    if (!Number.isInteger(firstPage) || firstPage < 1) {
+      sourceHealth.failed_count += 1;
+      sourceHealth.last_error = `API bootstrap did not provide a valid page: ${source.apiBootstrapUrl}`;
+      return { links: [], pages };
+    }
+  }
+
+  for (let offset = 0; offset < limits.maxScrolls; offset += 1) {
     if (limitReached(startedAt, limits, links) || noNew >= limits.noNewArticleLimit) break;
+    const page = source.apiBootstrapUrl ? firstPage - offset : offset + 1;
+    if (page < 1) break;
     const apiUrl = typeof source.apiUrl === "function" ? source.apiUrl(page) : source.apiUrl;
     if (!apiUrl) break;
     const text = await fetchHTML(apiUrl, { cacheTtlMs: mode === "full" ? 60 * 60 * 1000 : 15 * 60 * 1000 });
@@ -106,6 +132,7 @@ async function discoverApi(source, mode, stats, sourceHealth) {
     const items = getPath(payload, source.apiItemsPath);
     const urls = Array.isArray(items)
       ? items.map((item) => getPath(item, source.apiUrlPath)).filter(Boolean)
+        .map((url) => source.apiArticleBaseUrl ? new URL(url, source.apiArticleBaseUrl).toString() : url)
       : [];
     const newCount = addLinks(links, urls, source);
     sourceHealth.links_found += newCount;
