@@ -55,7 +55,7 @@ export const SOURCES = [
     maxRuntimeMs: 45_000,
     noNewArticleLimit: 3,
   }),
-   source("brigda", "Brigada News Cauayan" ,"https://www.brigadanews.ph/?", {
+   source("brigda", "Brigada News Cauayan" ,"https://www.brigadanews.ph/?", "https://www.brigadanews.ph", {
     paginationType: "wordpress_search",
     pageUrl: wpSearch("https://www.brigadanews.ph", "accidents"),
     searchTerms: [],
