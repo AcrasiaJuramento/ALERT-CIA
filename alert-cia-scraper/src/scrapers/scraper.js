@@ -269,7 +269,6 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
   const fetchDiff = diffFetchMetrics(beforeFetch, getFetchMetrics());
   sourceHealth.cache_hits = fetchDiff.cacheHits;
   sourceHealth.retries = fetchDiff.retries;
-  sourceHealth.failed_count += fetchDiff.failures;
   sourceHealth.status = sourceHealth.failed_count && !sourceHealth.links_found
     ? "failed"
     : !sourceHealth.incidents_detected && sourceHealth.rejected_count

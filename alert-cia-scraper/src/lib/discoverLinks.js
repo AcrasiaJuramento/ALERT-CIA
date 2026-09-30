@@ -1,5 +1,5 @@
 import { extractLinks, extractNextPage } from "./extractLinks.js";
-import { fetchHTML } from "./fetchHTML.js";
+import { fetchHTML, getFetchError } from "./fetchHTML.js";
 import { isArticleUrl, normalizeUrl } from "./urls.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -55,7 +55,7 @@ async function discoverPagination(source, mode, stats, sourceHealth, pageRange =
       if (!html) {
         stats.failed_urls.push(pageUrl);
         sourceHealth.failed_count += 1;
-        sourceHealth.last_error = `Unable to download page ${pageUrl}`;
+        sourceHealth.last_error = `Unable to download page ${pageUrl}: ${getFetchError(pageUrl) || "unknown fetch error"}`;
         if (page === 1) break;
         continue;
       }
@@ -92,7 +92,7 @@ async function discoverApi(source, mode, stats, sourceHealth) {
     pages.push(apiUrl);
     if (!text) {
       sourceHealth.failed_count += 1;
-      sourceHealth.last_error = `Unable to download API page ${apiUrl}`;
+      sourceHealth.last_error = `Unable to download API page ${apiUrl}: ${getFetchError(apiUrl) || "unknown fetch error"}`;
       break;
     }
     let payload = null;
@@ -131,7 +131,7 @@ async function discoverHttpScroll(source, mode, stats, sourceHealth) {
     pages.push(pageUrl);
     if (!html) {
       sourceHealth.failed_count += 1;
-      sourceHealth.last_error = `Unable to download scroll page ${pageUrl}`;
+      sourceHealth.last_error = `Unable to download scroll page ${pageUrl}: ${getFetchError(pageUrl) || "unknown fetch error"}`;
       break;
     }
     const newCount = addLinks(links, extractLinks(html, pageUrl, source), source);
@@ -201,7 +201,11 @@ export async function discoverArticleLinks(source, mode, stats, sourceHealth, pa
     const html = await fetchHTML(source.firstPageUrl, { cacheTtlMs: mode === "full" ? 60 * 60 * 1000 : 15 * 60 * 1000 });
     stats.pages_checked += 1;
     sourceHealth.pages_checked += 1;
-    if (!html) return { links: [], pages: [source.firstPageUrl] };
+    if (!html) {
+      sourceHealth.failed_count += 1;
+      sourceHealth.last_error = `Unable to download page ${source.firstPageUrl}: ${getFetchError(source.firstPageUrl) || "unknown fetch error"}`;
+      return { links: [], pages: [source.firstPageUrl] };
+    }
     const links = new Set();
     sourceHealth.links_found += addLinks(links, extractLinks(html, source.firstPageUrl, source), source);
     return { links: [...links], pages: [source.firstPageUrl] };
