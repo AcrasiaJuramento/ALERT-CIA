@@ -1,8 +1,9 @@
-const wpSearch = (base, query = "isabela") => (page) =>
-  page === 1 ? `${base}/?s=${encodeURIComponent(query)}` : `${base}/page/${page}/?s=${encodeURIComponent(query)}`;
+const hostOf = (u) => new URL(u).hostname.replace(/^www\./, "");
 
-const wpCategory = (base) => (page) =>
-  page === 1 ? base : `${base.replace(/\/$/, "")}/page/${page}/`;
+const wpSearch = (base, query = "isabela") => (page) =>
+  page === 1
+    ? `${base}/?s=${encodeURIComponent(query)}`
+    : `${base}/page/${page}/?s=${encodeURIComponent(query)}`;
 
 const queryPage = (url, parameter = "page") => (page) => {
   const target = new URL(url);
@@ -11,15 +12,16 @@ const queryPage = (url, parameter = "page") => (page) => {
 };
 
 function source(key, name, baseUrl, firstPageUrl, options = {}) {
-  const loadingStrategy = options.loadingStrategy || (
-    options.paginationType === "static" ? "static" : "pagination"
-  );
+  const loadingStrategy =
+    options.loadingStrategy || (options.paginationType === "static" ? "static" : "pagination");
+
+  // Fail at startup, not at scrape time
+  [baseUrl, firstPageUrl, options.apiBootstrapUrl, options.apiArticleBaseUrl]
+    .filter(Boolean)
+    .forEach((u) => new URL(u));
+
   return {
-    key,
-    name,
-    baseUrl,
-    firstPageUrl,
-    loadingStrategy,
+    key, name, baseUrl, firstPageUrl, loadingStrategy,
     paginationType: options.paginationType || "next_link",
     pageUrl: options.pageUrl || queryPage(firstPageUrl),
     apiUrl: options.apiUrl || null,
@@ -39,44 +41,58 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
       maxArticles: options.maxArticles || 80,
       maxRuntimeMs: options.maxRuntimeMs || 25_000,
       noNewArticleLimit: options.noNewArticleLimit || 2,
-      articleDateRangeDays: options.articleDateRangeDays || (options.loadingStrategy === "infinite_scroll" ? 120 : 365),
+      articleDateRangeDays:
+        options.articleDateRangeDays || (loadingStrategy === "infinite_scroll" ? 120 : 365),
       delayMs: options.delayMs || 350,
     },
     maxPagesFull: options.maxPagesFull || 100,
     maxPagesUpdate: options.maxPagesUpdate || 3,
-    allowedDomains: options.allowedDomains || [new URL(baseUrl).hostname.replace(/^www\./, "")],
-    articlePattern: options.articlePattern || /\/[a-z0-9][a-z0-9-]+(?:\/|$)/i,
+    // include API hosts too (data.gmanetwork.com etc.)
+    allowedDomains: [
+      ...new Set([
+        hostOf(baseUrl),
+        ...(options.extraDomains || []),
+      ]),
+    ],
+    articlePattern: options.articlePattern || null, // no more "match everything" default
     enabled: options.enabled !== false,
   };
 }
 
 export const SOURCES = [
-  source("bombo", "Bombo Radyo Cauayan", "https://cauayan.bomboradyo.com", "https://cauayan.bomboradyo.com/?s=accidents", {
-    paginationType: "wordpress_search",
-    pageUrl: wpSearch("https://cauayan.bomboradyo.com", "accidents"),
-    searchTerms: ["accidents", "aksidente", "banggan", "salpukan", "crash"],
-    searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com",  term)(page),
-    articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
-    maxArticles: 160,
-    maxRuntimeMs: 45_000,
-    noNewArticleLimit: 3,
-  }),
-  source("gma", "GMA Isabela", "https://www.gmanetwork.com", "https://www.gmanetwork.com/news/tracking/isabela/", {
-    loadingStrategy: "api",
-    apiBootstrapUrl: "https://data.gmanetwork.com/gno/widgets/grid_reverse_listing/keyword_isabela/tracker.gz",
-    apiBootstrapPagePath: "count",
-    apiUrl: (page) => `https://data.gmanetwork.com/gno/widgets/grid_reverse_listing/keyword_isabela/${page}.gz`,
-    apiItemsPath: "data",
-    apiUrlPath: "article_url",
-    apiArticleBaseUrl: "https://www.gmanetwork.com/news/",
-    articlePattern: /\/news\/(?:topstories|regions|balitambayan|scitech)\/[^/]+\/\d+\//i,
-    maxScrolls: 1,
-  }),
-  source("dzrh", "DZRH News", "https://www.dzrh.com.ph", "https://www.dzrh.com.ph/tag/isabela-province", {
-    loadingStrategy: "static",
-    articleLinkSelector: 'a[href^="/post/"]',
-    articlePattern: /\/post\/[a-z0-9][a-z0-9-]+$/i,
-  }),
+  source("bombo", "Bombo Radyo Cauayan", "https://cauayan.bomboradyo.com",
+    "https://cauayan.bomboradyo.com/?s=aksidente", {
+      paginationType: "wordpress_search",
+      pageUrl: wpSearch("https://cauayan.bomboradyo.com", "aksidente"),
+      searchTerms: ["accidents", "aksidente", "banggan", "salpukan", "crash"],
+      searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com", term)(page),
+      articleLinkSelector:
+        ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
+      maxArticles: 160,
+      maxRuntimeMs: 45_000,
+      noNewArticleLimit: 3,
+    }),
+
+  source("gma", "GMA Isabela", "https://www.gmanetwork.com",
+    "https://www.gmanetwork.com/news/tracking/isabela/", {
+      loadingStrategy: "api",
+      extraDomains: ["data.gmanetwork.com"],
+      apiBootstrapUrl: "https://data.gmanetwork.com/gno/widgets/grid_reverse_listing/keyword_isabela/tracker.gz",
+      apiBootstrapPagePath: "count",
+      apiUrl: (page) => `https://data.gmanetwork.com/gno/widgets/grid_reverse_listing/keyword_isabela/${page}.gz`,
+      apiItemsPath: "data",
+      apiUrlPath: "article_url",
+      apiArticleBaseUrl: "https://www.gmanetwork.com/", // resolve with new URL(x, base)
+      articlePattern: /\/news\/[a-z0-9_-]+\/[^/]+\/\d+\//i, // any section
+      maxScrolls: 1,
+    }),
+
+  source("dzrh", "DZRH News", "https://www.dzrh.com.ph",
+    "https://www.dzrh.com.ph/tag/isabela-province", {
+      loadingStrategy: "static",
+      articleLinkSelector: 'a[href^="/post/"]',
+      articlePattern: /\/post\/[a-z0-9][a-z0-9-]+\/?(?:[?#].*)?$/i,
+    }),
 ];
 
-export const ENABLED_SOURCES = SOURCES.filter((item) => item.enabled);
+export const ENABLED_SOURCES = SOURCES.filter((s) => s.enabled);
