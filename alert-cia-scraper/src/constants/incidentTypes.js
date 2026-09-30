@@ -8,4 +8,5 @@ export const INCIDENT_TYPES = {
   shooting: ["shooting", "pamamaril", "binaril", "nabaril", "pinagbabaril"],
   stabbing: ["stabbing", "pananaksak", "sinaksak", "nasaksak"],
   drowning: ["drowning", "drowned", "nalunod"],
+  typhoon: ["typhoon", "bagyo", "malakas na ulan", "malakas na hangin", "malakas na pag-ulan", "Super Typhoon"],
 };
