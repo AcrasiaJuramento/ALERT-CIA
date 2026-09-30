@@ -31,8 +31,6 @@ const ECHAGUE_BOUNDS = {
   east: 121.74,
 };
 
-const ACTIVE_SCRAPER_SOURCE_SITE = "bombo";
-const ACTIVE_SCRAPER_SOURCE_URL_PATTERN = "%cauayan.bomboradyo.com%";
 const FULL_SCRAPE_PAGE_CHUNK_SIZE = 5;
 
 function asRows(value) {
@@ -703,8 +701,6 @@ export async function listScraperRecords({ status, category, sourceId, municipal
     let query = client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
-      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
-      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
       .range(from, from + limit - 1);
@@ -726,8 +722,6 @@ function buildRejectedCandidateQuery(client, tableName, { reason, sourceId, muni
   let query = client
     .from(tableName)
     .select("*")
-    .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
-    .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
     .order("created_at", { ascending: false })
     .range(from, from + limit - 1);
   if (reason) query = query.eq("rejection_reason", reason);
@@ -759,8 +753,6 @@ export async function listRejectedScraperCandidateHistory({ reason, sourceId, mu
     let query = client
       .from("scraper_article_candidates")
       .select("*")
-      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
-      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .order("created_at", { ascending: false })
       .range(from, from + limit - 1);
     if (reason) query = query.eq("rejection_reason", reason);
@@ -779,8 +771,6 @@ export async function listVerifiedScrapedAnalyticsIncidents({ limit = 1000 } = {
     client
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
-      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
-      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .in("status", ["approved", "promoted", "matched", "imported"])
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })
@@ -803,8 +793,6 @@ export async function listOfficerScrapedMapIncidents({ limit = 500 } = {}) {
   const buildQuery = (client, rowLimit) => client
       .from("scraper_records")
       .select(selectColumns)
-      .eq("source_site", ACTIVE_SCRAPER_SOURCE_SITE)
-      .ilike("source_url", ACTIVE_SCRAPER_SOURCE_URL_PATTERN)
       .eq("status", "approved")
       .eq("public_visible", true)
       .is("deleted_at", null)
