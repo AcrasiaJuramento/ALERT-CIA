@@ -72,6 +72,11 @@ export const SOURCES = [
     articlePattern: /\/news\/(?:topstories|regions|balitambayan|scitech)\/[^/]+\/\d+\//i,
     maxScrolls: 1,
   }),
+  source("dzrh", "DZRH News", "https://www.dzrh.com.ph", "https://www.dzrh.com.ph/tag/isabela-province", {
+    loadingStrategy: "static",
+    articleLinkSelector: 'a[href^="/post/"]',
+    articlePattern: /\/post\/[a-z0-9][a-z0-9-]+$/i,
+  }),
 ];
 
 export const ENABLED_SOURCES = SOURCES.filter((item) => item.enabled);
