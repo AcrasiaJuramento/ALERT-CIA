@@ -5,6 +5,7 @@ import { ROLES, ROLE_LABELS, hasPermission } from '../access/rbac';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import { logAuditEvent } from '../services/supabase/auditService';
 import { refreshPCRReferenceCache } from '../services/pcrReferenceCache';
+import { assertLoginAllowed, clearLoginRateLimit, recordFailedLogin } from '../utils/loginRateLimit';
 
 const AUTH_STORAGE_KEY = 'alert-cia-auth-user';
 const OFFLINE_AUTH_KEY = 'alert-cia-offline-auth';
@@ -151,51 +152,60 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    if (isSupabaseConfigured) {
-      let data;
-      try {
-        const result = await supabase.auth.signInWithPassword({ email, password });
-        if (result.error) throw result.error;
-        data = result.data;
-      } catch (error) {
-        if (!isNetworkAuthError(error)) throw error;
-        const offlineUser = await loginWithOfflineVerifier(email, password);
-        if (!offlineUser) throw error;
+    assertLoginAllowed(email);
+    try {
+      if (isSupabaseConfigured) {
+        let data;
+        try {
+          const result = await supabase.auth.signInWithPassword({ email, password });
+          if (result.error) throw result.error;
+          data = result.data;
+        } catch (error) {
+          if (!isNetworkAuthError(error)) throw error;
+          const offlineUser = await loginWithOfflineVerifier(email, password);
+          if (!offlineUser) throw error;
+          clearLoginRateLimit(email);
+          localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(offlineUser));
+          setUser(offlineUser);
+          return offlineUser;
+        }
+
+        const profile = await loadSupabaseProfile(data.user.id);
+        if (!profile) {
+          await supabase.auth.signOut();
+          throw new Error('No officer profile is connected to this account.');
+        }
+        if (profile.account_status !== 'active') {
+          await supabase.auth.signOut();
+          if (profile.account_status === 'pending') {
+            throw new Error('Your account is pending administrator approval.');
+          }
+          throw new Error('Your account is not active. Contact an administrator for assistance.');
+        }
+
+        const nextUser = profileToUser(profile);
+        await saveOfflineLogin(nextUser, password);
+        clearLoginRateLimit(email);
+        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
+        setUser(nextUser);
+        void refreshPCRReferenceCache().catch(error => console.warn('[offline-reference] Login cache refresh failed.', error?.message || error));
+        void logAuditEvent({ action: 'USER_LOGIN', module: 'AUTH', recordReference: nextUser.id, description: `${nextUser.name} signed in to ALERT-CIA.`, platform: 'Web', metadata: { source: 'supabase' } });
+        return nextUser;
+      }
+
+      const offlineUser = await loginWithOfflineVerifier(email, password);
+      if (offlineUser) {
+        clearLoginRateLimit(email);
         localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(offlineUser));
         setUser(offlineUser);
         return offlineUser;
       }
 
-      const profile = await loadSupabaseProfile(data.user.id);
-      if (!profile) {
-        await supabase.auth.signOut();
-        throw new Error('No officer profile is connected to this account.');
-      }
-      if (profile.account_status !== 'active') {
-        await supabase.auth.signOut();
-        if (profile.account_status === 'pending') {
-          throw new Error('Your account is pending administrator approval.');
-        }
-        throw new Error('Your account is not active. Contact an administrator for assistance.');
-      }
-
-      const nextUser = profileToUser(profile);
-      await saveOfflineLogin(nextUser, password);
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(nextUser));
-      setUser(nextUser);
-      void refreshPCRReferenceCache().catch(error => console.warn('[offline-reference] Login cache refresh failed.', error?.message || error));
-      void logAuditEvent({ action: 'USER_LOGIN', module: 'AUTH', recordReference: nextUser.id, description: `${nextUser.name} signed in to ALERT-CIA.`, platform: 'Web', metadata: { source: 'supabase' } });
-      return nextUser;
+      throw new Error('Unable to sign in. Connect to the internet and try again.');
+    } catch (error) {
+      recordFailedLogin(email);
+      throw error;
     }
-
-    const offlineUser = await loginWithOfflineVerifier(email, password);
-    if (offlineUser) {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(offlineUser));
-      setUser(offlineUser);
-      return offlineUser;
-    }
-
-    throw new Error('Unable to sign in. Connect to the internet and try again.');
   };
 
   const logout = async () => {
