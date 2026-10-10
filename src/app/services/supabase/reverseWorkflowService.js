@@ -15,7 +15,15 @@ export function submitStandalonePCR(pcrId) {
 }
 
 export function reviewStandalonePCR(pcrId, decision, remarks = '', correctionTargets = []) {
-  return transition('review_pcr_with_corrections', { target_pcr_id: pcrId, review_kind: 'dispatcher', decision, remarks: remarks || null, correction_targets: correctionTargets }, 'Unable to review standalone PCR.');
+  if (decision === 'accept') {
+    return transition('review_standalone_pcr', {
+      target_pcr_id: pcrId, decision, remarks: remarks || null,
+    }, 'Unable to review standalone PCR.');
+  }
+  return transition('review_pcr_with_corrections', {
+    target_pcr_id: pcrId, review_kind: 'dispatcher', decision,
+    remarks: remarks || null, correction_targets: correctionTargets,
+  }, 'Unable to review standalone PCR.');
 }
 
 export function createDispatchFromPCR(pcrId, dispatch = {}) {

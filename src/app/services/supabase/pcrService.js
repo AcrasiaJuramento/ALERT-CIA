@@ -68,6 +68,7 @@ const PCR_LIGHT_SELECT = `
   archived_by
 `;
 
+
 const PCR_LIST_SELECT = `
   id,
   client_generated_id,
@@ -132,6 +133,35 @@ const PCR_LIST_SELECT = `
     departure_hospital_time,
     arrival_office_time
   )
+`;
+
+const PCR_PREVIEW_SELECT = `
+  ${PCR_LIGHT_SELECT},
+  notes,
+  response:responses(
+    id,
+    client_generated_id,
+    response_number,
+    date_of_incident,
+    time_of_incident,
+    place_of_incident,
+    location_text,
+    latitude,
+    longitude,
+    patient_name,
+    patient_age,
+    patient_birthday,
+    patient_sex,
+    patient_address,
+    initial_assessment,
+    barangay:barangays(id, name, normalized_name),
+    responding_team:responding_teams!responses_responding_team_id_fkey(id, name)
+  ),
+  dispatch:dispatch_forms!pcr_reports_dispatch_form_id_fkey(
+    id, response_id, dispatch_time, arrival_scene_time, departure_scene_time,
+    arrival_hospital_time, departure_hospital_time, arrival_office_time
+  ),
+  pcr_vital_signs(id, sequence_no, measured_time, blood_pressure, pulse_rate, respiratory_rate, temperature, oxygen_saturation, created_at)
 `;
 
 const PCR_MAP_SELECT = `
@@ -510,6 +540,20 @@ export async function getPCRReport(pcrId) {
     client.from("pcr_reports").select(PCR_SELECT).eq("id", pcrId).maybeSingle(),
   "Unable to load PCR report.");
 
+  return row ? pcrToApp(row) : null;
+}
+
+export async function getPCRPreviewByResponse(responseId) {
+  if (!responseId || responseId === "undefined") return null;
+  const row = await runSupabaseRequest(client =>
+    client
+      .from("pcr_reports")
+      .select(PCR_PREVIEW_SELECT)
+      .eq("response_id", responseId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  "Unable to load PCR preview.");
   return row ? pcrToApp(row) : null;
 }
 

@@ -33,6 +33,7 @@ import {
 import { subscribeLiveSyncEvents } from "../network/live-sync-events";
 import {
   getPCRReportByResponse,
+  getPCRPreviewByResponse,
   listDispatchRecords,
   listPCRReportsByResponses,
 } from "../services/supabase";
@@ -794,6 +795,7 @@ export default function DispatchRecords() {
   const [selectedPcr, setSelectedPcr] = useState(null);
   const [connection, setConnection] = useState(getConnectionState());
   const [page, setPage] = useState(1);
+  const [fullPcrs, setFullPcrs] = useState({});
   const refreshInFlightRef = useRef(false);
   const refreshQueuedRef = useRef(false);
   const refreshQueuedTimerRef = useRef(null);
@@ -979,71 +981,90 @@ export default function DispatchRecords() {
     }
   }, []);
 
+  const loadFullPcr = useCallback(async (record, base) => {
+    const key = linkedPcrKey(record);
+    const responseId = record.responseId || base?.responseId;
+    if (!responseId) return;
+    const full = await getPCRPreviewByResponse(responseId).catch(() => null);
+    if (!full) return;
+    setFullPcrs((prev) => ({
+      ...prev,
+      [key]: {
+        ...base,
+        ...full,
+        recordSource: "cloud",
+        syncLabel: "Cloud synced",
+      },
+    }));
+  }, []);
+
   const [sortColumn, setSortColumn] = useState("updatedAt");
   const [sortDirection, setSortDirection] = useState("desc");
 
-  const sortRecords = useCallback((recordsToSort) => {
-  return [...recordsToSort].sort((a, b) => {
-    let aValue, bValue;
+  const sortRecords = useCallback(
+    (recordsToSort) => {
+      return [...recordsToSort].sort((a, b) => {
+        let aValue, bValue;
 
-    switch (sortColumn) {
-      case "Response No.":
-        aValue = String(a.responseNumber || "").toLowerCase();
-        bValue = String(b.responseNumber || "").toLowerCase();
-        break;
-      case "Incident":
-        aValue = String(a.natureTypes?.join("") || "").toLowerCase();
-        bValue = String(b.natureTypes?.join("") || "").toLowerCase();
-        break;
-      case "Patient":
-        aValue = String(a.patients?.[0]?.name || a.patientName || "").toLowerCase();
-        bValue = String(b.patients?.[0]?.name || b.patientName || "").toLowerCase();
-        break;
-      case "Location / Barangay":
-        aValue = String(a.barangay || a.placeOfIncident || "").toLowerCase();
-        bValue = String(b.barangay || b.placeOfIncident || "").toLowerCase();
-        break;
-      case "Responding Team / Unit":
-        aValue = String(a.team || "").toLowerCase();
-        bValue = String(b.team || "").toLowerCase();
-        break;
-      case "Status":
-        aValue = displayStatus(a, linkedPcrFromMap(linkedPCRs, a));
-        bValue = displayStatus(b, linkedPcrFromMap(linkedPCRs, b));
-        aValue = String(aValue || "").toLowerCase();
-        bValue = String(bValue || "").toLowerCase();
-        break;
-      case "Updated":
-        aValue = new Date(a.updatedAt || a.createdAt || 0).getTime();
-        bValue = new Date(b.updatedAt || b.createdAt || 0).getTime();
-        break;
-      default:
-        return 0;
-    }
+        switch (sortColumn) {
+          case "Response No.":
+            aValue = String(a.responseNumber || "").toLowerCase();
+            bValue = String(b.responseNumber || "").toLowerCase();
+            break;
+          case "Incident":
+            aValue = String(a.natureTypes?.join("") || "").toLowerCase();
+            bValue = String(b.natureTypes?.join("") || "").toLowerCase();
+            break;
+          case "Patient":
+            aValue = String(
+              a.patients?.[0]?.name || a.patientName || "",
+            ).toLowerCase();
+            bValue = String(
+              b.patients?.[0]?.name || b.patientName || "",
+            ).toLowerCase();
+            break;
+          case "Location / Barangay":
+            aValue = String(a.barangay || a.placeOfIncident || "").toLowerCase();
+            bValue = String(b.barangay || b.placeOfIncident || "").toLowerCase();
+            break;
+          case "Responding Team / Unit":
+            aValue = String(a.team || "").toLowerCase();
+            bValue = String(b.team || "").toLowerCase();
+            break;
+          case "Status":
+            aValue = displayStatus(a, linkedPcrFromMap(linkedPCRs, a));
+            bValue = displayStatus(b, linkedPcrFromMap(linkedPCRs, b));
+            aValue = String(aValue || "").toLowerCase();
+            bValue = String(bValue || "").toLowerCase();
+            break;
+          case "Updated":
+            aValue = new Date(a.updatedAt || a.createdAt || 0).getTime();
+            bValue = new Date(b.updatedAt || b.createdAt || 0).getTime();
+            break;
+          default:
+            return 0;
+        }
 
-    if (typeof aValue === "string") {
-      return sortDirection === "asc" 
-        ? aValue.localeCompare(bValue)
-        : bValue.localeCompare(aValue);
-    }
-    
-    return sortDirection === "asc" ? aValue - bValue : bValue - aValue;
-  });
-}, [sortColumn, sortDirection, linkedPCRs]);
+        if (typeof aValue === "string") {
+          return sortDirection === "asc"
+            ? aValue.localeCompare(bValue)
+            : bValue.localeCompare(aValue);
+        }
 
+        return sortDirection === "asc" ? aValue - bValue : bValue - aValue;
+      });
+    },
+    [sortColumn, sortDirection, linkedPCRs],
+  );
 
-
-    const handleHeaderClick = (column) => {
+  const handleHeaderClick = (column) => {
     if (sortColumn === column) {
-   
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
-   
       setSortColumn(column);
       setSortDirection("asc");
     }
   };
-
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1059,6 +1080,16 @@ export default function DispatchRecords() {
   useEffect(() => {
     recordsRef.current = records;
   }, [records]);
+
+  // When a row is opened, fetch its full cloud PCR once.
+  useEffect(() => {
+    if (!selected) return;
+    const base = linkedPcrFromMap(linkedPCRs, selected);
+    if (!base || base.recordSource !== "cloud") return;
+    if (fullPcrs[linkedPcrKey(selected)]) return;
+    loadFullPcr(selected, base);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.id]);
 
   useEffect(() => {
     let timer;
@@ -1125,7 +1156,10 @@ export default function DispatchRecords() {
   );
 
   const pageCount = Math.max(1, Math.ceil(sortedRecords.length / pageSize));
-  const visibleRecords = sortedRecords.slice((page - 1) * pageSize, page * pageSize);
+  const visibleRecords = sortedRecords.slice(
+    (page - 1) * pageSize,
+    page * pageSize,
+  );
 
   const selectedPreview = useMemo(() => {
     if (!selected) return null;
@@ -1134,12 +1168,14 @@ export default function DispatchRecords() {
       (record) => logicalDispatchKey(record) === selectedKey,
     );
     if (!latestRecord) return selected;
-    const latestPcr = linkedPcrFromMap(linkedPCRs, latestRecord);
+    const latestPcr =
+      fullPcrs[linkedPcrKey(latestRecord)] ||
+      linkedPcrFromMap(linkedPCRs, latestRecord);
     return {
       ...dispatchPreviewRecord(latestRecord, latestPcr),
       __autoDownload: selected.__autoDownload,
     };
-  }, [selected, records, linkedPCRs]);
+  }, [selected, records, linkedPCRs, fullPcrs]);
 
   useEffect(() => setPage(1), [query, status, archiveView]);
 
@@ -1149,8 +1185,10 @@ export default function DispatchRecords() {
   };
 
   const resolveLinkedPcr = async (record) => {
+    const full = fullPcrs[linkedPcrKey(record)];
+    if (full) return full;
     const cached = linkedPcrFromMap(linkedPCRs, record);
-    if (cached) return cached;
+    if (cached && cached.recordSource !== "cloud") return cached;
     if (record.responseId) {
       const cloudPcr = await getPCRReportByResponse(record.responseId).catch(
         () => null,
@@ -1168,7 +1206,9 @@ export default function DispatchRecords() {
       .getLocalPcrReports()
       .catch(() => []);
     return (
-      localPcrRows.find((pcr) => sameLinkedPcrForDispatch(record, pcr)) || null
+      localPcrRows.find((pcr) => sameLinkedPcrForDispatch(record, pcr)) ||
+      cached ||
+      null
     );
   };
 
@@ -1527,7 +1567,7 @@ export default function DispatchRecords() {
                           {item}
                           {sortColumn === item && (
                             <span className="text-blue-400">
-                              {sortDirection === "asc" ? "↑" : "↓" }
+                              {sortDirection === "asc" ? "↑" : "↓"}
                             </span>
                           )}
                         </div>
@@ -1729,7 +1769,10 @@ export default function DispatchRecords() {
         edit={edit}
         openPCR={openPCR}
         send={null}
-        findLinkedPCR={(record) => linkedPcrFromMap(linkedPCRs, record)}
+        findLinkedPCR={(record) =>
+          fullPcrs[linkedPcrKey(record)] ||
+          linkedPcrFromMap(linkedPCRs, record)
+        }
       />
       {selectedPcr &&
         createPortal(
