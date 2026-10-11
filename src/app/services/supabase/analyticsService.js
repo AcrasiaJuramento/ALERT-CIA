@@ -157,8 +157,8 @@ export function getAnalyticsSummary({ start = null, end = null, location = 'all'
     'Unable to load analytics. Apply migration 95_aggregated_analytics.sql.', { ttlMs: 10 * 60_000 });
 }
 
-export function getReportsSummary(summary = 'monthly', scopeKey = '') {
-  return runCachedSupabaseRequest(`analytics:reports:${scopeKey}:${summary}`,
-    client => client.rpc('get_reports_summary', { period: summary }),
-    'Unable to load reports. Apply migration 96_reports_aggregation.sql.', { ttlMs: 10 * 60_000 });
+export function getReportsSummary(summary = 'monthly', scopeKey = '', year = new Date().getFullYear()) {
+  return runCachedSupabaseRequest(`analytics:reports:${scopeKey}:${summary}:${year}`,
+    client => client.rpc('get_reports_summary_v2', { period: summary, p_year: year }),
+    'Unable to load reports.', { ttlMs: 10 * 60_000 });
 }
