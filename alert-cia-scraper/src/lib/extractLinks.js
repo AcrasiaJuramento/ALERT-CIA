@@ -1,5 +1,6 @@
 import * as cheerio from "cheerio";
 import { isArticleUrl, normalizeUrl } from "./urls.js";
+import { matchesRoadAccidentSearch } from "./roadAccidents.js";
 
 export function extractLinks(html, base, source) {
   const $ = cheerio.load(html);
@@ -14,7 +15,11 @@ export function extractLinks(html, base, source) {
 
     try {
       const url = normalizeUrl(href, base);
-      if (url && (!source || isArticleUrl(url, source))) links.add(url);
+      const matchesSearch = !source?.searchTerms?.length || matchesRoadAccidentSearch(
+        `${url || ""} ${$(el).text()} ${$(el).attr("title") || ""} ${$(el).attr("aria-label") || ""}`,
+        source.searchTerms,
+      );
+      if (url && matchesSearch && (!source || isArticleUrl(url, source))) links.add(url);
     } catch {
    
     }

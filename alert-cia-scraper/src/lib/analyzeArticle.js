@@ -5,8 +5,9 @@ import { fetchHTML, getFetchError } from "./fetchHTML.js";
 import { isAccidentRelevant } from "./filters.js";
 import { geocode } from "./geocode.js";
 import { extractIncidentDateTime } from "./incidentTime.js";
-import { extractLocation, ISABELA_PLACES, isValidLocation } from "./locations.js";
+import { extractLocation, isValidLocation } from "./locations.js";
 import { normalizeUrl } from "./urls.js";
+import { isRoadAccidentReport } from "./roadAccidents.js";
 
 function textArticle({ title, snippet, body, url }) {
   return {
@@ -21,7 +22,7 @@ function textArticle({ title, snippet, body, url }) {
 function decide({ article, sourceUrl, classification, location }) {
   if (!article.title) return { accepted: false, reason: "insufficient_information", details: "Article title could not be extracted." };
   const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || ""}`;
-  if (!isAccidentRelevant(combined) && classification.type !== "vehicular") {
+  if (!isRoadAccidentReport(combined) || (!isAccidentRelevant(combined) && classification.type !== "vehicular")) {
     return { accepted: false, reason: classification.type ? "non_vehicular" : "non_accident", details: "No reliable vehicular accident context was detected." };
   }
   if (classification.type !== "vehicular") {
@@ -38,20 +39,6 @@ function decide({ article, sourceUrl, classification, location }) {
     return { accepted: false, reason: "location_unknown", details: "No supported Isabela city or municipality could be extracted from the accident context." };
   }
   return { accepted: true, reason: "accepted", details: sourceUrl ? "Article would be accepted as a scraped vehicular accident candidate." : "Pasted text would be accepted as a scraped vehicular accident candidate." };
-}
-
-function hasIsabelaPlace(text = "") {
-  return ISABELA_PLACES.some((place) => new RegExp(`\\b${place.replace(/ /g, "\\s+")}\\b`, "i").test(text));
-}
-
-function locationTextForSource(sourceUrl, combined) {
-  try {
-    const host = new URL(sourceUrl).hostname;
-    if (host === "cauayan.bomboradyo.com" && hasIsabelaPlace(combined)) return `${combined}\nIsabela`;
-  } catch {
-   
-  }
-  return combined;
 }
 
 export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
@@ -72,8 +59,7 @@ export async function analyzeArticleInput({ url, title, snippet, body } = {}) {
   if (!article) article = textArticle({ title, snippet, body, url: sourceUrl });
   const combined = `${article.title || ""}\n${article.snippet || ""}\n${article.body || body || ""}`;
   let classification = classifyIncident(combined);
-  const locationContext = locationTextForSource(sourceUrl, combined);
-  const location = extractLocation(article.title, article.snippet, article.body || body, locationContext);
+  const location = extractLocation(article.title, article.snippet, article.body || body);
   const details = extractStructuredAccidentDetails(combined);
   classification = resolveNewsReviewConfidence({ classification, location, details, text: combined });
   const decision = fetchError

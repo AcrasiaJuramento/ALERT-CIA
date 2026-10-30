@@ -1,14 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { incidentBarangayNames, incidentLocationEvidence, ISABELA_PLACES } from "./locationEvidence.js";
 
-export const ISABELA_PLACES = [
-  "Alicia", "Angadanan", "Aurora", "Benito Soliven", "Burgos", "Cabagan", "Cabatuan", "Cauayan",
-  "Cordon", "Delfin Albano", "Dinapigue", "Divilacan", "Echague", "Gamu", "Ilagan", "Jones",
-  "Luna", "Maconacon", "Mallig", "Naguilian", "Palanan", "Quezon", "Quirino", "Ramon",
-  "Reina Mercedes", "Roxas", "San Agustin", "San Guillermo", "San Isidro", "San Manuel",
-  "San Mariano", "San Mateo", "San Pablo", "Santa Maria", "Santiago", "Santo Tomas", "Tumauini",
-].sort((a, b) => b.length - a.length);
+export { ISABELA_PLACES };
 
 const ISABELA_CITIES = new Set(["Cauayan", "Ilagan", "Santiago"]);
 const placePattern = ISABELA_PLACES.map((name) => name.replace(/ /g, "\\s+")).join("|");
@@ -96,7 +91,7 @@ function buildBoundaryLocationIndex() {
         .map(alias => ({ alias, canonical: false })),
     ];
     for (const { alias, canonical } of aliases) {
-      const key = `${normalizeLocationName(alias)}|${normalizeLocationName(municipality)}`;
+      const key = `${normalizeLocationName(alias)}|${normalizeLocationName(municipality)}|${normalizeLocationName(barangay)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       pairs.push({
@@ -157,27 +152,27 @@ function candidateTexts(text) {
 
 function findBoundaryLocation(text) {
   if (!boundaryLocationPairs.length) return null;
-  const normalizedText = normalizeLocationName(text);
+  const matches = [];
 
   for (const pair of boundaryLocationPairs) {
     const barangayPattern = escapeRegex(pair.alias).replace(/\s+/g, "\\s+");
     const municipalityPattern = escapeRegex(pair.municipality).replace(/\s+/g, "\\s+");
-    const compactPair = `${normalizeLocationName(pair.alias)}${normalizeLocationName(pair.municipality)}`;
     const patterns = [
       new RegExp(`\\b(?:Barangay|Brgy\\.?|Bgy\\.?|Baryo)?\\s*${barangayPattern}\\s*,\\s*${municipalityPattern}(?:\\s+(?:City|Municipality))?\\b`, "i"),
       new RegExp(`\\b(?:Barangay|Brgy\\.?|Bgy\\.?|Baryo)?\\s*${barangayPattern}\\s+(?:in|at|of|ng|sa)\\s+${municipalityPattern}(?:\\s+(?:City|Municipality))?\\b`, "i"),
     ];
-    if (patterns.some(pattern => pattern.test(text)) || normalizedText.includes(compactPair)) {
-      return {
+    if (patterns.some(pattern => pattern.test(text))) {
+      matches.push({
         barangay: pair.barangay,
         municipality: pair.municipality,
         source: "Isabela.geojson",
         matchedAlias: pair.alias,
-      };
+      });
     }
   }
 
-  return null;
+  const unique = new Map(matches.map(match => [`${match.municipality}|${match.barangay}`, match]));
+  return unique.size === 1 ? [...unique.values()][0] : null;
 }
 
 export function resolveIsabelaGeoJsonLocation(text) {
@@ -215,13 +210,25 @@ function findAdministrativeLocation(text) {
 }
 
 export function extractLocation(...texts) {
-  const text = texts.filter(Boolean).join(" ").replace(/\s+/g, " ");
+  const evidence = incidentLocationEvidence(...texts);
+  const municipalities = new Set(evidence.map(item => item.municipality));
+  if (municipalities.size !== 1) return null;
+  const text = evidence.map(item => item.text).join(" ").replace(/\s+/g, " ");
   const selectedText = candidateTexts(text).find((candidate) => {
     const found = findAdministrativeLocation(candidate);
     return found.barangay || found.municipality || /\bisabela\b/i.test(candidate);
   }) || text;
-  const administrativeLocation = findAdministrativeLocation(selectedText);
+  let administrativeLocation = findAdministrativeLocation(selectedText);
+  const reportedBarangays = incidentBarangayNames(...texts);
+  if (reportedBarangays.length > 1) return null;
+  if (reportedBarangays.length === 1) {
+    const municipality = [...municipalities][0];
+    const matched = findBoundaryLocation(`Barangay ${reportedBarangays[0]}, ${municipality}`);
+    if (!matched) return null;
+    administrativeLocation = matched;
+  }
   const { barangay, municipality } = administrativeLocation;
+  if (!municipalities.has(municipality)) return null;
   const explicitlyIsabela = /\bisabela\b/i.test(text);
   if (!municipality && !barangay && !explicitlyIsabela) return null;
   if (!administrativeLocation?.source && !explicitlyIsabela && (!municipality || !DISTINCTIVE_WITHOUT_PROVINCE.has(municipality))) return null;
@@ -250,6 +257,8 @@ export function extractLocation(...texts) {
     locationText,
     rawLocationText: selectedText.slice(0, 500),
     confidence: {
+      incident_location_verified: true,
+      evidence: [selectedText, ...texts.filter(value => barangay && value && /\b(?:Barangay|Brgy\.?|Bgy\.?|Baryo)\s+/i.test(value))].join("\n").slice(0, 2000),
       province: explicitlyIsabela ? 1 : 0.65,
       municipality: municipality ? (INCIDENT_CONTEXT_PATTERN.test(selectedText) ? 0.85 : 0.65) : 0,
       barangay: barangay ? (INCIDENT_CONTEXT_PATTERN.test(selectedText) ? 0.85 : 0.65) : 0,

@@ -2,13 +2,16 @@ import { createElement, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Activity, AlertTriangle, ArrowLeft, Camera, Car, CheckCircle2, ChevronRight,
-  Clock, Droplets, Edit2, ExternalLink, FileText, Flame, Heart, Image as ImageIcon, MapPin, Maximize2, Minimize2, Plus,
+  Clock, Droplets, ExternalLink, FileText, Flame, Heart, Image as ImageIcon, MapPin, Maximize2, Minimize2, Plus,
   Radio, Share2, Users, X,
 } from 'lucide-react';
 import { getDispatchRecordByResponse, getIncident, getPCRReportByResponse, listAuditLogs } from '../services/supabase';
 import { LeafletIncidentMap } from '../components/map/LeafletIncidentMap';
 import { PCRPreviewModal } from '../components/PCRPreviewModal';
-import { getIncidentStatusLabel, INCIDENT_STATUS_ORDER } from '../utils/incidentStatus';
+import DispatchPreviewModal from '../components/DispatchWidgets';
+import { useAuth } from '../contexts/AuthContext';
+import { PERMISSIONS } from '../access/rbac';
+import { getIncidentStatusLabel, INCIDENT_STATUS, INCIDENT_STATUS_ORDER, isWebScrapedIncident } from '../utils/incidentStatus';
 import { formatDateAndTime, formatLongDateTime } from '../utils/dateFormat';
 
 const typeIcons = {
@@ -80,11 +83,13 @@ const incidentTitle = incident => {
 export default function IncidentDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
   const [incident, setIncident] = useState(null);
   const [dispatch, setDispatch] = useState(null);
   const [pcr, setPcr] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [pcrPreviewOpen, setPcrPreviewOpen] = useState(false);
+  const [dispatchPreview, setDispatchPreview] = useState(null);
   const [attachmentPreview, setAttachmentPreview] = useState(null);
   const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -141,7 +146,8 @@ export default function IncidentDetails() {
   }
 
   const TypeIcon = typeIcons[incident.type] || AlertTriangle;
-  const statusSteps = RESPONSE_STATUS_ORDER.includes(incident.status) ? RESPONSE_STATUS_ORDER : INCIDENT_STATUS_ORDER;
+  const webScraped = isWebScrapedIncident(incident);
+  const statusSteps = webScraped ? [INCIDENT_STATUS.SCRAPED] : RESPONSE_STATUS_ORDER.includes(incident.status) ? RESPONSE_STATUS_ORDER : INCIDENT_STATUS_ORDER;
   const currentStatusIndex = statusSteps.indexOf(incident.status);
   const attachments = [
     ...(incident.attachments || []),
@@ -211,10 +217,11 @@ export default function IncidentDetails() {
           </div>
           <div className="flex flex-wrap gap-2 shrink-0">
             <button
-              onClick={() => dispatch ? navigate(`/admin/dispatch/new?edit=${dispatch.dispatchId || dispatch.id}`) : navigate(`/admin/dispatch/new?incident=${incident.id}`)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-400 hover:text-white transition-all"
+              type="button"
+              onClick={() => dispatch ? setDispatchPreview(dispatch) : navigate(`/admin/dispatch/new?incident=${incident.id}`)}
+              className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-xs text-white font-medium transition-all"
             >
-              <Edit2 className="w-3.5 h-3.5" /> {dispatch ? 'Edit Dispatch' : 'Create Dispatch'}
+              {dispatch ? <FileText className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />} {dispatch ? 'Open Dispatch' : 'Create Dispatch'}
             </button>
             <button onClick={shareIncident} className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-400 hover:text-white transition-all">
               <Share2 className="w-3.5 h-3.5" /> Share
@@ -232,8 +239,8 @@ export default function IncidentDetails() {
           {[
             { icon: MapPin, label: 'Location', value: displayValue(incident.location) },
             { icon: Clock, label: 'Reported', value: formatDateAndTime(incident.date, incident.time) },
-            { icon: Users, label: 'Dispatch', value: dispatch ? dispatch.status : 'No dispatch linked' },
-            { icon: AlertTriangle, label: 'PCR', value: pcr ? pcr.status : 'No PCR linked' },
+            { icon: Users, label: 'Dispatch', value: webScraped ? getIncidentStatusLabel(INCIDENT_STATUS.SCRAPED) : dispatch ? dispatch.status : 'No dispatch linked' },
+            { icon: AlertTriangle, label: 'PCR', value: webScraped ? getIncidentStatusLabel(INCIDENT_STATUS.SCRAPED) : pcr ? pcr.status : 'No PCR linked' },
           ].map(({ icon, label, value }) => (
             <div key={label} className="bg-slate-800/60 rounded-xl p-3">
               <div className="flex items-center gap-1.5 mb-1">
@@ -458,6 +465,20 @@ export default function IncidentDetails() {
           </div>
         </div>
       </div>
+      <DispatchPreviewModal
+        selected={dispatchPreview}
+        setSelected={setDispatchPreview}
+        canCreate={can(PERMISSIONS.CREATE_DISPATCH)}
+        edit={record => {
+          setDispatchPreview(null);
+          navigate(`/admin/dispatch/new?edit=${record.dispatchId || record.id}`);
+        }}
+        openPCR={() => {
+          setDispatchPreview(null);
+          openPcrPreview();
+        }}
+        findLinkedPCR={() => pcr}
+      />
       <PCRPreviewModal
         record={pcrPreviewOpen ? pcr : null}
         onClose={() => setPcrPreviewOpen(false)}

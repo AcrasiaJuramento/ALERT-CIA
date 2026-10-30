@@ -1,6 +1,7 @@
 import { queryPublicView, invalidatePublicData } from './publicDataService';
 import { runSupabaseRequest, runSupabaseRequestWithMeta } from "./errors";
 import { findBarangayByName } from "./referenceService";
+import { getIncidentRecordStatus, isWebScrapedIncident } from '../../utils/incidentStatus.js';
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
@@ -92,7 +93,7 @@ function incidentToApp(row = {}) {
   }));
   const classification = classificationFromRecord(row.classification || "other", descriptionParts.extended);
   const priority = row.priority || "medium";
-  const status = row.status || "draft";
+  const status = getIncidentRecordStatus(row);
   const team = response.responding_team?.name || response.responding_teams?.name || "";
   const lat = row.latitude ?? row.lat ?? null;
   const lng = row.longitude ?? row.lon ?? null;
@@ -142,7 +143,7 @@ function incidentToApp(row = {}) {
     externalSourceUrl: row.external_source_url || "",
     scraperRecordId: row.scraper_record_id || null,
     status,
-    workflowStatus: row.workflowStatus || status,
+    workflowStatus: isWebScrapedIncident(row) ? status : row.workflowStatus || status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     locationPrecision: Number.isFinite(Number(lat)) && Number.isFinite(Number(lng)) ? "official_incident_pin" : "unknown",

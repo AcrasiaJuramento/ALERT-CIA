@@ -1,8 +1,7 @@
-const wpSearch = (base, query = "isabela") => (page) =>
-  page === 1 ? `${base}/?s=${encodeURIComponent(query)}` : `${base}/page/${page}/?s=${encodeURIComponent(query)}`;
+import { ROAD_ACCIDENT_SEARCH_TERMS } from "../lib/roadAccidents.js";
 
-const wpCategory = (base) => (page) =>
-  page === 1 ? base : `${base.replace(/\/$/, "")}/page/${page}/`;
+const wpSearch = (base, query = "accidents") => (page) =>
+  page === 1 ? `${base}/?s=${encodeURIComponent(query)}` : `${base}/page/${page}/?s=${encodeURIComponent(query)}`;
 
 const queryPage = (url, parameter = "page") => (page) => {
   const target = new URL(url);
@@ -11,6 +10,9 @@ const queryPage = (url, parameter = "page") => (page) => {
 };
 
 function source(key, name, baseUrl, firstPageUrl, options = {}) {
+  const searchUrl = options.searchUrl || (options.wordpressSearch
+    ? (term, page) => wpSearch(baseUrl, term)(page)
+    : null);
   const loadingStrategy = options.loadingStrategy || (
     options.paginationType === "static" ? "static" : "pagination"
   );
@@ -18,10 +20,10 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
     key,
     name,
     baseUrl,
-    firstPageUrl,
+    firstPageUrl: searchUrl ? searchUrl(ROAD_ACCIDENT_SEARCH_TERMS[0], 1) : firstPageUrl,
     loadingStrategy,
-    paginationType: options.paginationType || "next_link",
-    pageUrl: options.pageUrl || queryPage(firstPageUrl),
+    paginationType: searchUrl ? "wordpress_search" : options.paginationType || "next_link",
+    pageUrl: searchUrl ? (page) => searchUrl(ROAD_ACCIDENT_SEARCH_TERMS[0], page) : options.pageUrl || queryPage(firstPageUrl),
     apiUrl: options.apiUrl || null,
     apiItemsPath: options.apiItemsPath || null,
     apiUrlPath: options.apiUrlPath || null,
@@ -31,8 +33,8 @@ function source(key, name, baseUrl, firstPageUrl, options = {}) {
     apiDatePath: options.apiDatePath || null,
     loadMoreUrl: options.loadMoreUrl || null,
     scrollUrl: options.scrollUrl || firstPageUrl,
-    searchTerms: options.searchTerms || null,
-    searchUrl: options.searchUrl || null,
+    searchTerms: ROAD_ACCIDENT_SEARCH_TERMS,
+    searchUrl,
     articleLinkSelector: options.articleLinkSelector || null,
     discoveryLimits: {
       maxScrolls: options.maxScrolls || 8,
@@ -54,7 +56,6 @@ export const SOURCES = [
   source("bombo", "Bombo Radyo Cauayan", "https://cauayan.bomboradyo.com", "https://cauayan.bomboradyo.com/?s=accidents", {
     paginationType: "wordpress_search",
     pageUrl: wpSearch("https://cauayan.bomboradyo.com", "accidents"),
-    searchTerms: ["accidents", "aksidente", "banggan", "salpukan", "crash"],
     searchUrl: (term, page) => wpSearch("https://cauayan.bomboradyo.com",  term)(page),
     articleLinkSelector: ".td-ss-main-content .td_module_wrap h3.entry-title a[rel='bookmark'], .td-ss-main-content h3.td-module-title a[rel='bookmark']",
     maxArticles: 160,
@@ -70,12 +71,21 @@ export const SOURCES = [
     apiUrlPath: "article_url",
     apiArticleBaseUrl: "https://www.gmanetwork.com/news/",
     articlePattern: /\/news\/(?:topstories|regions|balitambayan|scitech)\/[^/]+\/\d+\//i,
-    maxScrolls: 1,
+    maxScrolls: 8,
+    noNewArticleLimit: 8,
   }),
   source("dzrh", "DZRH News", "https://www.dzrh.com.ph", "https://www.dzrh.com.ph/tag/isabela-province", {
     loadingStrategy: "static",
     articleLinkSelector: 'a[href^="/post/"]',
     articlePattern: /\/post\/[a-z0-9][a-z0-9-]+$/i,
+  }),
+  source("brigada", "Brigada News Isabela", "https://www.brigadanews.ph", "https://www.brigadanews.ph/category/local-news/luzon/isabela/", {
+    wordpressSearch: true,
+    articleLinkSelector: "h2 a[href], h3 a[href], a[rel='bookmark']",
+  }),
+  source("rmn", "RMN Networks", "https://rmn.ph", "https://rmn.ph/", {
+    wordpressSearch: true,
+    articleLinkSelector: "h2 a[href], h3 a[href], a[rel='bookmark']",
   }),
 ];
 

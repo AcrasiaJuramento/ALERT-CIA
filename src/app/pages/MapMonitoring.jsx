@@ -151,6 +151,8 @@ function riskBadgeClass(level = '') {
 }
 
 function mapRecordRank(record = {}) {
+  // The scraper row carries the latest officer location correction after promotion.
+  if (record.sourceKind === 'promoted_scraped' && record.recordId) return 4;
   if (record.sourceKind === 'pcr_report') return 2;
   const group = getSourceGroup(record);
   if (group === 'official') return 3;
@@ -550,7 +552,7 @@ export default function MapMonitoring() {
       try {
         const [officialResult, scrapedResult, pcrResult, advisoryResult] = await Promise.allSettled([
           listIncidents({ verifiedMapOnly: true, limit: 500 }),
-          listOfficerScrapedMapIncidents({ includeUnverified: true }),
+          listOfficerScrapedMapIncidents(),
           listPCRMapIncidents({ verifiedOnly: true, limit: 200 }),
           listAdvisories({ activeOnly: true, limit: 100 }),
         ]);

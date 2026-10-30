@@ -3,6 +3,8 @@ import { runSupabaseRequest } from "./errors";
 import { isSupabaseConfigured, supabase } from "../../lib/supabaseClient";
 import { resolveIsabelaBarangayGeometry } from "../../data/isabelaBarangayGeometry";
 import { locationAssessment } from "../../utils/locationAccuracy";
+import { isAccidentMapRow, REVIEWED_SCRAPER_MAP_STATUSES } from "../../utils/scrapedMapEligibility.js";
+import { hasSupportedIncidentLocation } from "../../../../alert-cia-scraper/src/lib/locationEvidence.js";
 
 const scraperApiBaseUrl = String(import.meta.env.VITE_SCRAPER_API_URL || "")
   .trim()
@@ -35,28 +37,6 @@ const FULL_SCRAPE_PAGE_CHUNK_SIZE = 5;
 
 function asRows(value) {
   return Array.isArray(value) ? value : [];
-}
-
-function isAccidentMapRow(row = {}) {
-  const values = [
-    row.category,
-    row.incident_type,
-    // row.incident_type_key,
-    row.title,
-    row.snippet,
-    row.location_text,
-  ].map(value => String(value || "").toLowerCase());
-
-  return values.some(value => (
-    value === "vehicular" ||
-    value.includes("accident") ||
-    value.includes("vehicular") ||
-    value.includes("vehicle") ||
-    value.includes("collision") ||
-    value.includes("crash") ||
-    value.includes("bangga") ||
-    value.includes("aksidente")
-  ));
 }
 
 function estimateLegacyScraperConfidence(row = {}) {
@@ -441,7 +421,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
     time: formatManilaTime(date),
     incidentDateTimeSource: scraperEventDateSource(row),
     incidentDateTimeEvidence: row.raw_payload?.incident_time_evidence || "",
-    status: row.related_incident_id ? "on_scene" : "in_route",
+    status: "scraped",
     assignedTeam: row.related_incident_id ? "Imported to ALERT-CIA" : "External monitoring",
     description: row.snippet || row.title || "External incident candidate from scraper.",
     title: row.title || "",
@@ -466,7 +446,7 @@ function scraperRecordToMapIncident(row = {}, boundaryPoint = null) {
 }
 
 async function scraperRowsToMapIncidents(rows = []) {
-  return Promise.all(rows.map(async (row) => {
+  return Promise.all(rows.filter(hasSupportedIncidentLocation).map(async (row) => {
     const location = row.raw_payload?.location || {};
     const boundaryPoint = !hasFiniteCoordinates(row)
       ? await resolveIsabelaBarangayGeometry({
@@ -702,7 +682,9 @@ export async function listScraperRecords({ status, category, sourceId, municipal
       .from("scraper_records")
       .select("*, barangay:barangays(id, name, municipality, province), source:scraper_sources(id, name, source_key)")
       .is("deleted_at", null)
+      .order("published_at", { ascending: false, nullsFirst: false })
       .order("scraped_at", { ascending: false })
+      .order("id", { ascending: false })
       .range(from, from + limit - 1);
     if (status) query = query.eq("status", status);
     if (category) query = query.eq("category", category);
@@ -710,8 +692,8 @@ export async function listScraperRecords({ status, category, sourceId, municipal
     if (municipality) query = query.or(`extracted_municipality.ilike.%${municipality}%,verified_municipality.ilike.%${municipality}%`);
     if (barangay) query = query.ilike("extracted_barangay", `%${barangay}%`);
     if (confidence) query = query.eq("classification_confidence", confidence);
-    if (dateFrom) query = query.gte("scraped_at", `${dateFrom}T00:00:00`);
-    if (dateTo) query = query.lte("scraped_at", `${dateTo}T23:59:59.999`);
+    if (dateFrom) query = query.gte("published_at", `${dateFrom}T00:00:00+08:00`);
+    if (dateTo) query = query.lte("published_at", `${dateTo}T23:59:59.999999+08:00`);
     return query;
   }, "Unable to load scraper records.");
 
@@ -722,14 +704,16 @@ function buildRejectedCandidateQuery(client, tableName, { reason, sourceId, muni
   let query = client
     .from(tableName)
     .select("*")
+    .order("published_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .range(from, from + limit - 1);
   if (reason) query = query.eq("rejection_reason", reason);
   if (sourceId) query = query.eq("source_id", sourceId);
   if (municipality) query = query.ilike("extracted_municipality", `%${municipality}%`);
   if (confidence) query = query.eq("classification_confidence", confidence);
-  if (dateFrom) query = query.gte("created_at", `${dateFrom}T00:00:00`);
-  if (dateTo) query = query.lte("created_at", `${dateTo}T23:59:59.999`);
+  if (dateFrom) query = query.gte("published_at", `${dateFrom}T00:00:00+08:00`);
+  if (dateTo) query = query.lte("published_at", `${dateTo}T23:59:59.999999+08:00`);
   return query;
 }
 
@@ -793,7 +777,7 @@ export async function listOfficerScrapedMapIncidents({ limit = 500 } = {}) {
   const buildQuery = (client, rowLimit) => client
       .from("scraper_records")
       .select(selectColumns)
-      .eq("status", "approved")
+      .in("status", REVIEWED_SCRAPER_MAP_STATUSES)
       .eq("public_visible", true)
       .is("deleted_at", null)
       .order("scraped_at", { ascending: false })

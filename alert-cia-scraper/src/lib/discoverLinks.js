@@ -1,6 +1,7 @@
 import { extractLinks, extractNextPage } from "./extractLinks.js";
 import { fetchHTML, getFetchError } from "./fetchHTML.js";
 import { isArticleUrl, normalizeUrl } from "./urls.js";
+import { matchesRoadAccidentSearch } from "./roadAccidents.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -131,7 +132,8 @@ async function discoverApi(source, mode, stats, sourceHealth) {
     }
     const items = getPath(payload, source.apiItemsPath);
     const urls = Array.isArray(items)
-      ? items.map((item) => getPath(item, source.apiUrlPath)).filter(Boolean)
+      ? items.filter(item => !source.searchTerms?.length || matchesRoadAccidentSearch(JSON.stringify(item), source.searchTerms))
+        .map((item) => getPath(item, source.apiUrlPath)).filter(Boolean)
         .map((url) => source.apiArticleBaseUrl ? new URL(url, source.apiArticleBaseUrl).toString() : url)
       : [];
     const newCount = addLinks(links, urls, source);
@@ -197,7 +199,9 @@ async function discoverBrowserScroll(source, stats, sourceHealth) {
     let noNew = 0;
     for (let index = 0; index < limits.maxScrolls; index += 1) {
       if (limitReached(startedAt, limits, links) || noNew >= limits.noNewArticleLimit) break;
-      const urls = await page.$$eval("a[href]", (anchors) => anchors.map((anchor) => anchor.href));
+      const anchors = await page.$$eval("a[href]", (elements) => elements.map((anchor) => ({ url: anchor.href, text: anchor.textContent, title: anchor.title })));
+      const urls = anchors.filter(anchor => !source.searchTerms?.length || matchesRoadAccidentSearch(`${anchor.url} ${anchor.text} ${anchor.title}`, source.searchTerms))
+        .map(anchor => anchor.url);
       const newCount = addLinks(links, urls, source);
       sourceHealth.links_found += newCount;
       noNew = newCount ? 0 : noNew + 1;

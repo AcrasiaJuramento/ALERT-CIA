@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, Activity, Ambulance, Users, CheckCircle2, Clock, TrendingUp,
-  Flame, Droplets, Car, Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2, Layers3
+  Heart, Radio, ChevronRight, Bell, MapPin, RefreshCw, BarChart2, Table2, Layers3
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -25,22 +25,27 @@ import {
 } from '../services/supabase';
 
 const typeColors = {
-  vehicular: 'text-red-400 bg-red-500/10',
-  fire: 'text-orange-400 bg-orange-500/10',
-  medical: 'text-blue-400 bg-blue-500/10',
-  flood: 'text-cyan-400 bg-cyan-500/10',
-  crime: 'text-purple-400 bg-purple-500/10',
-  other: 'text-slate-400 bg-slate-500/10',
+  Conduction: 'text-cyan-400 bg-cyan-500/10',
+  Medical: 'text-blue-400 bg-blue-500/10',
+  Trauma: 'text-red-400 bg-red-500/10',
 };
 
 const typeIcons = {
-  vehicular: Car,
-  fire: Flame,
-  medical: Heart,
-  flood: Droplets,
-  crime: AlertTriangle,
-  other: AlertTriangle,
+  Conduction: Ambulance,
+  Medical: Heart,
+  Trauma: AlertTriangle,
 };
+
+function dashboardIncidentType(incident) {
+  const values = [
+    incident.natureOfCall, incident.incidentNature, incident.type, incident.classification, incident.subtype,
+    ...(incident.natureTypes || []), ...(incident.emergencyTypes || []), ...(incident.traumaTypes || []),
+  ].filter(Boolean).join(' ').toLowerCase().replace(/[_-]/g, ' ');
+  if (/\b(conduction|transport|transfer)\b/.test(values)) return 'Conduction';
+  if (incident.traumaTypes?.length || /\b(trauma|mvc|vehicular|crash|collision|fall|electrocution|assault|violence|animal bite|fire|crime)\b/.test(values)) return 'Trauma';
+  if (incident.emergencyTypes?.length || /\b(medical|pediatric|psychiatric|surgical|obstetrical|drowning)\b/.test(values)) return 'Medical';
+  return '—';
+}
 
 const ACTIVE_FIELD_DISPATCH_STATUSES = new Set([
   'sent_to_responding_team',
@@ -595,7 +600,7 @@ export default function Dashboard() {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left px-5 py-2.5 text-muted-foreground font-medium">ID</th>
+                <th className="text-left px-5 py-2.5 text-muted-foreground font-medium">Incident</th>
                 <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Type</th>
                 <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Location</th>
                 <th className="text-left px-3 py-2.5 text-muted-foreground font-medium">Severity</th>
@@ -607,18 +612,23 @@ export default function Dashboard() {
             </thead>
             <tbody>
               {activeIncidents.map((incident) => {
-                const TypeIcon = typeIcons[incident.type] || AlertTriangle;
+                const incidentType = dashboardIncidentType(incident);
+                const TypeIcon = typeIcons[incidentType] || AlertTriangle;
+                const incidentTitle = incident.title?.trim()
+                  || incident.name?.trim()
+                  || incident.incidentNature?.trim()
+                  || `${incident.type || 'Emergency'} incident`;
                 return (
                   <tr
                     key={incident.id}
                     className="border-b border-border hover:bg-secondary/30 transition-all cursor-pointer"
                     onClick={() => navigate(`/admin/incidents/${incident.id}`)}
                   >
-                    <td className="px-5 py-3 font-mono text-blue-400">{incident.id}</td>
+                    <td className="px-5 py-3 font-medium text-blue-400 max-w-64 truncate" title={incidentTitle}>{incidentTitle}</td>
                     <td className="px-3 py-3">
-                      <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium ${typeColors[incident.type]}`}>
+                      <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[10px] font-medium ${typeColors[incidentType] || 'text-slate-400 bg-slate-500/10'}`}>
                         <TypeIcon className="w-3 h-3" />
-                        {incident.type}
+                        {incidentType}
                       </div>
                     </td>
                     <td className="px-3 py-3 text-foreground max-w-32 truncate">{incident.location}</td>

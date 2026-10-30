@@ -8,10 +8,11 @@ import { isAccidentRelevant } from "../lib/filters.js";
 import { geocode } from "../lib/geocode.js";
 import { extractIncidentDateTime } from "../lib/incidentTime.js";
 import { applyLandmarkMatch, loadLandmarkRegistry, matchLocalLandmark } from "../lib/landmarkRegistry.js";
-import { extractLocation, ISABELA_PLACES, isValidLocation } from "../lib/locations.js";
+import { extractLocation, isValidLocation } from "../lib/locations.js";
 import { startScraperProgress, updateScraperProgress } from "../lib/progress.js";
 import { findKnownArticleUrls } from "../lib/scraperStore.js";
 import { normalizeUrl } from "../lib/urls.js";
+import { isRoadAccidentReport } from "../lib/roadAccidents.js";
 
 const DEFAULT_ARTICLE_CONCURRENCY = 8;
 const DEFAULT_REQUEST_TIMEOUT_MS = 12000;
@@ -42,16 +43,6 @@ function isOutsideDateRange(articleDate, days) {
   const articleTime = dateValue(articleDate);
   if (!articleTime) return false;
   return Date.now() - articleTime > days * 24 * 60 * 60 * 1000;
-}
-
-function locationTextForSource(source, combined) {
-  const host = new URL(source.baseUrl).hostname;
-  if (host === "cauayan.bomboradyo.com" && hasIsabelaPlace(combined)) return `${combined}\nIsabela`;
-  return combined;
-}
-
-function hasIsabelaPlace(text = "") {
-  return ISABELA_PLACES.some((place) => new RegExp(`\\b${place.replace(/ /g, "\\s+")}\\b`, "i").test(text));
 }
 
 async function processSource(source, mode, stats, seenUrls, pageRange = {}, landmarks = []) {
@@ -152,8 +143,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
     const articleHash = contentHash(combined);
     let classification = classifyIncident(combined);
     const details = extractStructuredAccidentDetails(combined);
-    const locationContext = locationTextForSource(source, combined);
-    const location = extractLocation(article.title, article.snippet, article.body, locationContext);
+    const location = extractLocation(article.title, article.snippet, article.body);
     const reject = (reason, details) => rejected.push({
       title: article.title,
       snippet: article.snippet,
@@ -183,7 +173,7 @@ async function processSource(source, mode, stats, seenUrls, pageRange = {}, land
       reject("outside_date_range", `Article is older than the configured ${source.discoveryLimits.articleDateRangeDays}-day discovery range.`);
       continue;
     }
-    if (!isAccidentRelevant(combined) && classification.type !== "vehicular") {
+    if (!isRoadAccidentReport(combined) || (!isAccidentRelevant(combined) && classification.type !== "vehicular")) {
       reject(classification.type ? "non_vehicular" : "non_accident", "No reliable vehicular accident context was detected.");
       continue;
     }

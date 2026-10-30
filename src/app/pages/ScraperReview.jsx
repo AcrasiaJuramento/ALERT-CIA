@@ -840,12 +840,26 @@ export default function ScraperReview() {
       const sourceRows = settledValue(sourceResult, []);
       const runRows = settledValue(runResult, []);
       const healthRows = settledValue(healthResult, []);
-      const activeSourceKeys = new Set((sourceRows || []).map(source => source.source_key || source.key));
+      const healthByKey = new Map((healthRows || []).map(row => [row.sourceKey, row]));
       setRecords(recordRows);
       setCandidates(candidateRows);
       setSources(sourceRows || []);
       setRuns(runRows || []);
-      setSourceHealth((healthRows || []).filter(row => activeSourceKeys.has(row.sourceKey)));
+      setSourceHealth((sourceRows || []).map(source => healthByKey.get(source.source_key || source.key) || {
+        sourceId: source.id,
+        sourceKey: source.source_key || source.key,
+        sourceName: source.name,
+        status: "not checked",
+        linksFound: 0,
+        articlesProcessed: 0,
+        incidentsDetected: 0,
+        rejectedCount: 0,
+        skippedRejected: 0,
+        failedCount: 0,
+        retries: 0,
+        lastScrapedAt: null,
+        lastError: "Awaiting first source check.",
+      }));
 
       const requiredFailure = [recordResult, candidateResult, sourceResult].find(result => result.status === "rejected");
       const diagnosticsFailure = [runResult, healthResult].find(result => result.status === "rejected");
@@ -939,9 +953,10 @@ export default function ScraperReview() {
             <option value="">All municipalities</option>
             {ISABELA_MUNICIPALITIES.map(municipality => <option key={municipality} value={municipality}>{municipality}</option>)}
           </Select>
-          <input value={filters.dateFrom} onChange={event => updateFilter("dateFrom", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="From date" />
-          <input value={filters.dateTo} onChange={event => updateFilter("dateTo", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="To date" />
+          <input value={filters.dateFrom} onChange={event => updateFilter("dateFrom", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="Published from (Philippine time)" aria-label="Published from (Philippine time)" />
+          <input value={filters.dateTo} onChange={event => updateFilter("dateTo", event.target.value)} type="date" className="h-9 rounded-lg border border-border bg-input-background px-3 text-xs" title="Published through (Philippine time)" aria-label="Published through (Philippine time)" />
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">Newest reported articles first. Date filters use publication dates in Philippine time; undated articles appear last.</p>
       </div>
 
       <div className="mb-4 flex flex-wrap gap-2">

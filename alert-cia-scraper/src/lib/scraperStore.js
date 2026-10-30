@@ -128,10 +128,12 @@ export async function getScrapedIncidentSnapshot({ limit = 1000 } = {}) {
   });
 }
 
-async function syncSources(client) {
-  const removedSourceKeys = ["sunstar", "pna", "pilipino_star", "brigda"];
-  const removal = await client.from("scraper_sources").delete().in("source_key", removedSourceKeys);
-  if (removal.error) throw removal.error;
+export async function syncSources(client) {
+  // Retire stale/duplicate source entries without deleting their historical associations.
+  const activeKeys = SOURCES.filter(source => source.enabled).map(source => source.key);
+  const retirement = await client.from("scraper_sources").update({ active: false })
+    .eq("active", true).not("source_key", "in", `(${activeKeys.join(",")})`);
+  if (retirement.error) throw retirement.error;
 
   const payload = SOURCES.map((source) => ({
     source_key: source.key,

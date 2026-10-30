@@ -33,7 +33,7 @@ const STATUS_LABELS = {
   [INCIDENT_STATUS.PCR_COMPLETED]: 'PCR completed',
   [INCIDENT_STATUS.PENDING_ADMIN_VERIFICATION]: 'Admin pending verification',
   [INCIDENT_STATUS.CANCELLED]: 'Cancelled',
-  [INCIDENT_STATUS.SCRAPED]: 'Scraped',
+  [INCIDENT_STATUS.SCRAPED]: 'Web Scraped',
 };
 
 const COMPLETED_STATUSES = new Set([
@@ -52,6 +52,16 @@ const ACTIVE_RESPONSE_STATUSES = new Set([
 ]);
 
 export const INCIDENT_STATUS_ORDER = INCIDENT_STATUS_OPTIONS.map((item) => item.value);
+
+export function isWebScrapedIncident(record = {}) {
+  return Boolean(record.scraperRecordId || record.scraper_record_id)
+    || String(record.sourceKind || record.record_origin || '').includes('scraped')
+    || record.status === INCIDENT_STATUS.SCRAPED;
+}
+
+export function getIncidentRecordStatus(record = {}) {
+  return isWebScrapedIncident(record) ? INCIDENT_STATUS.SCRAPED : record.status || 'draft';
+}
 
 export function getIncidentStatusLabel(status) {
   return STATUS_LABELS[status] || status;
