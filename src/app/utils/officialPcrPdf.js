@@ -2281,8 +2281,8 @@ export function buildPCRHtml(
           <col style="width: 52%" />
         </colgroup>
         <tr>
-          <td class="resident-lines">
-            ${rowValue(record.residentOnDuty)}
+          <td class="resident-lines compact-signature">
+            ${signatureMark(record, "Resident on Duty", "resident", record.residentOnDuty)}
           </td>
 
           <th>
